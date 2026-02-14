@@ -42,3 +42,8 @@ class AppConfig(BaseModel):
 
     def save(self) -> None:
         CONFIG_PATH.write_text(json.dumps(self.to_save_dict(), indent=2))
+
+
+def load() -> AppConfig:
+    """Load config from disk. Convenience alias for AppConfig.load()."""
+    return AppConfig.load()
