@@ -147,6 +147,23 @@ def _canonical_task_response(task: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _looks_like_json(text: str) -> bool:
+    """True if text looks like JSON (so we don't send it to the user)."""
+    t = text.strip()
+    return (t.startswith("{") and "}" in t) or (t.startswith("[") and "]" in t)
+
+
+def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
+    """Format a created task as a user-friendly message for Telegram."""
+    title = (task.get("title") or "").strip() or "(no title)"
+    status = task.get("status") or "inbox"
+    due = task.get("due_date")
+    msg = f"Task created: {title} [{status}]"
+    if due:
+        msg += f" — due {due}"
+    return msg + "."
+
+
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50) -> str:
     """Format a list of tasks as a user-friendly message for Telegram."""
     if not tasks:
@@ -210,7 +227,10 @@ def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system
     else:
         logger.info("LLM response is not a tool call, returning as-is")
     if not parsed:
-        return response_text.strip() or "I didn't understand. You can ask me to create a task (give at least a title)."
+        text = response_text.strip() or "I didn't understand. You can ask me to create a task or list your tasks."
+        if _looks_like_json(text):
+            return "I didn't understand. Try: \"Create a task: [title]\" or \"List my tasks\"."
+        return text
 
     name, params = parsed
     if name == "task_list":
@@ -221,7 +241,9 @@ def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system
             return f"Error listing tasks: {e}"
         return _format_task_list_for_telegram(tasks)
     if name != "task_create":
-        return response_text.strip() or f"Tool '{name}' is not implemented yet."
+        fallback = f"Tool '{name}' is not implemented yet. You can create a task or list tasks."
+        text = response_text.strip() or fallback
+        return fallback if _looks_like_json(text) else text
 
     try:
         validated = _validate_task_create(params)
@@ -244,5 +266,4 @@ def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system
     except Exception as e:
         return f"Error creating task: {e}"
 
-    canonical = _canonical_task_response(task)
-    return json.dumps(canonical, indent=2)
+    return _format_task_created_for_telegram(task)
