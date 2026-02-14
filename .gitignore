@@ -4,6 +4,8 @@ __pycache__/
 *.pyc
 *.pyo
 config.json
+spaztick.db
+*.db
 .env
 *.egg-info/
 dist/

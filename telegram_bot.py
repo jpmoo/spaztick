@@ -9,7 +9,6 @@ from pathlib import Path
 # Run from project root so config and ollama_client can be imported
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import httpx
 from telegram import Update
 from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
@@ -22,18 +21,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def get_ollama_response(base_url: str, model: str, prompt: str, system: str | None) -> str:
-    """Sync call to Ollama (run in executor to avoid blocking async)."""
-    payload = {"model": model, "prompt": prompt, "stream": False}
-    if system:
-        payload["system"] = system
-    r = httpx.post(f"{base_url.rstrip('/')}/api/generate", json=payload, timeout=120.0)
-    r.raise_for_status()
-    return r.json().get("response", "")
+def _run_orchestrator(user_message: str, base_url: str, model: str, system_prefix: str) -> str:
+    """Sync orchestrator call (run in executor)."""
+    from orchestrator import run_orchestrator
+    return run_orchestrator(user_message, base_url, model, system_prefix)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle incoming message: send to Ollama, reply with result."""
+    """Handle incoming message: run orchestrator (tool calls → Task Service), reply with result."""
     if not update.message or not update.message.text:
         return
     config = load_config()
@@ -42,26 +37,25 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     text = update.message.text.strip()
     if not text:
-        await update.message.reply_text("Send a message to get a response from the model.")
+        await update.message.reply_text("Send a message to get a response. You can ask to create a task (e.g. \"Create a task: Buy milk\").")
         return
     await update.message.chat.send_action("typing")
     base_url = config.ollama_base_url
     model = config.model
-    system_message = config.system_message.strip() or ""
+    system_prefix = config.system_message.strip() or ""
     if config.user_name and config.user_name.strip():
-        system_message = f"You are chatting with {config.user_name.strip()}.\n\n{system_message}".strip()
-    system = system_message or None
+        system_prefix = f"You are chatting with {config.user_name.strip()}.\n\n{system_prefix}".strip()
     try:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
             None,
-            lambda: get_ollama_response(base_url, model, text, system),
+            lambda: _run_orchestrator(text, base_url, model, system_prefix),
         )
         if not response:
-            response = "(No response from model)"
+            response = "(No response)"
         await update.message.reply_text(response)
     except Exception as e:
-        logger.exception("Ollama request failed")
+        logger.exception("Orchestrator request failed")
         await update.message.reply_text(f"Error: {e}")
 
 

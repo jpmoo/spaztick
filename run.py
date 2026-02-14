@@ -20,6 +20,13 @@ sys.path.insert(0, str(ROOT))
 
 from config import load as load_config
 
+# Bootstrap SQLite database on first run
+try:
+    from task_service import ensure_db
+    ensure_db()
+except Exception:
+    pass
+
 _telegram_process: subprocess.Popen | None = None
 
 

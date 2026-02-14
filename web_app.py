@@ -15,6 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from config import load as load_config
 from ollama_client import OllamaClient
 
+# Bootstrap SQLite database on first run
+try:
+    from task_service import ensure_db
+    ensure_db()
+except Exception:
+    pass
+
 app = FastAPI(title="Spaztick Config", version="1.0")
 
 # Subprocess handle for Telegram bot (None when not running)
@@ -35,6 +42,7 @@ class ConfigUpdate(BaseModel):
     webhook_public_url: str = ""
     web_ui_port: int = Field(8081, ge=1, le=65535)
     use_polling: bool = True
+    database_path: str = ""
 
 
 # --- API routes ---
@@ -54,6 +62,7 @@ def get_config() -> ConfigUpdate:
         webhook_public_url=c.webhook_public_url or "",
         web_ui_port=c.web_ui_port,
         use_polling=c.use_polling,
+        database_path=getattr(c, "database_path", "") or "",
     )
 
 
@@ -70,6 +79,7 @@ def put_config(body: ConfigUpdate) -> dict[str, str]:
     c.webhook_public_url = body.webhook_public_url
     c.web_ui_port = body.web_ui_port
     c.use_polling = body.use_polling
+    c.database_path = getattr(body, "database_path", "") or ""
     c.save()
     return {"status": "saved"}
 
@@ -211,6 +221,15 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 
   <div class="card">
+    <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Database</h2>
+    <p class="status" style="margin-bottom:0.5rem;">SQLite path. Empty = project dir / spaztick.db</p>
+    <div>
+      <label>Database path (optional)</label>
+      <input type="text" id="database_path" placeholder="/path/to/spaztick.db" />
+    </div>
+  </div>
+
+  <div class="card">
     <button type="button" id="save">Save config</button>
     <p class="success" id="save_msg" style="display:none;">Config saved.</p>
     <p class="error" id="save_err" style="display:none;"></p>
@@ -235,6 +254,7 @@ HTML_PAGE = """<!DOCTYPE html>
       $('webhook_public_url').value = c.webhook_public_url || '';
       $('web_ui_port').value = c.web_ui_port ?? 8081;
       $('use_polling').checked = c.use_polling !== false;
+      $('database_path').value = c.database_path || '';
       $('webhook_url_row').style.display = usePolling() ? 'none' : 'block';
     }
 
@@ -278,7 +298,8 @@ HTML_PAGE = """<!DOCTYPE html>
         telegram_listener_port: parseInt($('telegram_listener_port').value, 10) || 8443,
         webhook_public_url: $('webhook_public_url').value.trim(),
         web_ui_port: parseInt($('web_ui_port').value, 10) || 8081,
-        use_polling: usePolling()
+        use_polling: usePolling(),
+        database_path: $('database_path').value.trim()
       };
       try {
         await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

@@ -4,3 +4,4 @@ httpx>=0.26.0
 python-telegram-bot>=21.0
 pydantic>=2.0
 pydantic-settings>=2.0
+python-ulid>=2.0

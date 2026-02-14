@@ -23,6 +23,7 @@ class AppConfig(BaseModel):
     webhook_public_url: str = Field(default="", description="Public HTTPS URL for webhook (e.g. https://yourdomain.com), required when not using polling")
     web_ui_port: int = Field(default=8081, ge=1, le=65535, description="Port for configuration web UI")
     use_polling: bool = Field(default=True, description="Use long polling instead of webhook (no port/HTTPS needed)")
+    database_path: str = Field(default="", description="Path to SQLite database file; empty = project dir / spaztick.db")
 
     @property
     def ollama_base_url(self) -> str:
