@@ -159,7 +159,7 @@ def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system
     logger.info(
         "LLM request url=%s model=%s prompt_len=%d system_len=%d prompt=%s",
         url, model, len(user_message), len(full_system),
-        repr(user_message[:500] + ("..." if len(user_message) > 500 else ""),
+        repr(user_message[:500] + ("..." if len(user_message) > 500 else "")),
     )
     try:
         r = httpx.post(url, json=payload, timeout=120.0)
