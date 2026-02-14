@@ -16,6 +16,7 @@ class AppConfig(BaseModel):
     ollama_url: str = Field(default="http://localhost", description="Ollama base URL (no path)")
     ollama_port: int = Field(default=11434, ge=1, le=65535)
     model: str = Field(default="llama3.2", description="Ollama model name")
+    user_name: str = Field(default="", description="Name of the user chatting; prefixed to system message as 'You are chatting with {name}.'")
     system_message: str = Field(default="You are a helpful assistant.", description="System prompt for the model")
     telegram_bot_token: str = Field(default="", description="Telegram bot token from @BotFather")
     telegram_listener_port: int = Field(default=8443, ge=1, le=65535, description="Port for Telegram webhook (80, 88, 443, 8443 allowed by Telegram)")

@@ -49,9 +49,9 @@ python telegram_bot.py
 
 1. Open http://localhost:8081 (or the port you set).
 2. **Ollama**: Set URL (e.g. `http://localhost`) and port (default 11434). Click **Refresh models** to load the model list, then choose a model. Set the **system message** if desired.
-3. **Telegram**: Paste your bot token. Choose:
-   - **Use long polling** (default): No port or HTTPS needed; the bot pulls updates from Telegram. Easiest for development and home use.
-   - **Webhook**: Set **Listener port** (e.g. 8443; Telegram allows 80, 88, 443, 8443) and **Webhook public URL** (your public HTTPS base URL, e.g. `https://yourdomain.com`). You need a reverse proxy (e.g. nginx) with TLS in front of this port.
+3. **Telegram**: Paste your bot token. Use **long polling** (default, recommended):
+   - Leave **Use long polling** checked. No port, no public URL, no HTTPS. The bot pulls updates from Telegram—ideal for a single server or home.
+   - Only uncheck for **webhook** if you have a public HTTPS URL and want Telegram to push updates (e.g. high traffic).
 4. Click **Save config**, then **Restart Telegram service** so the bot picks up the new settings.
 
 Config is stored in `config.json` in the project directory.

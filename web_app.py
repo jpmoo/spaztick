@@ -28,6 +28,7 @@ class ConfigUpdate(BaseModel):
     ollama_url: str = "http://localhost"
     ollama_port: int = Field(11434, ge=1, le=65535)
     model: str = "llama3.2"
+    user_name: str = ""
     system_message: str = "You are a helpful assistant."
     telegram_bot_token: str = ""
     telegram_listener_port: int = Field(8443, ge=1, le=65535)
@@ -46,6 +47,7 @@ def get_config() -> ConfigUpdate:
         ollama_url=c.ollama_url,
         ollama_port=c.ollama_port,
         model=c.model,
+        user_name=c.user_name or "",
         system_message=c.system_message,
         telegram_bot_token=c.telegram_bot_token if c.telegram_bot_token else "",
         telegram_listener_port=c.telegram_listener_port,
@@ -61,6 +63,7 @@ def put_config(body: ConfigUpdate) -> dict[str, str]:
     c.ollama_url = body.ollama_url
     c.ollama_port = body.ollama_port
     c.model = body.model
+    c.user_name = body.user_name
     c.system_message = body.system_message
     c.telegram_bot_token = body.telegram_bot_token
     c.telegram_listener_port = body.telegram_listener_port
@@ -166,6 +169,10 @@ HTML_PAGE = """<!DOCTYPE html>
       <p class="status" id="models_status">Click "Refresh models" after setting URL/port.</p>
     </div>
     <div>
+      <label>Your name (used as "You are chatting with {name}.")</label>
+      <input type="text" id="user_name" placeholder="e.g. Jeff" />
+    </div>
+    <div>
       <label>System message</label>
       <textarea id="system_message" placeholder="You are a helpful assistant."></textarea>
     </div>
@@ -174,17 +181,19 @@ HTML_PAGE = """<!DOCTYPE html>
 
   <div class="card">
     <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Telegram</h2>
+    <p class="status" style="margin-bottom:0.75rem;">Use <strong>long polling</strong> (default): no public URL or HTTPS needed. The bot pulls updates from Telegram.</p>
     <div>
       <label>Bot token (from @BotFather)</label>
       <input type="password" id="telegram_bot_token" placeholder="123456:ABC-DEF..." autocomplete="off" />
     </div>
     <div class="row">
       <div>
-        <label>Listener port (webhook)</label>
-        <input type="number" id="telegram_listener_port" min="1" max="65535" placeholder="8443" />
+        <label><input type="checkbox" id="use_polling" checked /> Use long polling</label>
+        <span class="status" style="display:block;margin-top:-0.5rem;">Recommended: no port or HTTPS</span>
       </div>
       <div>
-        <label><input type="checkbox" id="use_polling" checked /> Use long polling (no port/HTTPS needed)</label>
+        <label>Listener port (webhook only)</label>
+        <input type="number" id="telegram_listener_port" min="1" max="65535" placeholder="8443" />
       </div>
     </div>
     <div id="webhook_url_row" style="display:none;">
@@ -219,6 +228,7 @@ HTML_PAGE = """<!DOCTYPE html>
       $('ollama_url').value = c.ollama_url || '';
       $('ollama_port').value = c.ollama_port ?? 11434;
       $('model').value = c.model || '';
+      $('user_name').value = c.user_name || '';
       $('system_message').value = c.system_message || '';
       $('telegram_bot_token').value = c.telegram_bot_token || '';
       $('telegram_listener_port').value = c.telegram_listener_port ?? 8443;
@@ -262,6 +272,7 @@ HTML_PAGE = """<!DOCTYPE html>
         ollama_url: $('ollama_url').value.trim() || 'http://localhost',
         ollama_port: parseInt($('ollama_port').value, 10) || 11434,
         model: $('model').value.trim() || 'llama3.2',
+        user_name: $('user_name').value.trim(),
         system_message: $('system_message').value.trim() || 'You are a helpful assistant.',
         telegram_bot_token: $('telegram_bot_token').value.trim(),
         telegram_listener_port: parseInt($('telegram_listener_port').value, 10) || 8443,

@@ -47,7 +47,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await update.message.chat.send_action("typing")
     base_url = config.ollama_base_url
     model = config.model
-    system = config.system_message.strip() or None
+    system_message = config.system_message.strip() or ""
+    if config.user_name and config.user_name.strip():
+        system_message = f"You are chatting with {config.user_name.strip()}.\n\n{system_message}".strip()
+    system = system_message or None
     try:
         loop = asyncio.get_event_loop()
         response = await loop.run_in_executor(
