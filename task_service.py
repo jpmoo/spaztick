@@ -6,10 +6,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from ulid import ULID
+try:
+    from ulid import ULID
+    def _new_task_id() -> str:
+        return str(ULID())
+except ImportError:
+    def _new_task_id() -> str:
+        return str(uuid.uuid4())
 
 from database import get_connection, get_db_path, init_database
 
@@ -65,7 +72,7 @@ def create_task(
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if priority is not None and (priority < PRIORITY_MIN or priority > PRIORITY_MAX):
         raise ValueError(f"priority must be {PRIORITY_MIN}-{PRIORITY_MAX}")
-    tid = task_id or str(ULID())
+    tid = task_id or _new_task_id()
     now = _now_iso()
     rec_json = json.dumps(recurrence) if recurrence else None
     priority_val = priority if priority is not None else 0
