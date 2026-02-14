@@ -34,9 +34,16 @@ When creating a task:
 
 If insufficient information is provided, ask a clarification question instead of calling a tool.
 
-Respond with exactly one JSON object in this form when calling a tool:
-{"name": "task_create", "parameters": {"title": "...", ...}}
-Use "parameters" for the task_create arguments (title, description, notes, status, priority, projects, tags, available_date, due_date).
+You MUST use this exact structure when creating a task. The top-level object must have "name" and "parameters"; the task fields go inside "parameters". Only this format will execute the tool. Do not return task fields at the top level.
+
+To create a task, respond with:
+{"name": "task_create", "parameters": {"title": "Your task title", "description": "...", "due_date": "YYYY-MM-DD", ...}}
+
+To list all tasks, respond with:
+{"name": "task_list", "parameters": {}}
+
+Wrong (will NOT run—only the wrapper format above will):
+{"title": "...", "description": "..."}
 """
 
 # task_create schema: required title; optional description, notes, status (inbox|active|blocked), priority (0-3), projects[], tags[], available_date, due_date
@@ -110,7 +117,7 @@ def _extract_json_object(text: str) -> dict | None:
 
 
 def _parse_tool_call(response_text: str) -> tuple[str, dict[str, Any]] | None:
-    """Extract a single JSON tool call from the response. Returns (name, parameters) or None."""
+    """Extract a proper tool call from the response. Returns (name, parameters) or None. Only accepts explicit form: {"name": "task_create", "parameters": {...}}."""
     obj = _extract_json_object(response_text)
     if not obj or not isinstance(obj, dict):
         return None
@@ -138,6 +145,26 @@ def _canonical_task_response(task: dict[str, Any]) -> dict[str, Any]:
         "updated_at": task.get("updated_at"),
         "completed_at": task.get("completed_at"),
     }
+
+
+def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50) -> str:
+    """Format a list of tasks as a user-friendly message for Telegram."""
+    if not tasks:
+        return "No tasks yet."
+    total = len(tasks)
+    show = tasks[:max_show]
+    lines = [f"Tasks ({total}):"]
+    for i, t in enumerate(show, 1):
+        title = (t.get("title") or "").strip() or "(no title)"
+        status = t.get("status") or "inbox"
+        due = t.get("due_date")
+        part = f"{i}. {title} [{status}]"
+        if due:
+            part += f" — due {due}"
+        lines.append(part)
+    if total > max_show:
+        lines.append(f"... and {total - max_show} more.")
+    return "\n".join(lines)
 
 
 def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system_prefix: str) -> str:
@@ -186,9 +213,15 @@ def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system
         return response_text.strip() or "I didn't understand. You can ask me to create a task (give at least a title)."
 
     name, params = parsed
+    if name == "task_list":
+        try:
+            from task_service import list_tasks as svc_list_tasks
+            tasks = svc_list_tasks(limit=500)
+        except Exception as e:
+            return f"Error listing tasks: {e}"
+        return _format_task_list_for_telegram(tasks)
     if name != "task_create":
-        # Future: task_update, task_complete, task_list
-        return response_text.strip() or f"Tool '{name}' is not implemented yet. You can say 'Create a task: ...' to use task_create."
+        return response_text.strip() or f"Tool '{name}' is not implemented yet."
 
     try:
         validated = _validate_task_create(params)
