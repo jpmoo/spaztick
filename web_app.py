@@ -32,7 +32,7 @@ class ConfigUpdate(BaseModel):
     telegram_bot_token: str = ""
     telegram_listener_port: int = Field(8443, ge=1, le=65535)
     webhook_public_url: str = ""
-    web_ui_port: int = Field(8080, ge=1, le=65535)
+    web_ui_port: int = Field(8081, ge=1, le=65535)
     use_polling: bool = True
 
 
@@ -194,7 +194,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="row">
       <div>
         <label>Web UI port</label>
-        <input type="number" id="web_ui_port" min="1" max="65535" placeholder="8080" />
+        <input type="number" id="web_ui_port" min="1" max="65535" placeholder="8081" />
       </div>
     </div>
     <p class="status" id="telegram_status">Telegram service: not running</p>
@@ -223,7 +223,7 @@ HTML_PAGE = """<!DOCTYPE html>
       $('telegram_bot_token').value = c.telegram_bot_token || '';
       $('telegram_listener_port').value = c.telegram_listener_port ?? 8443;
       $('webhook_public_url').value = c.webhook_public_url || '';
-      $('web_ui_port').value = c.web_ui_port ?? 8080;
+      $('web_ui_port').value = c.web_ui_port ?? 8081;
       $('use_polling').checked = c.use_polling !== false;
       $('webhook_url_row').style.display = usePolling() ? 'none' : 'block';
     }
@@ -266,7 +266,7 @@ HTML_PAGE = """<!DOCTYPE html>
         telegram_bot_token: $('telegram_bot_token').value.trim(),
         telegram_listener_port: parseInt($('telegram_listener_port').value, 10) || 8443,
         webhook_public_url: $('webhook_public_url').value.trim(),
-        web_ui_port: parseInt($('web_ui_port').value, 10) || 8080,
+        web_ui_port: parseInt($('web_ui_port').value, 10) || 8081,
         use_polling: usePolling()
       };
       try {

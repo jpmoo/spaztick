@@ -30,7 +30,7 @@ pip install -r requirements.txt
 python run.py
 ```
 
-- Web UI: http://localhost:8080 (configurable in the UI).
+- Web UI: http://localhost:8081 (configurable in the UI).
 - Telegram bot runs as a subprocess; use **Restart Telegram service** in the UI after changing token or mode.
 
 **Web UI only:**
@@ -47,7 +47,7 @@ python telegram_bot.py
 
 ## Configuration (Web UI)
 
-1. Open http://localhost:8080 (or the port you set).
+1. Open http://localhost:8081 (or the port you set).
 2. **Ollama**: Set URL (e.g. `http://localhost`) and port (default 11434). Click **Refresh models** to load the model list, then choose a model. Set the **system message** if desired.
 3. **Telegram**: Paste your bot token. Choose:
    - **Use long polling** (default): No port or HTTPS needed; the bot pulls updates from Telegram. Easiest for development and home use.
