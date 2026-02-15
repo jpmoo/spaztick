@@ -168,6 +168,7 @@ def api_update_task(task_id: str, body: dict):
         priority=body.get("priority") if body.get("priority") is not None else None,
         available_date=body.get("available_date") or None,
         due_date=body.get("due_date") or None,
+        flagged=body.get("flagged") if "flagged" in body else None,
     )
     if "projects" in body:
         for pid in t.get("projects") or []:
@@ -404,6 +405,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="modal">
       <h3>Edit task</h3>
       <input type="hidden" id="task_id" />
+      <div><label><input type="checkbox" id="task_flagged" /> Flagged</label></div>
       <div><label>Number (for reference)</label><input type="text" id="task_number_display" readonly /></div>
       <div><label>ID (read-only)</label><input type="text" id="task_id_display" readonly /></div>
       <div><label>Title</label><input type="text" id="task_title" /></div>
@@ -645,6 +647,7 @@ HTML_PAGE = """<!DOCTYPE html>
         .then(r => r.json())
         .then(t => {
           $('task_id').value = t.id;
+          $('task_flagged').checked = t.flagged === true || t.flagged === 1;
           $('task_number_display').value = t.number != null ? String(t.number) : '';
           $('task_id_display').value = t.id;
           $('task_title').value = t.title || '';
@@ -680,6 +683,7 @@ HTML_PAGE = """<!DOCTYPE html>
         priority: $('task_priority').value === '' ? null : parseInt($('task_priority').value, 10),
         available_date: $('task_available_date').value.trim() || null,
         due_date: $('task_due_date').value.trim() || null,
+        flagged: $('task_flagged').checked,
         projects,
         tags
       };
