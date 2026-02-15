@@ -12,11 +12,13 @@ from typing import Any
 logger = logging.getLogger("orchestrator")
 
 # Tool contract: only title required; never mention JSON to the user
-SYSTEM_PROMPT = """You are the AI orchestrator for Spaztick. You do not modify the database directly.
+SYSTEM_PROMPT = """You are the AI orchestrator for Spaztick. You help with tasks and projects, and you are also conversational.
 
-CRITICAL: You must respond ONLY with a single JSON object—no other text, no explanations, no suggestions. Never answer with conversational replies when the user is asking about tasks or projects. If the user says "list tasks", output only the task_list JSON. If the user says "tell me about 1", "about task 1", "task #1", or "task 1" (or any number in a task context), output only task_info with that number. Do not interpret "1" as the number one in general; in this chat it means task 1. Do not list generic services (scheduling, reminders, etc.)—use the tools.
+When the user clearly asks for a task or project operation (list tasks, create a task, tell me about task 1, delete project X, etc.), respond with ONLY a single JSON object—the appropriate tool call. No other text, no preamble. Do not tell the user about JSON; just output the JSON.
 
-When the user wants to create, update, complete, list, or get info on tasks or projects, respond ONLY with the corresponding JSON tool call. Do not tell the user about JSON or formats. Just output the JSON with no other text.
+When the user is just chatting, greeting you, saying thanks, or asking something that does not match any tool (e.g. "Hi", "What's the weather?", "How are you?"), reply in normal conversational language. Do NOT output JSON. Be friendly and helpful. If they ask something off-topic, you can answer briefly and offer to help with tasks or projects if they’d like.
+
+So: tool request -> only the JSON tool call. Non-tool message -> conversational reply.
 
 Available tools: task_create, task_list, task_info, delete_task, project_create, project_list, project_info, delete_project.
 
@@ -45,8 +47,10 @@ Output format: {"name": "project_info", "parameters": {"short_id": "1off"}}.
 delete_project: User identifies the project by its friendly id (short_id, e.g. "1off" or "work"). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete. Deleting a project removes it from all tasks that use it; some tasks may end up with no project assignments.
 Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}. Use "short_id" (the project's friendly id from project_list).
 
-Important for task_create: Do NOT use generic phrases as the task title. If the user only says "new task", "create a task", "add a task", "new", "task", or similar without giving an actual task title or describing what the task is, do NOT call task_create with that phrase as the title. Instead respond in plain language asking once for the task title. Only call task_create when the user has provided a real title or clearly described the task (e.g. "Buy milk", "Roast coffee due Monday").
-Same for project_create: only call when the user has provided a real project name (e.g. "Work", "1-Off Tasks"), not generic phrases like "new project" or "a project".
+When the user asks about a task or project by number/short_id (e.g. "tell me about 1", "about task #1", "what about project 1off"), output the task_info or project_info JSON—do not answer with general knowledge or ask what they mean. In this chat, "1" in a task context means task 1.
+
+Important for task_create: Do NOT use generic phrases as the task title. If the user only says "new task", "create a task", "add a task", or similar without giving an actual title, respond in plain language asking once for the task title (conversational reply, no JSON). Only call task_create when they have given a real title (e.g. "Buy milk").
+Same for project_create: only call when they have given a real project name. Otherwise reply conversationally.
 """
 
 # task_create schema: required title; optional description, notes, priority (0-3), projects[], tags[], available_date, due_date. Status is always incomplete on create.
@@ -247,7 +251,7 @@ def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
     status = task.get("status") or "incomplete"
     due = task.get("due_date")
     num = task.get("number")
-    prefix = f"Task #{num} created: " if num is not None else "Task created: "
+    prefix = f"Task {num} created: " if num is not None else "Task created: "
     msg = prefix + f"{title} [{status}]"
     if due:
         msg += f" — due {due}"
@@ -255,21 +259,39 @@ def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
 
 
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50) -> str:
-    """Format a list of tasks as a user-friendly message for Telegram. Uses task number (friendly id) only."""
+    """Format task list: [⭐ if flagged] □/■ title (#n) [avail] [due] [name (short_id)...]"""
     if not tasks:
         return "No tasks yet."
     total = len(tasks)
     show = tasks[:max_show]
     lines = [f"Tasks ({total}):"]
+    try:
+        from project_service import get_project
+    except ImportError:
+        get_project = None
     for t in show:
-        title = (t.get("title") or "").strip() or "(no title)"
+        flagged = t.get("flagged") in (1, True, "1")
         status = t.get("status") or "incomplete"
-        due = t.get("due_date")
+        status_icon = "■" if status == "complete" else "□"
+        star = "⭐ " if flagged else ""
+        title = (t.get("title") or "").strip() or "(no title)"
         num = t.get("number")
-        label = f"#{num}" if num is not None else (t.get("id") or "")[:8]
-        part = f"{label}. {title} [{status}]"
-        if due:
-            part += f" — due {due}"
+        friendly_id = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
+        part = f"{star}{status_icon} {title} {friendly_id}"
+        if t.get("available_date"):
+            part += f" avail {t['available_date']}"
+        if t.get("due_date"):
+            part += f" due {t['due_date']}"
+        project_parts = []
+        if get_project and t.get("projects"):
+            for pid in t["projects"]:
+                p = get_project(pid)
+                if p:
+                    name = (p.get("name") or "").strip() or "(no name)"
+                    short_id = (p.get("short_id") or "").strip() or p.get("id", "")[:8]
+                    project_parts.append(f"{name} ({short_id})")
+        if project_parts:
+            part += " " + " ".join(project_parts)
         lines.append(part)
     if total > max_show:
         lines.append(f"... and {total - max_show} more.")
@@ -285,10 +307,15 @@ def _format_project_created_for_telegram(project: dict[str, Any]) -> str:
     return prefix + f"{name} [{status}]."
 
 
-def _format_task_info_text(task: dict[str, Any], parent_tasks: list[dict[str, Any]], subtasks: list[dict[str, Any]]) -> str:
-    """User-friendly full task description with parents and subtasks."""
+def _format_task_info_text(
+    task: dict[str, Any],
+    parent_tasks: list[dict[str, Any]],
+    subtasks: list[dict[str, Any]],
+    project_labels: list[str] | None = None,
+) -> str:
+    """User-friendly full task description with parents and subtasks. project_labels = [short_id: name] per project."""
     num = task.get("number")
-    label = f"#{num}" if num is not None else task.get("id", "")[:8]
+    label = str(num) if num is not None else task.get("id", "")[:8]
     title = (task.get("title") or "").strip() or "(no title)"
     lines = [f"Task {label}: {title}", f"Status: {task.get('status') or 'incomplete'}"]
     if task.get("priority") is not None:
@@ -301,17 +328,19 @@ def _format_task_info_text(task: dict[str, Any], parent_tasks: list[dict[str, An
         lines.append(f"Available: {task['available_date']}")
     if task.get("due_date"):
         lines.append(f"Due: {task['due_date']}")
-    if task.get("projects"):
+    if project_labels:
+        lines.append(f"Projects: {', '.join(project_labels)}")
+    elif task.get("projects"):
         lines.append(f"Projects: {', '.join(task['projects'])}")
     if task.get("tags"):
         lines.append(f"Tags: {', '.join(task['tags'])}")
     if parent_tasks:
-        parent_parts = [f"#{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in parent_tasks if t.get("number") is not None]
+        parent_parts = [f"{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in parent_tasks if t.get("number") is not None]
         if not parent_parts:
             parent_parts = [t.get("id", "")[:8] for t in parent_tasks]
         lines.append("Depends on (parent tasks): " + ", ".join(parent_parts))
     if subtasks:
-        sub_parts = [f"#{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in subtasks if t.get("number") is not None]
+        sub_parts = [f"{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in subtasks if t.get("number") is not None]
         if not sub_parts:
             sub_parts = [t.get("id", "")[:8] for t in subtasks]
         lines.append("Subtasks (tasks that depend on this): " + ", ".join(sub_parts))
@@ -350,13 +379,13 @@ def _format_project_info_text(
     lines.append("Tasks:")
     for task, subtasks in tasks_with_subtasks:
         num = task.get("number")
-        label = f"#{num}" if num is not None else task.get("id", "")[:8]
+        label = str(num) if num is not None else task.get("id", "")[:8]
         title = (task.get("title") or "").strip() or "(no title)"
         status = task.get("status") or "incomplete"
         due = f" — due {task['due_date']}" if task.get("due_date") else ""
         lines.append(f"  {label}. {title} [{status}]{due}")
         if subtasks:
-            sub_parts = [f"#{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in subtasks if t.get("number") is not None]
+            sub_parts = [f"{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in subtasks if t.get("number") is not None]
             if not sub_parts:
                 sub_parts = [t.get("id", "")[:8] for t in subtasks]
             lines.append("    Subtasks: " + ", ".join(sub_parts))
@@ -449,7 +478,7 @@ def run_orchestrator(
     if not parsed:
         text = response_text.strip() or "I didn't understand. You can ask me to create or list tasks or projects."
         if _looks_like_json(text):
-            return ("I didn't understand. Try: \"Create a task: [title]\", \"List my tasks\", \"Delete task #1\", \"Create a project: [name]\", \"List my projects\", or \"Delete project 1off\".", False)
+            return ("I didn't understand. Try: \"Create a task: [title]\", \"List my tasks\", \"Delete task 1\", \"Create a project: [name]\", \"List my projects\", or \"Delete project 1off\".", False)
         return (text, False)
 
     name, params = parsed
@@ -521,41 +550,49 @@ def run_orchestrator(
     if name == "delete_task":
         num = _parse_task_number(params)
         if num is None:
-            return ("delete_task requires number (the task's friendly id, e.g. 1 or #1). List tasks to see numbers.", False)
+            return ("delete_task requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False)
         try:
             from task_service import get_task_by_number, delete_task
             task = get_task_by_number(num)
         except Exception as e:
             return (f"Error looking up task: {e}", False)
         if not task:
-            return (f"No task #{num}. List tasks to see numbers.", False)
+            return (f"No task {num}. List tasks to see numbers.", False)
         if not _parse_confirm(params):
             title = (task.get("title") or "").strip() or "(no title)"
-            return (f"Delete task #{num} ({title})? This cannot be undone. Reply \"yes\" to confirm.", False)
+            return (f"Delete task {num} ({title})? This cannot be undone. Reply \"yes\" to confirm.", False)
         try:
             delete_task(task["id"])
         except Exception as e:
             return (f"Error deleting task: {e}", False)
-        return (f"Task #{num} deleted.", True)
+        return (f"Task {num} deleted.", True)
     if name == "task_info":
         num = _parse_task_number(params)
         if num is None:
-            return ("task_info requires number (the task's friendly id, e.g. 1 or #1). List tasks to see numbers.", False)
+            return ("task_info requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False)
         try:
             from task_service import get_task_by_number, get_task, get_tasks_that_depend_on
             task = get_task_by_number(num)
         except Exception as e:
             return (f"Error loading task: {e}", False)
         if not task:
-            return (f"No task #{num}. List tasks to see numbers.", False)
+            return (f"No task {num}. List tasks to see numbers.", False)
         try:
+            from project_service import get_project
             parent_tasks: list[dict[str, Any]] = []
             for dep_id in task.get("depends_on") or []:
                 pt = get_task(dep_id)
                 if pt:
                     parent_tasks.append(pt)
             subtasks = get_tasks_that_depend_on(task["id"])
-            return (_format_task_info_text(task, parent_tasks, subtasks), True)
+            project_labels: list[str] = []
+            for pid in task.get("projects") or []:
+                p = get_project(pid)
+                if p:
+                    short_id = (p.get("short_id") or "").strip() or p.get("id", "")[:8]
+                    name = (p.get("name") or "").strip() or "(no name)"
+                    project_labels.append(f"{short_id}: {name}")
+            return (_format_task_info_text(task, parent_tasks, subtasks, project_labels), True)
         except Exception as e:
             return (f"Error loading task details: {e}", False)
     if name == "task_list":

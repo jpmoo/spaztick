@@ -66,6 +66,7 @@ def create_task(
     recurrence: dict | None = None,
     recurrence_parent_id: str | None = None,
     task_id: str | None = None,
+    flagged: bool = False,
 ) -> dict[str, Any]:
     """Create a single task. All mutations go through Task Service. Uses ULID for id."""
     if status not in STATUSES:
@@ -78,18 +79,19 @@ def create_task(
     conn = get_connection()
     try:
         use_number = has_number_column(conn)
+        flag_val = 1 if flagged else 0
         if use_number:
             next_num = conn.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM tasks").fetchone()[0]
             conn.execute(
                 """INSERT INTO tasks (
                     id, number, title, description, notes, status, priority,
                     available_date, due_date, recurrence, recurrence_parent_id,
-                    created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, updated_at, completed_at, flagged
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     tid, next_num, title, description or None, notes or None, status, priority,
                     available_date, due_date, rec_json, recurrence_parent_id,
-                    now, now, None,
+                    now, now, None, flag_val,
                 ),
             )
         else:
@@ -97,12 +99,12 @@ def create_task(
                 """INSERT INTO tasks (
                     id, title, description, notes, status, priority,
                     available_date, due_date, recurrence, recurrence_parent_id,
-                    created_at, updated_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, updated_at, completed_at, flagged
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     tid, title, description or None, notes or None, status, priority,
                     available_date, due_date, rec_json, recurrence_parent_id,
-                    now, now, None,
+                    now, now, None, flag_val,
                 ),
             )
         for project_id in projects or []:
@@ -225,7 +227,15 @@ def list_tasks(
         sql += f" {order} LIMIT ?"
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
-        return [_task_row_to_dict(r) for r in rows]
+        out = [_task_row_to_dict(r) for r in rows]
+        for t in out:
+            tid = t.get("id")
+            if tid:
+                projs = conn.execute("SELECT project_id FROM task_projects WHERE task_id = ?", (tid,)).fetchall()
+                t["projects"] = [p[0] for p in projs]
+            else:
+                t["projects"] = []
+        return out
     finally:
         conn.close()
 
@@ -240,6 +250,7 @@ def update_task(
     priority: int | None = None,
     available_date: str | None = None,
     due_date: str | None = None,
+    flagged: bool | None = None,
 ) -> dict[str, Any] | None:
     """Update task fields. Only provided fields are changed."""
     if status is not None and status not in STATUSES:
@@ -270,6 +281,8 @@ def update_task(
             updates.append("available_date = ?"); params.append(available_date)
         if due_date is not None:
             updates.append("due_date = ?"); params.append(due_date)
+        if flagged is not None:
+            updates.append("flagged = ?"); params.append(1 if flagged else 0)
         params.append(task_id)
         conn.execute(f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?", params)
         _record_history(conn, task_id, "updated", {"updated_at": now})

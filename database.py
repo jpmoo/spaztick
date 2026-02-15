@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     completed_at TEXT,
+    flagged INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (recurrence_parent_id) REFERENCES tasks(id)
 );
 
@@ -146,6 +147,12 @@ def init_database(path: Path | None = None) -> Path:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_number ON tasks(number)")
     # Migration: status only incomplete | complete (recreate table if old CHECK exists)
     _migrate_status_to_incomplete_complete(conn)
+    # Migration: add flagged column if missing
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
     conn.commit()
     conn.close()
     return db_path
@@ -186,6 +193,7 @@ def _migrate_status_to_incomplete_complete(conn: sqlite3.Connection) -> None:
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             completed_at TEXT,
+            flagged INTEGER NOT NULL DEFAULT 0,
             FOREIGN KEY (recurrence_parent_id) REFERENCES tasks(id)
         )
     """)
@@ -194,7 +202,8 @@ def _migrate_status_to_incomplete_complete(conn: sqlite3.Connection) -> None:
         SELECT id, number, title, description, notes,
                CASE WHEN status = 'done' THEN 'complete' ELSE 'incomplete' END,
                priority, available_date, due_date, recurrence, recurrence_parent_id,
-               created_at, updated_at, completed_at
+               created_at, updated_at, completed_at,
+               0
         FROM tasks
     """)
     conn.execute("DROP TABLE tasks")
