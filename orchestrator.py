@@ -294,7 +294,7 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         flagged = t.get("flagged") in (1, True, "1")
         status = t.get("status") or "incomplete"
         status_icon = "■" if status == "complete" else "□"
-        star = "⭐ " if flagged else "☆ "
+        star = "★ " if flagged else " "
         title = (t.get("title") or "").strip() or "(no title)"
         num = t.get("number")
         friendly_id = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
