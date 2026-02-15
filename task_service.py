@@ -78,14 +78,15 @@ def create_task(
     priority_val = priority if priority is not None else 0
     conn = get_connection()
     try:
+        next_num = conn.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM tasks").fetchone()[0]
         conn.execute(
             """INSERT INTO tasks (
-                id, title, description, notes, status, priority,
+                id, number, title, description, notes, status, priority,
                 available_date, due_date, recurrence, recurrence_parent_id,
                 created_at, updated_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                tid, title, description or None, notes or None, status, priority_val,
+                tid, next_num, title, description or None, notes or None, status, priority_val,
                 available_date, due_date, rec_json, recurrence_parent_id,
                 now, now, None,
             ),
@@ -117,9 +118,28 @@ def get_task(task_id: str) -> dict[str, Any] | None:
         if not row:
             return None
         out = _task_row_to_dict(row)
-        out["projects"] = [r[0] for r in conn.execute("SELECT project_id FROM task_projects WHERE task_id = ?", (task_id,))]
-        out["tags"] = [r[0] for r in conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (task_id,))]
-        out["depends_on"] = [r[0] for r in conn.execute("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?", (task_id,))]
+        _add_task_relations(conn, out)
+        return out
+    finally:
+        conn.close()
+
+
+def _add_task_relations(conn: sqlite3.Connection, out: dict[str, Any]) -> None:
+    tid = out["id"]
+    out["projects"] = [r[0] for r in conn.execute("SELECT project_id FROM task_projects WHERE task_id = ?", (tid,))]
+    out["tags"] = [r[0] for r in conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (tid,))]
+    out["depends_on"] = [r[0] for r in conn.execute("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?", (tid,))]
+
+
+def get_task_by_number(number: int) -> dict[str, Any] | None:
+    """Return one task by friendly number (user-facing id)."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM tasks WHERE number = ?", (number,)).fetchone()
+        if not row:
+            return None
+        out = _task_row_to_dict(row)
+        _add_task_relations(conn, out)
         return out
     finally:
         conn.close()

@@ -18,6 +18,7 @@ _SCHEMA = """
 -- recurrence: JSON object or NULL; recurrence_parent_id links instances in chain
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
+    number INTEGER UNIQUE,
     title TEXT NOT NULL,
     description TEXT,
     notes TEXT,
@@ -33,6 +34,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     FOREIGN KEY (recurrence_parent_id) REFERENCES tasks(id)
 );
 
+CREATE INDEX IF NOT EXISTS idx_tasks_number ON tasks(number);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_parent ON tasks(recurrence_parent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_available_date ON tasks(available_date);
@@ -106,6 +108,19 @@ def init_database(path: Path | None = None) -> Path:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.executescript(_SCHEMA)
+    # Migration: add number column if missing (existing DBs)
+    try:
+        conn.execute("SELECT number FROM tasks LIMIT 1")
+    except sqlite3.OperationalError:
+        conn.execute("ALTER TABLE tasks ADD COLUMN number INTEGER")
+        # Backfill: assign 1, 2, 3... by created_at, id
+        conn.execute("""
+            UPDATE tasks SET number = (
+                SELECT 1 + COUNT(*) FROM tasks t2
+                WHERE t2.created_at < tasks.created_at
+                   OR (t2.created_at = tasks.created_at AND t2.id < tasks.id)
+            )
+        """)
     conn.commit()
     conn.close()
     return db_path

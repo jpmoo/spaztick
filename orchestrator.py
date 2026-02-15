@@ -138,7 +138,9 @@ def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
     title = (task.get("title") or "").strip() or "(no title)"
     status = task.get("status") or "inbox"
     due = task.get("due_date")
-    msg = f"Task created: {title} [{status}]"
+    num = task.get("number")
+    prefix = f"Task #{num} created: " if num is not None else "Task created: "
+    msg = prefix + f"{title} [{status}]"
     if due:
         msg += f" — due {due}"
     return msg + "."
@@ -155,7 +157,9 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         title = (t.get("title") or "").strip() or "(no title)"
         status = t.get("status") or "inbox"
         due = t.get("due_date")
-        part = f"{i}. {title} [{status}]"
+        num = t.get("number")
+        label = f"#{num}" if num is not None else str(i)
+        part = f"{label}. {title} [{status}]"
         if due:
             part += f" — due {due}"
         lines.append(part)

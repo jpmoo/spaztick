@@ -316,6 +316,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div class="modal">
       <h3>Edit task</h3>
       <input type="hidden" id="task_id" />
+      <div><label>Number (for reference)</label><input type="text" id="task_number_display" readonly /></div>
       <div><label>ID (read-only)</label><input type="text" id="task_id_display" readonly /></div>
       <div><label>Title</label><input type="text" id="task_title" /></div>
       <div><label>Description</label><textarea id="task_description"></textarea></div>
@@ -438,7 +439,8 @@ HTML_PAGE = """<!DOCTYPE html>
         statusEl.textContent = tasks.length + ' task(s)';
         el.innerHTML = tasks.slice(0, 100).map((t, i) => {
           const due = t.due_date ? ' — due ' + t.due_date : '';
-          return '<li data-id="' + t.id + '">' + (i + 1) + '. ' + (t.title || '(no title)') + ' [' + (t.status || 'inbox') + ']' + due + '</li>';
+          const label = t.number != null ? '#' + t.number : (i + 1);
+          return '<li data-id="' + t.id + '">' + label + '. ' + (t.title || '(no title)') + ' [' + (t.status || 'inbox') + ']' + due + '</li>';
         }).join('');
         el.querySelectorAll('li').forEach(li => li.addEventListener('click', () => openTaskModal(li.dataset.id)));
       } catch (e) {
@@ -452,6 +454,7 @@ HTML_PAGE = """<!DOCTYPE html>
         .then(r => r.json())
         .then(t => {
           $('task_id').value = t.id;
+          $('task_number_display').value = t.number != null ? '#' + t.number : '';
           $('task_id_display').value = t.id;
           $('task_title').value = t.title || '';
           $('task_description').value = t.description || '';
