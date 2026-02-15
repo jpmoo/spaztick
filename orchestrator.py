@@ -14,11 +14,11 @@ logger = logging.getLogger("orchestrator")
 # Tool contract: only title required; never mention JSON to the user
 SYSTEM_PROMPT = """You are the AI orchestrator for Spaztick. You help with tasks and projects, and you are also conversational.
 
-When the user clearly asks for a task or project operation (list tasks, create a task, tell me about task 1, delete project X, etc.), respond with ONLY a single JSON object—the appropriate tool call. No other text, no preamble. Do not tell the user about JSON; just output the JSON.
+When the user asks for any task or project operation (list tasks, show tasks, create a task, mark task 1 complete, tell me about task 1, list projects, delete project X, etc.), you MUST respond with ONLY the single JSON tool call. No other text. No "I'll list your tasks", no "Here they are", no greeting—only the raw JSON object. The user expects a command result, not chat.
 
 When the user is just chatting, greeting you, saying thanks, or asking something that does not match any tool (e.g. "Hi", "What's the weather?", "How are you?"), reply in normal conversational language. Do NOT output JSON. Be friendly and helpful. If they ask something off-topic, you can answer briefly and offer to help with tasks or projects if they’d like.
 
-So: tool request -> only the JSON tool call. Non-tool message -> conversational reply.
+CRITICAL — When the user asks to list/show/get/create/update/delete/view tasks or projects, reply with ONLY the JSON tool call. No preamble, no "Here are your tasks". Just {"name": "...", "parameters": {...}}. Rule: task/project command -> ONLY JSON. Chat -> conversational.
 
 Available tools: task_create, task_list, task_info, task_update, delete_task, project_create, project_list, project_info, delete_project.
 
@@ -27,17 +27,17 @@ Output format: {"name": "task_create", "parameters": {"title": "..."}} and add a
 
 task_list: "List tasks", "list my tasks", "show tasks", "gimme tasks in X available tomorrow", etc. must be answered with the task_list JSON only—never with generic task suggestions or "here are some tasks to consider". Any request that asks for tasks (optionally in a project, available/due on a date) is a task_list call. User can filter and sort.
 Never include completed tasks unless the user explicitly asks for them (e.g. "completed", "done", "finished") or asks for "all" tasks. When no status is given, always use status "incomplete". Do not send status "complete" unless the user clearly asked for completed/done tasks or "all tasks".
-Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag or tags, project or short_id, due_by, available_by, available_or_due_by, overdue, sort_by, flagged (true/false).
+Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag or tags, project or short_id, due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false).
 Overdue semantics: A task due today is NOT overdue unless the user says "overdue tomorrow" or asks on a later date. Use overdue (not due_by) when the user asks for "overdue" or "overdue tasks". overdue: true or overdue: "today" → tasks due yesterday or earlier; overdue: "tomorrow" → tasks due today or earlier.
 Dates: "today", "tomorrow", "yesterday", "now" (use "today")—app resolves them.
 Examples: "list overdue tasks" -> {"name": "task_list", "parameters": {"overdue": true, "status": "incomplete"}}. "overdue tomorrow" -> {"name": "task_list", "parameters": {"overdue": "tomorrow", "status": "incomplete"}}. "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "gimme tasks in 1off available tomorrow" -> {"name": "task_list", "parameters": {"short_id": "1off", "available_by": "tomorrow", "status": "incomplete"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}.
-Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id, due_by, available_by, available_or_due_by, overdue, sort_by, flagged.
+Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id, due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged.
 
 task_info: User identifies the task by its friendly id (number). "Tell me about 1", "about task 1", "task #1", "task 1", or just "1" after discussing tasks/projects always means task_info with that number. Never answer with general knowledge about the number—always call task_info.
 Output format: {"name": "task_info", "parameters": {"number": 1}} (use the number the user said).
 
-task_update: Change one task by number. Use for: mark complete/done ("mark task 1 complete", "do task 1", "task 1 done"), reopen ("reopen task 1", "task 1 incomplete"), flag/unflag ("flag task 2", "star task 2", "unflag task 2"), set due/available ("task 1 due tomorrow", "set task 3 due Monday", "task 2 available next week"), or edit title/description/notes/priority. Required: number (task's friendly id). Optional (send only what the user asked to change): status ("complete" or "incomplete"), flagged (true/false), due_date, available_date, title, description, notes, priority (0-3). Dates: natural language (today, tomorrow, Monday, next week)—app resolves them.
-Examples: "mark task 1 complete" -> {"name": "task_update", "parameters": {"number": 1, "status": "complete"}}. "reopen task 2" -> {"name": "task_update", "parameters": {"number": 2, "status": "incomplete"}}. "flag task 3" -> {"name": "task_update", "parameters": {"number": 3, "flagged": true}}. "task 1 due tomorrow" -> {"name": "task_update", "parameters": {"number": 1, "due_date": "tomorrow"}}. "task 2 available monday" -> {"name": "task_update", "parameters": {"number": 2, "available_date": "monday"}}.
+task_update: Change one task by number. You can update any attribute: status, flagged, due_date, available_date, title, description, notes, priority, projects (list of project short_ids or ids—replaces task's projects), tags (list of tag strings—replaces task's tags). Required: number (task's friendly id). Optional (send only what the user asked to change): status ("complete"/"incomplete"), flagged (true/false), due_date, available_date, title, description, notes, priority (0-3), projects (array), tags (array). Dates: natural language (today, tomorrow, Monday, next week)—app resolves them.
+Examples: "mark task 1 complete" -> {"name": "task_update", "parameters": {"number": 1, "status": "complete"}}. "reopen task 2" -> {"name": "task_update", "parameters": {"number": 2, "status": "incomplete"}}. "flag task 3" -> {"name": "task_update", "parameters": {"number": 3, "flagged": true}}. "task 1 due tomorrow" -> {"name": "task_update", "parameters": {"number": 1, "due_date": "tomorrow"}}. "add task 1 to project 1off" or "task 1 project 1off" -> {"name": "task_update", "parameters": {"number": 1, "projects": ["1off"]}}. "task 2 tags work urgent" -> {"name": "task_update", "parameters": {"number": 2, "tags": ["work", "urgent"]}}.
 Output format: {"name": "task_update", "parameters": {"number": N, ...}} with only the fields being changed.
 
 delete_task: User identifies the task by its friendly id (the task number, e.g. 1 or #1). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete.
@@ -124,7 +124,7 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
                 out["due_by"] = (d - timedelta(days=1)).isoformat()
             except (ValueError, TypeError):
                 pass
-    for key in ("due_by", "available_by", "available_or_due_by"):
+    for key in ("due_by", "available_by", "available_or_due_by", "completed_by", "completed_after"):
         if key in out:
             continue  # already set (e.g. from overdue)
         val = params.get(key)
@@ -133,6 +133,8 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
         resolved = resolve_relative_date(str(val).strip(), tz_name)
         if resolved:
             out[key] = resolved
+    if params.get("title_contains") is not None and str(params["title_contains"]).strip():
+        out["title_contains"] = str(params["title_contains"]).strip()
     if params.get("sort_by") and str(params["sort_by"]).strip():
         out["sort_by"] = str(params["sort_by"]).strip()
     if "flagged" in params:
@@ -227,7 +229,7 @@ def _validate_project_create(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_task_update(params: dict[str, Any], tz_name: str = "UTC") -> dict[str, Any]:
-    """Validate and normalize task_update parameters. number required; optional status, flagged, due_date, available_date, title, description, notes, priority. Raises ValueError if number missing."""
+    """Validate and normalize task_update parameters. number required; optional status, flagged, due_date, available_date, title, description, notes, priority, projects (list), tags (list). Raises ValueError if number missing."""
     if not isinstance(params, dict):
         raise ValueError("parameters must be an object")
     num = _parse_task_number(params)
@@ -261,6 +263,14 @@ def _validate_task_update(params: dict[str, Any], tz_name: str = "UTC") -> dict[
                 out["priority"] = p
         except (TypeError, ValueError):
             pass
+    if "projects" in params and params["projects"] is not None:
+        if not isinstance(params["projects"], list):
+            raise ValueError("projects must be an array of project short_ids or ids")
+        out["projects"] = [str(x).strip() for x in params["projects"] if str(x).strip()]
+    if "tags" in params and params["tags"] is not None:
+        if not isinstance(params["tags"], list):
+            raise ValueError("tags must be an array of strings")
+        out["tags"] = [str(x).strip() for x in params["tags"] if str(x).strip()]
     return out
 
 
@@ -297,6 +307,26 @@ def _parse_tool_call(response_text: str) -> tuple[str, dict[str, Any]] | None:
     if not name:
         return None
     return (str(name).strip(), params if isinstance(params, dict) else {})
+
+
+def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any]] | None:
+    """If the user message is clearly a list/show tasks or list/show projects command, return (tool_name, params) so we can run the tool even when the model replied conversationally. Conservative: only list/show tasks/projects (bare or with trailing filter words)."""
+    if not user_message or not isinstance(user_message, str):
+        return None
+    msg = user_message.strip().lower()
+    if not msg:
+        return None
+    # List/show tasks — match at start (allows "list tasks", "list tasks due today", "gimme tasks in 1off")
+    if re.match(r"^(list|show|get|gimme|display|what are my|give me)\s+(my\s+)?tasks?\b", msg):
+        return ("task_list", {"status": "incomplete"})
+    if re.match(r"^tasks\s*$", msg) or re.match(r"^my tasks\s*$", msg):
+        return ("task_list", {"status": "incomplete"})
+    # List/show projects
+    if re.match(r"^(list|show|get|gimme|display)\s+(my\s+)?projects?\b", msg):
+        return ("project_list", {})
+    if re.match(r"^projects\s*$", msg) or re.match(r"^my projects\s*$", msg):
+        return ("project_list", {})
+    return None
 
 
 def _canonical_task_response(task: dict[str, Any]) -> dict[str, Any]:
@@ -567,7 +597,12 @@ def run_orchestrator(
     if parsed:
         logger.info("LLM tool_call parsed name=%s parameters=%s", parsed[0], json.dumps(parsed[1]))
     else:
-        logger.info("LLM response is not a tool call, returning as-is")
+        inferred = _infer_tool_from_user_message(user_message)
+        if inferred:
+            logger.info("LLM did not return tool call; inferred from user message: name=%s parameters=%s", inferred[0], json.dumps(inferred[1]))
+            parsed = inferred
+        else:
+            logger.info("LLM response is not a tool call, returning as-is")
     if not parsed:
         text = response_text.strip() or "I didn't understand. You can ask me to create or list tasks or projects."
         if _looks_like_json(text):
@@ -706,6 +741,9 @@ def run_orchestrator(
                 due_by=validated.get("due_by"),
                 available_by=validated.get("available_by"),
                 available_or_due_by=validated.get("available_or_due_by"),
+                completed_by=validated.get("completed_by"),
+                completed_after=validated.get("completed_after"),
+                title_contains=validated.get("title_contains"),
                 sort_by=validated.get("sort_by"),
                 flagged=validated.get("flagged"),
             )
@@ -727,21 +765,48 @@ def run_orchestrator(
         validated = resolve_task_dates(validated, tz_name)
         num = validated.pop("number")
         try:
-            from task_service import get_task_by_number, update_task
+            from task_service import get_task_by_number, update_task, remove_task_project, add_task_project, remove_task_tag, add_task_tag
             task = get_task_by_number(num)
         except Exception as e:
             return (f"Error looking up task: {e}", False)
         if not task:
             return (f"No task {num}. List tasks to see numbers.", False)
-        kwargs = {k: v for k, v in validated.items() if v is not None}
-        if not kwargs:
-            return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, or priority.", False)
-        try:
-            updated = update_task(task["id"], **kwargs)
-        except Exception as e:
-            return (f"Error updating task: {e}", False)
-        if not updated:
-            return (f"Task {num} not found.", False)
+        task_id = task["id"]
+        scalar_keys = ("status", "flagged", "due_date", "available_date", "title", "description", "notes", "priority")
+        kwargs = {k: v for k, v in validated.items() if k in scalar_keys and v is not None}
+        has_projects = "projects" in validated
+        has_tags = "tags" in validated
+        if not kwargs and not has_projects and not has_tags:
+            return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, or tags.", False)
+        if kwargs:
+            try:
+                updated = update_task(task_id, **kwargs)
+            except Exception as e:
+                return (f"Error updating task: {e}", False)
+            if not updated:
+                return (f"Task {num} not found.", False)
+        if has_projects:
+            try:
+                from project_service import get_project_by_short_id
+                for pid in task.get("projects") or []:
+                    remove_task_project(task_id, pid)
+                for ref in validated["projects"]:
+                    if not ref:
+                        continue
+                    p = get_project_by_short_id(ref)
+                    project_id = p["id"] if p else ref
+                    add_task_project(task_id, str(project_id))
+            except Exception as e:
+                return (f"Error updating task projects: {e}", False)
+        if has_tags:
+            try:
+                for tag in task.get("tags") or []:
+                    remove_task_tag(task_id, tag)
+                for tag in validated["tags"]:
+                    if tag:
+                        add_task_tag(task_id, tag)
+            except Exception as e:
+                return (f"Error updating task tags: {e}", False)
         parts = []
         if "status" in kwargs:
             parts.append("complete" if kwargs["status"] == "complete" else "reopened")
@@ -755,6 +820,10 @@ def run_orchestrator(
             parts.append("title updated")
         if "description" in kwargs or "notes" in kwargs or "priority" in kwargs:
             parts.append("updated")
+        if has_projects:
+            parts.append("projects updated")
+        if has_tags:
+            parts.append("tags updated")
         msg = f"Task {num} " + (", ".join(parts) if parts else "updated") + "."
         return (msg, True)
     if name != "task_create":

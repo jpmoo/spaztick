@@ -183,13 +183,17 @@ def list_tasks(
     due_by: str | None = None,
     available_by: str | None = None,
     available_or_due_by: str | None = None,
+    completed_by: str | None = None,
+    completed_after: str | None = None,
+    title_contains: str | None = None,
     sort_by: str | None = None,
     flagged: bool | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """List tasks with optional filters. Returns minimal task dicts (no projects/tags/deps).
-    due_by, available_by, available_or_due_by are ISO date strings (YYYY-MM-DD).
-    sort_by: due_date, available_date, created_at, title (default created_at DESC).
+    due_by, available_by, available_or_due_by, completed_by, completed_after are ISO date strings (YYYY-MM-DD).
+    title_contains: substring match on title (case-insensitive).
+    sort_by: due_date, available_date, created_at, completed_at, title (default created_at DESC).
     """
     conn = get_connection()
     try:
@@ -214,6 +218,15 @@ def list_tasks(
             sql += " AND ((available_date IS NULL OR date(available_date) <= date(?)) OR (due_date IS NULL OR date(due_date) <= date(?)))"
             params.append(available_or_due_by)
             params.append(available_or_due_by)
+        if completed_by:
+            sql += " AND completed_at IS NOT NULL AND date(completed_at) <= date(?)"
+            params.append(completed_by)
+        if completed_after:
+            sql += " AND completed_at IS NOT NULL AND date(completed_at) >= date(?)"
+            params.append(completed_after)
+        if title_contains and title_contains.strip():
+            sql += " AND title LIKE ?"
+            params.append(f"%{title_contains.strip()}%")
         if flagged is not None:
             sql += " AND flagged = ?"
             params.append(1 if flagged else 0)
@@ -228,6 +241,8 @@ def list_tasks(
                 order = "ORDER BY title ASC, created_at DESC"
             elif sort_by_lower == "created_at":
                 order = "ORDER BY created_at DESC"
+            elif sort_by_lower == "completed_at":
+                order = "ORDER BY completed_at IS NULL, completed_at DESC, created_at DESC"
         sql += f" {order} LIMIT ?"
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
@@ -267,6 +282,7 @@ def update_task(
         if not row:
             return None
         now = _now_iso()
+        # Always touch updated_at; set completed_at when marking complete
         updates: list[str] = ["updated_at = ?"]
         params: list[Any] = [now]
         if title is not None:
