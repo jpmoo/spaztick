@@ -157,7 +157,13 @@ def run_polling() -> None:
     if not config.telegram_bot_token:
         logger.error("telegram_bot_token not set in config. Configure via web UI.")
         sys.exit(1)
-    app = Application.builder().token(config.telegram_bot_token).build()
+    app = (
+        Application.builder()
+        .token(config.telegram_bot_token)
+        .get_updates_read_timeout(30)
+        .get_updates_connect_timeout(10)
+        .build()
+    )
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
