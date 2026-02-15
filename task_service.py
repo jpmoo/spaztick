@@ -18,7 +18,7 @@ except ImportError:
     def _new_task_id() -> str:
         return str(uuid.uuid4())
 
-from database import get_connection, get_db_path, init_database
+from database import get_connection, get_db_path, has_number_column, init_database
 
 # Valid task statuses (constrained state machine)
 STATUSES = frozenset({"inbox", "active", "blocked", "done", "archived"})
@@ -77,19 +77,34 @@ def create_task(
     rec_json = json.dumps(recurrence) if recurrence else None
     conn = get_connection()
     try:
-        next_num = conn.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM tasks").fetchone()[0]
-        conn.execute(
-            """INSERT INTO tasks (
-                id, number, title, description, notes, status, priority,
-                available_date, due_date, recurrence, recurrence_parent_id,
-                created_at, updated_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                tid, next_num, title, description or None, notes or None, status, priority,
-                available_date, due_date, rec_json, recurrence_parent_id,
-                now, now, None,
-            ),
-        )
+        use_number = has_number_column(conn)
+        if use_number:
+            next_num = conn.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM tasks").fetchone()[0]
+            conn.execute(
+                """INSERT INTO tasks (
+                    id, number, title, description, notes, status, priority,
+                    available_date, due_date, recurrence, recurrence_parent_id,
+                    created_at, updated_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    tid, next_num, title, description or None, notes or None, status, priority,
+                    available_date, due_date, rec_json, recurrence_parent_id,
+                    now, now, None,
+                ),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO tasks (
+                    id, title, description, notes, status, priority,
+                    available_date, due_date, recurrence, recurrence_parent_id,
+                    created_at, updated_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    tid, title, description or None, notes or None, status, priority,
+                    available_date, due_date, rec_json, recurrence_parent_id,
+                    now, now, None,
+                ),
+            )
         for project_id in projects or []:
             if project_id:
                 conn.execute(
@@ -134,6 +149,8 @@ def get_task_by_number(number: int) -> dict[str, Any] | None:
     """Return one task by friendly number (user-facing id)."""
     conn = get_connection()
     try:
+        if not has_number_column(conn):
+            return None
         row = conn.execute("SELECT * FROM tasks WHERE number = ?", (number,)).fetchone()
         if not row:
             return None

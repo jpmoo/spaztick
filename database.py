@@ -131,9 +131,6 @@ def init_database(path: Path | None = None) -> Path:
 
 def _ensure_number_column(conn: sqlite3.Connection) -> None:
     """Ensure tasks.number exists on this connection (migration). Run on every get_connection."""
-    rows = conn.execute("PRAGMA table_info(tasks)").fetchall()
-    if any(r[1] == "number" for r in rows):
-        return
     try:
         conn.execute("ALTER TABLE tasks ADD COLUMN number INTEGER")
         conn.execute("""
@@ -145,8 +142,18 @@ def _ensure_number_column(conn: sqlite3.Connection) -> None:
         """)
         conn.commit()
     except sqlite3.OperationalError as e:
-        if "duplicate column" not in str(e).lower():
+        msg = str(e).lower()
+        if "duplicate column" not in msg and "already exists" not in msg:
             raise
+
+
+def has_number_column(conn: sqlite3.Connection) -> bool:
+    """True if tasks.number exists (so we can use it in INSERT/SELECT)."""
+    try:
+        rows = conn.execute("PRAGMA table_info(tasks)").fetchall()
+        return any(len(r) > 1 and r[1] == "number" for r in rows)
+    except Exception:
+        return False
 
 
 def get_connection(path: Path | None = None) -> sqlite3.Connection:
