@@ -14,6 +14,13 @@ from telegram.ext import Application, ContextTypes, MessageHandler, filters
 
 from config import load as load_config
 
+# Run migration at startup so DB has tasks.number before first message
+try:
+    from task_service import ensure_db
+    ensure_db()
+except Exception as e:
+    logging.warning("Database init/migration at startup failed: %s. Run: python -m database", e)
+
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO,
@@ -73,7 +80,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             _chat_histories[chat_id] = history + [{"role": "assistant", "content": response}]
     except Exception as e:
         logger.exception("Orchestrator request failed")
-        await update.message.reply_text(f"Error: {e}")
+        err = str(e)
+        if "no such column" in err.lower() and "number" in err.lower():
+            await update.message.reply_text(
+                f"Database needs migrating. Run from the server: python -m database\n(Then restart the bot.)\nError: {e}"
+            )
+        else:
+            await update.message.reply_text(f"Error: {e}")
         _chat_histories[chat_id] = history
 
 

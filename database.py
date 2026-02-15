@@ -34,7 +34,6 @@ CREATE TABLE IF NOT EXISTS tasks (
     FOREIGN KEY (recurrence_parent_id) REFERENCES tasks(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_tasks_number ON tasks(number);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_parent ON tasks(recurrence_parent_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_available_date ON tasks(available_date);
@@ -108,7 +107,7 @@ def init_database(path: Path | None = None) -> Path:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
     conn.executescript(_SCHEMA)
-    # Migration: add number column if missing (existing DBs)
+    # Migration: add number column if missing (must run BEFORE creating index on number)
     try:
         conn.execute("ALTER TABLE tasks ADD COLUMN number INTEGER")
         added = True
@@ -124,6 +123,8 @@ def init_database(path: Path | None = None) -> Path:
                    OR (t2.created_at = tasks.created_at AND t2.id < tasks.id)
             )
         """)
+    # Index on number (after column exists)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_number ON tasks(number)")
     conn.commit()
     conn.close()
     return db_path
@@ -140,6 +141,7 @@ def _ensure_number_column(conn: sqlite3.Connection) -> None:
                    OR (t2.created_at = tasks.created_at AND t2.id < tasks.id)
             )
         """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_number ON tasks(number)")
         conn.commit()
     except sqlite3.OperationalError as e:
         msg = str(e).lower()
@@ -164,3 +166,13 @@ def get_connection(path: Path | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     _ensure_number_column(conn)  # run migration on this connection so it sees the column
     return conn
+
+
+def migrate() -> Path:
+    """Run database init + migrations. Use this to migrate manually: python -m database"""
+    return init_database()
+
+
+if __name__ == "__main__":
+    p = migrate()
+    print("Database migrated:", p)
