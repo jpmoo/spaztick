@@ -271,7 +271,7 @@ def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
 
 
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
-    """Format task list: ☆/⭐ □/■ title (#n) [avail] [🟡/🔴] due [name (short_id)...]. Uses emojis for flagged (☆/⭐) and due today (🟡) / overdue (🔴)."""
+    """Format task list: □/■ [★] title (#n) [avail] [🟡/🔴] due [name (short_id)...]. Status box first, then ★ if flagged (no extra space if not), then title. 🟡 due today, 🔴 overdue."""
     if not tasks:
         return "No tasks yet."
     try:
@@ -294,11 +294,10 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         flagged = t.get("flagged") in (1, True, "1")
         status = t.get("status") or "incomplete"
         status_icon = "■" if status == "complete" else "□"
-        star = "★ " if flagged else " "
         title = (t.get("title") or "").strip() or "(no title)"
         num = t.get("number")
         friendly_id = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
-        part = f"{star}{status_icon} {title} {friendly_id}"
+        part = f"{status_icon}{'★' if flagged else ''} {title} {friendly_id}"
         if t.get("available_date"):
             part += f" avail {t['available_date']}"
         if t.get("due_date"):
