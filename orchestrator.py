@@ -16,12 +16,18 @@ SYSTEM_PROMPT = """You are the AI orchestrator for Spaztick. You do not modify t
 When the user wants to create, update, complete, or list tasks or projects, respond ONLY with a single JSON object. Do not ask for description or priority—only the title/name is required for create. All other fields are optional.
 Do not tell the user about JSON, tool calls, or formats. Never show or mention the JSON structure in your reply. Just output the JSON with no other text.
 
-Available tools: task_create, task_list, delete_task, project_create, project_list, delete_project.
+Available tools: task_create, task_list, task_info, delete_task, project_create, project_list, project_info, delete_project.
 
 task_create: Only "title" is required. Omit description, priority, dates, projects, tags if the user did not provide them. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). New tasks are always incomplete; do not send status for create.
 Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave.
 
-task_list: {"name": "task_list", "parameters": {}}
+task_list: User can filter and sort. When no status is given, always assume incomplete. Pass only the parameters the user asked for.
+Parameters (all optional): status (default incomplete), tag or tags (single tag or list), project or short_id (project friendly id), due_by (date: tasks due on or before, e.g. "today"), available_by (date: tasks available on or before), available_or_due_by (date: tasks that are available OR due on or before), sort_by ("due_date", "available_date", "created_at", "title").
+Examples: "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "list all tasks tagged work available or due today, sorted by due date" -> {"name": "task_list", "parameters": {"tag": "work", "available_or_due_by": "today", "sort_by": "due_date"}}. Dates can be natural language (today, tomorrow, Monday, YYYY-MM-DD); the app resolves them.
+Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id, due_by, available_by, available_or_due_by, sort_by.
+
+task_info: User identifies the task by its friendly id (number, e.g. 1 or #1). Returns full task details and lists parent tasks (dependencies) and subtasks (tasks that depend on this one).
+Output format: {"name": "task_info", "parameters": {"number": 1}}.
 
 delete_task: User identifies the task by its friendly id (the task number, e.g. 1 or #1). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete.
 Output format: {"name": "delete_task", "parameters": {"number": 1}} or {"name": "delete_task", "parameters": {"number": 1, "confirm": true}}. Use "number" (the task's friendly id from task_list).
@@ -30,6 +36,9 @@ project_create: Only "title" is required (the project name). Omit description if
 Output format: {"name": "project_create", "parameters": {"title": "..."}} and add optional "description" if the user gave it.
 
 project_list: {"name": "project_list", "parameters": {}}
+
+project_info: User identifies the project by its friendly id (short_id, e.g. "1off" or "work"). Returns full project details and a list of all tasks in the project, each with their subtasks (tasks that depend on them).
+Output format: {"name": "project_info", "parameters": {"short_id": "1off"}}.
 
 delete_project: User identifies the project by its friendly id (short_id, e.g. "1off" or "work"). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete. Deleting a project removes it from all tasks that use it; some tasks may end up with no project assignments.
 Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}. Use "short_id" (the project's friendly id from project_list).
@@ -59,6 +68,39 @@ def _parse_task_number(params: dict[str, Any]) -> int | None:
         return int(s)
     except ValueError:
         return None
+
+
+def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> dict[str, Any]:
+    """Normalize task_list parameters: default status incomplete, resolve dates and project short_id."""
+    from date_utils import resolve_relative_date
+    out: dict[str, Any] = {}
+    out["status"] = (params.get("status") or "incomplete").strip().lower() if params.get("status") else "incomplete"
+    if out["status"] not in ("incomplete", "complete"):
+        out["status"] = "incomplete"
+    tag = params.get("tag") or (params.get("tags") or [])
+    if isinstance(tag, list):
+        tag = tag[0] if tag else None
+    if tag and str(tag).strip():
+        out["tag"] = str(tag).strip()
+    project = params.get("project") or params.get("short_id")
+    if project and str(project).strip():
+        try:
+            from project_service import get_project_by_short_id
+            p = get_project_by_short_id(str(project).strip())
+            if p:
+                out["project_id"] = p["id"]
+        except Exception:
+            pass
+    for key in ("due_by", "available_by", "available_or_due_by"):
+        val = params.get(key)
+        if val is None or not str(val).strip():
+            continue
+        resolved = resolve_relative_date(str(val).strip(), tz_name)
+        if resolved:
+            out[key] = resolved
+    if params.get("sort_by") and str(params["sort_by"]).strip():
+        out["sort_by"] = str(params["sort_by"]).strip()
+    return out
 
 
 def _parse_confirm(params: dict[str, Any]) -> bool:
@@ -241,6 +283,86 @@ def _format_project_created_for_telegram(project: dict[str, Any]) -> str:
     return prefix + f"{name} [{status}]."
 
 
+def _format_task_info_text(task: dict[str, Any], parent_tasks: list[dict[str, Any]], subtasks: list[dict[str, Any]]) -> str:
+    """User-friendly full task description with parents and subtasks."""
+    num = task.get("number")
+    label = f"#{num}" if num is not None else task.get("id", "")[:8]
+    title = (task.get("title") or "").strip() or "(no title)"
+    lines = [f"Task {label}: {title}", f"Status: {task.get('status') or 'incomplete'}"]
+    if task.get("priority") is not None:
+        lines.append(f"Priority: {task['priority']}")
+    if task.get("description"):
+        lines.append(f"Description: {task['description'].strip()}")
+    if task.get("notes"):
+        lines.append(f"Notes: {task['notes'].strip()}")
+    if task.get("available_date"):
+        lines.append(f"Available: {task['available_date']}")
+    if task.get("due_date"):
+        lines.append(f"Due: {task['due_date']}")
+    if task.get("projects"):
+        lines.append(f"Projects: {', '.join(task['projects'])}")
+    if task.get("tags"):
+        lines.append(f"Tags: {', '.join(task['tags'])}")
+    if parent_tasks:
+        parent_parts = [f"#{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in parent_tasks if t.get("number") is not None]
+        if not parent_parts:
+            parent_parts = [t.get("id", "")[:8] for t in parent_tasks]
+        lines.append("Depends on (parent tasks): " + ", ".join(parent_parts))
+    if subtasks:
+        sub_parts = [f"#{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in subtasks if t.get("number") is not None]
+        if not sub_parts:
+            sub_parts = [t.get("id", "")[:8] for t in subtasks]
+        lines.append("Subtasks (tasks that depend on this): " + ", ".join(sub_parts))
+    else:
+        lines.append("Subtasks: (none)")
+    if task.get("created_at"):
+        lines.append(f"Created: {task['created_at']}")
+    if task.get("updated_at"):
+        lines.append(f"Updated: {task['updated_at']}")
+    if task.get("completed_at"):
+        lines.append(f"Completed: {task['completed_at']}")
+    return "\n".join(lines)
+
+
+def _format_project_info_text(
+    project: dict[str, Any],
+    tasks_with_subtasks: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+) -> str:
+    """User-friendly full project description with tasks and their subtasks."""
+    short_id = project.get("short_id") or project.get("id", "")[:8]
+    name = (project.get("name") or "").strip() or "(no name)"
+    lines = [
+        f"Project {short_id}: {name}",
+        f"Status: {project.get('status') or 'active'}",
+    ]
+    if project.get("description"):
+        lines.append(f"Description: {project['description'].strip()}")
+    if project.get("created_at"):
+        lines.append(f"Created: {project['created_at']}")
+    if project.get("updated_at"):
+        lines.append(f"Updated: {project['updated_at']}")
+    lines.append("")
+    if not tasks_with_subtasks:
+        lines.append("Tasks: (none)")
+        return "\n".join(lines)
+    lines.append("Tasks:")
+    for task, subtasks in tasks_with_subtasks:
+        num = task.get("number")
+        label = f"#{num}" if num is not None else task.get("id", "")[:8]
+        title = (task.get("title") or "").strip() or "(no title)"
+        status = task.get("status") or "incomplete"
+        due = f" — due {task['due_date']}" if task.get("due_date") else ""
+        lines.append(f"  {label}. {title} [{status}]{due}")
+        if subtasks:
+            sub_parts = [f"#{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in subtasks if t.get("number") is not None]
+            if not sub_parts:
+                sub_parts = [t.get("id", "")[:8] for t in subtasks]
+            lines.append("    Subtasks: " + ", ".join(sub_parts))
+        else:
+            lines.append("    (no subtasks)")
+    return "\n".join(lines)
+
+
 def _format_project_list_for_telegram(projects: list[dict[str, Any]], max_show: int = 50) -> str:
     """Format a list of projects as a user-friendly message for Telegram. Uses short_id (friendly id) only."""
     if not projects:
@@ -329,6 +451,26 @@ def run_orchestrator(
         return (text, False)
 
     name, params = parsed
+    if name == "project_info":
+        short_id = (params.get("short_id") or params.get("project_id") or "").strip()
+        if not short_id:
+            return ("project_info requires short_id (the project's friendly id, e.g. 1off or work).", False)
+        try:
+            from project_service import get_project_by_short_id
+            from task_service import list_tasks as svc_list_tasks, get_tasks_that_depend_on
+            project = get_project_by_short_id(short_id)
+        except Exception as e:
+            return (f"Error loading project: {e}", False)
+        if not project:
+            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False)
+        try:
+            tasks = svc_list_tasks(project_id=project["id"], limit=500)
+            tasks_with_subtasks: list[tuple[dict[str, Any], list[dict[str, Any]]]] = [
+                (t, get_tasks_that_depend_on(t["id"])) for t in tasks
+            ]
+            return (_format_project_info_text(project, tasks_with_subtasks), True)
+        except Exception as e:
+            return (f"Error loading project tasks: {e}", False)
     if name == "project_list":
         try:
             from project_service import list_projects
@@ -393,15 +535,52 @@ def run_orchestrator(
         except Exception as e:
             return (f"Error deleting task: {e}", False)
         return (f"Task #{num} deleted.", True)
-    if name == "task_list":
+    if name == "task_info":
+        num = _parse_task_number(params)
+        if num is None:
+            return ("task_info requires number (the task's friendly id, e.g. 1 or #1). List tasks to see numbers.", False)
         try:
+            from task_service import get_task_by_number, get_task, get_tasks_that_depend_on
+            task = get_task_by_number(num)
+        except Exception as e:
+            return (f"Error loading task: {e}", False)
+        if not task:
+            return (f"No task #{num}. List tasks to see numbers.", False)
+        try:
+            parent_tasks: list[dict[str, Any]] = []
+            for dep_id in task.get("depends_on") or []:
+                pt = get_task(dep_id)
+                if pt:
+                    parent_tasks.append(pt)
+            subtasks = get_tasks_that_depend_on(task["id"])
+            return (_format_task_info_text(task, parent_tasks, subtasks), True)
+        except Exception as e:
+            return (f"Error loading task details: {e}", False)
+    if name == "task_list":
+        tz_name = "UTC"
+        try:
+            from config import load as load_config
+            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+        except Exception:
+            pass
+        try:
+            validated = _validate_task_list_params(params, tz_name)
             from task_service import list_tasks as svc_list_tasks
-            tasks = svc_list_tasks(limit=500)
+            tasks = svc_list_tasks(
+                limit=500,
+                status=validated.get("status"),
+                project_id=validated.get("project_id"),
+                tag=validated.get("tag"),
+                due_by=validated.get("due_by"),
+                available_by=validated.get("available_by"),
+                available_or_due_by=validated.get("available_or_due_by"),
+                sort_by=validated.get("sort_by"),
+            )
         except Exception as e:
             return (f"Error listing tasks: {e}", False)
         return (_format_task_list_for_telegram(tasks), True)
     if name != "task_create":
-        fallback = f"Tool '{name}' is not implemented yet. You can create, list, or delete tasks and projects."
+        fallback = f"Tool '{name}' is not implemented yet. You can create, list, info, or delete tasks and projects."
         text = response_text.strip() or fallback
         return (fallback if _looks_like_json(text) else text, False)
 

@@ -161,13 +161,33 @@ def get_task_by_number(number: int) -> dict[str, Any] | None:
         conn.close()
 
 
+def get_tasks_that_depend_on(task_id: str) -> list[dict[str, Any]]:
+    """Return tasks that have this task as a dependency (subtasks). Minimal task dicts."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT t.* FROM tasks t JOIN task_dependencies d ON t.id = d.task_id WHERE d.depends_on_task_id = ? ORDER BY t.created_at",
+            (task_id,),
+        ).fetchall()
+        return [_task_row_to_dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def list_tasks(
     status: str | None = None,
     project_id: str | None = None,
     tag: str | None = None,
+    due_by: str | None = None,
+    available_by: str | None = None,
+    available_or_due_by: str | None = None,
+    sort_by: str | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
-    """List tasks with optional filters. Returns minimal task dicts (no projects/tags/deps)."""
+    """List tasks with optional filters. Returns minimal task dicts (no projects/tags/deps).
+    due_by, available_by, available_or_due_by are ISO date strings (YYYY-MM-DD).
+    sort_by: due_date, available_date, created_at, title (default created_at DESC).
+    """
     conn = get_connection()
     try:
         sql = "SELECT * FROM tasks WHERE 1=1"
@@ -181,7 +201,28 @@ def list_tasks(
         if tag:
             sql += " AND id IN (SELECT task_id FROM task_tags WHERE tag = ?)"
             params.append(tag)
-        sql += " ORDER BY created_at DESC LIMIT ?"
+        if due_by:
+            sql += " AND due_date IS NOT NULL AND date(due_date) <= date(?)"
+            params.append(due_by)
+        if available_by:
+            sql += " AND (available_date IS NULL OR date(available_date) <= date(?))"
+            params.append(available_by)
+        if available_or_due_by:
+            sql += " AND ((available_date IS NULL OR date(available_date) <= date(?)) OR (due_date IS NULL OR date(due_date) <= date(?)))"
+            params.append(available_or_due_by)
+            params.append(available_or_due_by)
+        order = "ORDER BY created_at DESC"
+        if sort_by:
+            sort_by_lower = sort_by.strip().lower()
+            if sort_by_lower == "due_date":
+                order = "ORDER BY due_date IS NULL, due_date ASC, created_at DESC"
+            elif sort_by_lower == "available_date":
+                order = "ORDER BY available_date IS NULL, available_date ASC, created_at DESC"
+            elif sort_by_lower == "title":
+                order = "ORDER BY title ASC, created_at DESC"
+            elif sort_by_lower == "created_at":
+                order = "ORDER BY created_at DESC"
+        sql += f" {order} LIMIT ?"
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
         return [_task_row_to_dict(r) for r in rows]
