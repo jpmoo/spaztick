@@ -184,6 +184,7 @@ def list_tasks(
     available_by: str | None = None,
     available_or_due_by: str | None = None,
     sort_by: str | None = None,
+    flagged: bool | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """List tasks with optional filters. Returns minimal task dicts (no projects/tags/deps).
@@ -213,6 +214,9 @@ def list_tasks(
             sql += " AND ((available_date IS NULL OR date(available_date) <= date(?)) OR (due_date IS NULL OR date(due_date) <= date(?)))"
             params.append(available_or_due_by)
             params.append(available_or_due_by)
+        if flagged is not None:
+            sql += " AND flagged = ?"
+            params.append(1 if flagged else 0)
         order = "ORDER BY created_at DESC"
         if sort_by:
             sort_by_lower = sort_by.strip().lower()

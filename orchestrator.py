@@ -22,13 +22,13 @@ So: tool request -> only the JSON tool call. Non-tool message -> conversational 
 
 Available tools: task_create, task_list, task_info, delete_task, project_create, project_list, project_info, delete_project.
 
-task_create: Only "title" is required. Omit description, priority, dates, projects, tags if the user did not provide them. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). New tasks are always incomplete; do not send status for create.
-Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave.
+task_create: Only "title" is required. Omit description, priority, dates, projects, tags, flagged if the user did not provide them. New tasks are incomplete and not flagged by default. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Optional "flagged": true to create a flagged task.
+Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (e.g. flagged, due_date).
 
 task_list: "List tasks", "list my tasks", "show tasks" etc. must be answered with the task_list JSON only—never with a list of other services or suggestions. User can filter and sort. When no status is given, always assume incomplete. Pass only the parameters the user asked for.
-Parameters (all optional): status (default incomplete), tag or tags (single tag or list), project or short_id (project friendly id), due_by (date: tasks due on or before, e.g. "today"), available_by (date: tasks available on or before), available_or_due_by (date: tasks that are available OR due on or before), sort_by ("due_date", "available_date", "created_at", "title").
-Examples: "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "list all tasks tagged work available or due today, sorted by due date" -> {"name": "task_list", "parameters": {"tag": "work", "available_or_due_by": "today", "sort_by": "due_date"}}. Dates can be natural language (today, tomorrow, Monday, YYYY-MM-DD); the app resolves them.
-Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id, due_by, available_by, available_or_due_by, sort_by.
+Parameters (all optional): status (default incomplete), tag or tags (single tag or list), project or short_id (project friendly id), due_by (date: tasks due on or before, e.g. "today"), available_by (date: tasks available on or before), available_or_due_by (date: tasks that are available OR due on or before), sort_by ("due_date", "available_date", "created_at", "title"), flagged (true = only flagged tasks, false = only non-flagged; omit = no filter).
+Examples: "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}. "list all tasks tagged work available or due today, sorted by due date" -> {"name": "task_list", "parameters": {"tag": "work", "available_or_due_by": "today", "sort_by": "due_date"}}. Dates can be natural language (today, tomorrow, Monday, YYYY-MM-DD); the app resolves them.
+Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id, due_by, available_by, available_or_due_by, sort_by, flagged.
 
 task_info: User identifies the task by its friendly id (number). "Tell me about 1", "about task 1", "task #1", "task 1", or just "1" after discussing tasks/projects always means task_info with that number. Never answer with general knowledge about the number—always call task_info.
 Output format: {"name": "task_info", "parameters": {"number": 1}} (use the number the user said).
@@ -53,7 +53,7 @@ Important for task_create: Do NOT use generic phrases as the task title. If the 
 Same for project_create: only call when they have given a real project name. Otherwise reply conversationally.
 """
 
-# task_create schema: required title; optional description, notes, priority (0-3), projects[], tags[], available_date, due_date. Status is always incomplete on create.
+# task_create schema: required title; optional description, notes, priority (0-3), projects[], tags[], available_date, due_date, flagged (default false). Status is always incomplete on create.
 TASK_CREATE_STATUS = frozenset({"incomplete"})
 
 # project_create: required title (project name); optional description. Status defaults to active (open).
@@ -106,6 +106,12 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
             out[key] = resolved
     if params.get("sort_by") and str(params["sort_by"]).strip():
         out["sort_by"] = str(params["sort_by"]).strip()
+    if "flagged" in params:
+        f = params["flagged"]
+        if f is True or (isinstance(f, str) and str(f).strip().lower() in ("true", "1", "yes")) or f == 1:
+            out["flagged"] = True
+        elif f is False or (isinstance(f, str) and str(f).strip().lower() in ("false", "0", "no")) or f == 0:
+            out["flagged"] = False
     return out
 
 
@@ -159,6 +165,12 @@ def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
         out["available_date"] = str(params["available_date"]).strip() or None
     if "due_date" in params and params["due_date"] is not None:
         out["due_date"] = str(params["due_date"]).strip() or None
+    if "flagged" in params:
+        f = params["flagged"]
+        if f is True or (isinstance(f, str) and str(f).strip().lower() in ("true", "1", "yes")) or f == 1:
+            out["flagged"] = True
+        else:
+            out["flagged"] = False
     return out
 
 
@@ -258,10 +270,19 @@ def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
     return msg + "."
 
 
-def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50) -> str:
-    """Format task list: [⭐ if flagged] □/■ title (#n) [avail] [due] [name (short_id)...]"""
+def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
+    """Format task list: ☆/⭐ □/■ title (#n) [avail] [🟡/🔴] due [name (short_id)...]. Uses emojis for flagged (☆/⭐) and due today (🟡) / overdue (🔴)."""
     if not tasks:
         return "No tasks yet."
+    try:
+        from date_utils import resolve_relative_date
+        today = resolve_relative_date("today", tz_name)
+    except Exception:
+        from datetime import date
+        today = date.today().isoformat()
+    if not today:
+        from datetime import date
+        today = date.today().isoformat()
     total = len(tasks)
     show = tasks[:max_show]
     lines = [f"Tasks ({total}):"]
@@ -273,7 +294,7 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         flagged = t.get("flagged") in (1, True, "1")
         status = t.get("status") or "incomplete"
         status_icon = "■" if status == "complete" else "□"
-        star = "⭐ " if flagged else ""
+        star = "⭐ " if flagged else "☆ "
         title = (t.get("title") or "").strip() or "(no title)"
         num = t.get("number")
         friendly_id = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
@@ -281,7 +302,13 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         if t.get("available_date"):
             part += f" avail {t['available_date']}"
         if t.get("due_date"):
-            part += f" due {t['due_date']}"
+            due = t["due_date"]
+            if due < today:
+                part += f" 🔴 due {due}"
+            elif due == today:
+                part += f" 🟡 due {due}"
+            else:
+                part += f" due {due}"
         project_parts = []
         if get_project and t.get("projects"):
             for pid in t["projects"]:
@@ -614,10 +641,11 @@ def run_orchestrator(
                 available_by=validated.get("available_by"),
                 available_or_due_by=validated.get("available_or_due_by"),
                 sort_by=validated.get("sort_by"),
+                flagged=validated.get("flagged"),
             )
         except Exception as e:
             return (f"Error listing tasks: {e}", False)
-        return (_format_task_list_for_telegram(tasks), True)
+        return (_format_task_list_for_telegram(tasks, 50, tz_name), True)
     if name != "task_create":
         fallback = f"Tool '{name}' is not implemented yet. You can create, list, info, or delete tasks and projects."
         text = response_text.strip() or fallback
@@ -649,6 +677,7 @@ def run_orchestrator(
             due_date=validated.get("due_date"),
             projects=validated.get("projects"),
             tags=validated.get("tags"),
+            flagged=validated.get("flagged", False),
         )
     except Exception as e:
         return (f"Error creating task: {e}", False)

@@ -278,8 +278,12 @@ HTML_PAGE = """<!DOCTYPE html>
     .error { color: var(--danger); font-size: 0.875rem; margin-top: 0.5rem; }
     .success { color: #4ade80; font-size: 0.875rem; margin-top: 0.5rem; }
     .task-list { list-style: none; padding: 0; margin: 0; }
-    .task-list li { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .task-list li { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: baseline; gap: 0.35rem; }
     .task-list li:hover { background: var(--border); }
+    .task-list .flag-icon { color: var(--muted); font-size: 0.9em; user-select: none; }
+    .task-list .flag-icon.flagged { color: #eab308; }
+    .task-list .due-date.due-today { color: #ca8a04; font-weight: 500; }
+    .task-list .due-date.overdue { color: var(--danger); font-weight: 500; }
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 100; }
     .modal-overlay.open { display: flex; }
     .modal { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; max-width: 480px; width: 90%; max-height: 90vh; overflow-y: auto; }
@@ -629,10 +633,19 @@ HTML_PAGE = """<!DOCTYPE html>
           return;
         }
         statusEl.textContent = tasks.length + ' task(s)';
+        const d = new Date();
+        const today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
         el.innerHTML = tasks.slice(0, 100).map((t, i) => {
           const due = t.due_date ? ' — due ' + t.due_date : '';
+          let dueClass = '';
+          if (t.due_date) {
+            if (t.due_date < today) dueClass = 'overdue';
+            else if (t.due_date === today) dueClass = 'due-today';
+          }
+          const flagClass = (t.flagged === true || t.flagged === 1) ? 'flag-icon flagged' : 'flag-icon';
           const label = t.number != null ? String(t.number) : (i + 1);
-          return '<li data-id="' + t.id + '">' + label + '. ' + (t.title || '(no title)') + ' [' + (t.status || 'incomplete') + ']' + due + '</li>';
+          const dueSpan = due ? '<span class="due-date ' + dueClass + '">' + due + '</span>' : '';
+          return '<li data-id="' + t.id + '"><span class="' + flagClass + '" title="' + (t.flagged ? 'Flagged' : 'Not flagged') + '">★</span> ' + label + '. ' + (t.title || '(no title)') + ' [' + (t.status || 'incomplete') + ']' + dueSpan + '</li>';
         }).join('');
         el.querySelectorAll('li').forEach(li => li.addEventListener('click', () => openTaskModal(li.dataset.id)));
       } catch (e) {
