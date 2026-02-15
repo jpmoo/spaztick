@@ -36,8 +36,8 @@ Output format: {"name": "task_list", "parameters": {}} with any of status, tag, 
 task_info: User identifies the task by its friendly id (number). "Tell me about 1", "about task 1", "task #1", "task 1", or just "1" after discussing tasks/projects always means task_info with that number. Never answer with general knowledge about the number—always call task_info.
 Output format: {"name": "task_info", "parameters": {"number": 1}} (use the number the user said).
 
-task_update: Change one task by number. You can update any attribute: status, flagged, due_date, available_date, title, description, notes, priority, projects (list of project short_ids or ids—replaces task's projects), tags (list of tag strings—replaces task's tags). Required: number (task's friendly id). Optional (send only what the user asked to change): status ("complete"/"incomplete"), flagged (true/false), due_date, available_date, title, description, notes, priority (0-3), projects (array), tags (array). Dates: natural language (today, tomorrow, Monday, next week)—app resolves them.
-Examples: "mark task 1 complete" -> {"name": "task_update", "parameters": {"number": 1, "status": "complete"}}. "reopen task 2" -> {"name": "task_update", "parameters": {"number": 2, "status": "incomplete"}}. "flag task 3" -> {"name": "task_update", "parameters": {"number": 3, "flagged": true}}. "task 1 due tomorrow" -> {"name": "task_update", "parameters": {"number": 1, "due_date": "tomorrow"}}. "add task 1 to project 1off" or "task 1 project 1off" -> {"name": "task_update", "parameters": {"number": 1, "projects": ["1off"]}}. "task 2 tags work urgent" -> {"name": "task_update", "parameters": {"number": 2, "tags": ["work", "urgent"]}}.
+task_update: Change one task by number. You can update any attribute: status, flagged, due_date, available_date, title, description, notes, priority, projects (list—replaces task's projects), remove_projects (list—remove these projects from the task; use for "remove task N from project X"), tags (list—replaces task's tags). Required: number. Optional: status, flagged, due_date, available_date, title, description, notes, priority (0-3), projects (array), remove_projects (array), tags (array). Dates: natural language. Use remove_projects when the user says to remove the task from a project; do not use projects for that.
+Examples: "mark task 1 complete" -> {"name": "task_update", "parameters": {"number": 1, "status": "complete"}}. "remove task 1 from 1off" or "take task 1 off project 1off" -> {"name": "task_update", "parameters": {"number": 1, "remove_projects": ["1off"]}}. "add task 1 to 1off" -> {"name": "task_update", "parameters": {"number": 1, "projects": ["1off"]}} (or add to existing: send projects with current + new). "task 1 due tomorrow" -> {"name": "task_update", "parameters": {"number": 1, "due_date": "tomorrow"}}. "task 2 tags work urgent" -> {"name": "task_update", "parameters": {"number": 2, "tags": ["work", "urgent"]}}.
 Output format: {"name": "task_update", "parameters": {"number": N, ...}} with only the fields being changed.
 
 delete_task: User identifies the task by its friendly id (the task number, e.g. 1 or #1). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete.
@@ -229,7 +229,7 @@ def _validate_project_create(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def _validate_task_update(params: dict[str, Any], tz_name: str = "UTC") -> dict[str, Any]:
-    """Validate and normalize task_update parameters. number required; optional status, flagged, due_date, available_date, title, description, notes, priority, projects (list), tags (list). Raises ValueError if number missing."""
+    """Validate and normalize task_update parameters. number required; optional status, flagged, due_date, available_date, title, description, notes, priority, projects (list), remove_projects (list), tags (list). Raises ValueError if number missing."""
     if not isinstance(params, dict):
         raise ValueError("parameters must be an object")
     num = _parse_task_number(params)
@@ -267,6 +267,10 @@ def _validate_task_update(params: dict[str, Any], tz_name: str = "UTC") -> dict[
         if not isinstance(params["projects"], list):
             raise ValueError("projects must be an array of project short_ids or ids")
         out["projects"] = [str(x).strip() for x in params["projects"] if str(x).strip()]
+    if "remove_projects" in params and params["remove_projects"] is not None:
+        if not isinstance(params["remove_projects"], list):
+            raise ValueError("remove_projects must be an array of project short_ids or ids")
+        out["remove_projects"] = [str(x).strip() for x in params["remove_projects"] if str(x).strip()]
     if "tags" in params and params["tags"] is not None:
         if not isinstance(params["tags"], list):
             raise ValueError("tags must be an array of strings")
@@ -775,9 +779,10 @@ def run_orchestrator(
         scalar_keys = ("status", "flagged", "due_date", "available_date", "title", "description", "notes", "priority")
         kwargs = {k: v for k, v in validated.items() if k in scalar_keys and v is not None}
         has_projects = "projects" in validated
+        has_remove_projects = "remove_projects" in validated and validated["remove_projects"]
         has_tags = "tags" in validated
-        if not kwargs and not has_projects and not has_tags:
-            return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, or tags.", False)
+        if not kwargs and not has_projects and not has_remove_projects and not has_tags:
+            return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", False)
         if kwargs:
             try:
                 updated = update_task(task_id, **kwargs)
@@ -798,6 +803,24 @@ def run_orchestrator(
                     add_task_project(task_id, str(project_id))
             except Exception as e:
                 return (f"Error updating task projects: {e}", False)
+        elif has_remove_projects:
+            try:
+                from project_service import get_project_by_short_id
+                current_ids = list(task.get("projects") or [])
+                to_remove_ids = set()
+                for ref in validated["remove_projects"]:
+                    if not ref:
+                        continue
+                    p = get_project_by_short_id(ref)
+                    pid = p["id"] if p else ref
+                    to_remove_ids.add(str(pid))
+                new_ids = [pid for pid in current_ids if str(pid) not in to_remove_ids]
+                for pid in task.get("projects") or []:
+                    remove_task_project(task_id, pid)
+                for pid in new_ids:
+                    add_task_project(task_id, str(pid))
+            except Exception as e:
+                return (f"Error removing task from project(s): {e}", False)
         if has_tags:
             try:
                 for tag in task.get("tags") or []:
@@ -822,6 +845,8 @@ def run_orchestrator(
             parts.append("updated")
         if has_projects:
             parts.append("projects updated")
+        if has_remove_projects:
+            parts.append("removed from project(s)")
         if has_tags:
             parts.append("tags updated")
         msg = f"Task {num} " + (", ".join(parts) if parts else "updated") + "."
