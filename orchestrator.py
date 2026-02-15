@@ -50,14 +50,14 @@ def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
         out["status"] = s
     else:
         out["status"] = "inbox"
-    if "priority" in params and params["priority"] is not None:
+    if "priority" in params and params["priority"] is not None and str(params["priority"]).strip() != "":
         try:
             p = int(params["priority"])
         except (TypeError, ValueError):
-            raise ValueError("priority must be an integer between 0 and 3")
-        if p < 0 or p > 3:
-            raise ValueError("priority must be between 0 and 3")
-        out["priority"] = p
+            pass  # omit invalid priority; only title is required
+        else:
+            if 0 <= p <= 3:
+                out["priority"] = p
     if "projects" in params and params["projects"] is not None:
         if not isinstance(params["projects"], list):
             raise ValueError("projects must be an array")

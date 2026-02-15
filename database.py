@@ -109,9 +109,11 @@ def init_database(path: Path | None = None) -> Path:
     conn = sqlite3.connect(str(db_path))
     conn.executescript(_SCHEMA)
     # Migration: add number column if missing (existing DBs)
-    try:
-        conn.execute("SELECT number FROM tasks LIMIT 1")
-    except sqlite3.OperationalError:
+    has_number = any(
+        row[1] == "number"
+        for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
+    )
+    if not has_number:
         conn.execute("ALTER TABLE tasks ADD COLUMN number INTEGER")
         # Backfill: assign 1, 2, 3... by created_at, id
         conn.execute("""

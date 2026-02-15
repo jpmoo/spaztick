@@ -133,9 +133,15 @@ def telegram_status() -> dict[str, bool | int | None]:
 # --- Tasks API (for web app list / edit / delete) ---
 
 @app.get("/api/tasks")
-def api_list_tasks() -> list[dict]:
-    from task_service import list_tasks as svc_list_tasks
-    return svc_list_tasks(limit=500)
+def api_list_tasks():
+    try:
+        from task_service import list_tasks as svc_list_tasks
+        tasks = svc_list_tasks(limit=500)
+        return [dict(t) for t in tasks]  # ensure plain dicts for JSON
+    except Exception as e:
+        logger = __import__("logging").getLogger("web_app")
+        logger.exception("api_list_tasks failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/tasks/{task_id}")
@@ -426,12 +432,22 @@ HTML_PAGE = """<!DOCTYPE html>
     };
 
     async function loadTasks() {
+      const el = $('task_list');
+      const statusEl = $('tasks_status');
       try {
         const r = await fetch('/api/tasks');
-        const tasks = await r.json();
-        const el = $('task_list');
-        const statusEl = $('tasks_status');
-        if (!tasks.length) {
+        const contentType = r.headers.get('content-type') || '';
+        let tasks;
+        if (contentType.includes('application/json')) {
+          tasks = await r.json();
+        } else {
+          const text = await r.text();
+          throw new Error(r.ok ? 'Invalid response' : (text || 'Request failed'));
+        }
+        if (!r.ok) {
+          throw new Error(tasks.detail || tasks.error || 'Request failed');
+        }
+        if (!Array.isArray(tasks) || !tasks.length) {
           el.innerHTML = '';
           statusEl.textContent = 'No tasks yet.';
           return;
@@ -444,8 +460,9 @@ HTML_PAGE = """<!DOCTYPE html>
         }).join('');
         el.querySelectorAll('li').forEach(li => li.addEventListener('click', () => openTaskModal(li.dataset.id)));
       } catch (e) {
-        $('tasks_status').textContent = 'Error: ' + e.message;
-        $('tasks_status').className = 'status error';
+        el.innerHTML = '';
+        statusEl.textContent = 'Error: ' + (e.message || 'Loading tasks failed');
+        statusEl.className = 'status error';
       }
     }
 

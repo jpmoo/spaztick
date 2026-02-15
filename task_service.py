@@ -75,7 +75,6 @@ def create_task(
     tid = task_id or _new_task_id()
     now = _now_iso()
     rec_json = json.dumps(recurrence) if recurrence else None
-    priority_val = priority if priority is not None else 0
     conn = get_connection()
     try:
         next_num = conn.execute("SELECT COALESCE(MAX(number), 0) + 1 FROM tasks").fetchone()[0]
@@ -86,7 +85,7 @@ def create_task(
                 created_at, updated_at, completed_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                tid, next_num, title, description or None, notes or None, status, priority_val,
+                tid, next_num, title, description or None, notes or None, status, priority,
                 available_date, due_date, rec_json, recurrence_parent_id,
                 now, now, None,
             ),
