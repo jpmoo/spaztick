@@ -151,17 +151,24 @@ def init_database(path: Path | None = None) -> Path:
     return db_path
 
 
+def _tasks_has_old_status_constraint(conn: sqlite3.Connection) -> bool:
+    """True if tasks table definition still has old status CHECK (inbox/done/etc)."""
+    try:
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='tasks'"
+        ).fetchone()
+        if not row or not row[0]:
+            return False
+        sql = (row[0] or "").lower()
+        return "inbox" in sql or "done" in sql or "archived" in sql
+    except Exception:
+        return True  # assume migration needed
+
+
 def _migrate_status_to_incomplete_complete(conn: sqlite3.Connection) -> None:
     """If tasks table has old status CHECK, recreate with only incomplete|complete."""
-    try:
-        conn.execute(
-            "INSERT INTO tasks (id, number, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            ("__mig_status_check__", 999999, "x", "incomplete", "2020-01-01T00:00:00Z", "2020-01-01T00:00:00Z"),
-        )
-        conn.execute("DELETE FROM tasks WHERE id = '__mig_status_check__'")
-        return  # already accepts 'incomplete'
-    except sqlite3.OperationalError:
-        pass  # CHECK failed, need to migrate
+    if not _tasks_has_old_status_constraint(conn):
+        return
     conn.execute("PRAGMA foreign_keys = OFF")
     conn.execute("""
         CREATE TABLE tasks_new (
