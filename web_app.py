@@ -196,8 +196,13 @@ def api_delete_task(task_id: str):
 
 @app.get("/api/projects")
 def api_list_projects(status: str | None = None):
-    from project_service import list_projects
-    return list_projects(status=status or None)
+    try:
+        from project_service import list_projects
+        return list_projects(status=status or None)
+    except Exception as e:
+        logger = __import__("logging").getLogger("web_app")
+        logger.exception("api_list_projects failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/projects")
@@ -514,8 +519,16 @@ HTML_PAGE = """<!DOCTYPE html>
       const statusEl = $('projects_status');
       try {
         const r = await fetch('/api/projects');
-        projectsList = await r.json();
-        if (!Array.isArray(projectsList)) throw new Error(projectsList.detail || 'Invalid response');
+        const contentType = r.headers.get('content-type') || '';
+        let data;
+        if (contentType.includes('application/json')) {
+          data = await r.json();
+        } else {
+          const text = await r.text();
+          throw new Error(r.ok ? 'Invalid response' : (text || 'Request failed'));
+        }
+        if (!r.ok) throw new Error(data.detail || data.error || 'Request failed');
+        projectsList = Array.isArray(data) ? data : [];
         statusEl.className = 'status';
         if (!projectsList.length) {
           el.innerHTML = '';

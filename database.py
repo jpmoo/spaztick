@@ -11,6 +11,9 @@ from typing import Any
 # Default DB path: project directory
 _DEFAULT_DB_PATH = Path(__file__).resolve().parent / "spaztick.db"
 
+# Wait up to this many seconds for locks (web + Telegram often use same DB)
+_CONNECT_TIMEOUT = 30.0
+
 _SCHEMA = """
 -- Primary table: tasks
 -- status: incomplete | complete (new tasks are always incomplete)
@@ -120,7 +123,8 @@ def init_database(path: Path | None = None) -> Path:
     db_path = path or get_db_path()
     db_path = db_path.resolve()
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=_CONNECT_TIMEOUT)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(_SCHEMA)
     # Migration: add number column if missing (must run BEFORE creating index on number)
     try:
@@ -194,6 +198,7 @@ def _migrate_status_to_incomplete_complete(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_available_date ON tasks(available_date)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date)")
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
 
 
 def _ensure_number_column(conn: sqlite3.Connection) -> None:
@@ -228,9 +233,11 @@ def get_connection(path: Path | None = None) -> sqlite3.Connection:
     """Return a connection to the database. Call init_database first if needed."""
     db_path = path or get_db_path()
     init_database(db_path)
-    conn = sqlite3.connect(str(db_path))
+    conn = sqlite3.connect(str(db_path), timeout=_CONNECT_TIMEOUT)
+    conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     _ensure_number_column(conn)  # run migration on this connection so it sees the column
+    _migrate_status_to_incomplete_complete(conn)  # ensure tasks.status is incomplete|complete
     return conn
 
 
