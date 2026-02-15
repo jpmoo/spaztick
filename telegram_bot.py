@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from telegram import Update
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, ContextTypes, CommandHandler, MessageHandler, filters
 
 from config import load as load_config
 
@@ -30,6 +30,45 @@ logger = logging.getLogger(__name__)
 
 # Per-chat conversation history; cleared after successful tool (task_create / task_list)
 _chat_histories: dict[int, list[dict[str, str]]] = {}
+
+
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Flush conversation history for this chat and start anew."""
+    if not update.message:
+        return
+    chat_id = update.message.chat.id
+    _chat_histories[chat_id] = []
+    await update.message.reply_text("Conversation history cleared. Starting fresh.")
+
+
+async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the conversation history currently gathered for the prompt."""
+    if not update.message:
+        return
+    chat_id = update.message.chat.id
+    history = _chat_histories.get(chat_id, [])
+    if not history:
+        await update.message.reply_text("No history yet. Conversation is empty.")
+        return
+    lines = []
+    for i, h in enumerate(history, 1):
+        role = (h.get("role") or "user").lower()
+        content = (h.get("content") or "").strip()
+        if not content:
+            continue
+        label = "User" if role == "user" else "Assistant"
+        # Truncate long messages for display
+        if len(content) > 200:
+            content = content[:197] + "..."
+        content = content.replace("\n", " ")
+        lines.append(f"{i}. {label}: {content}")
+    if not lines:
+        await update.message.reply_text("No history yet. Conversation is empty.")
+        return
+    text = "History (used in prompt):\n\n" + "\n\n".join(lines)
+    if len(text) > 4000:
+        text = text[:3997] + "..."
+    await update.message.reply_text(text)
 
 
 def _run_orchestrator(
@@ -97,6 +136,8 @@ def run_polling() -> None:
         logger.error("telegram_bot_token not set in config. Configure via web UI.")
         sys.exit(1)
     app = Application.builder().token(config.telegram_bot_token).build()
+    app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("history", cmd_history))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     logger.info("Starting Telegram bot (long polling)")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
@@ -128,6 +169,8 @@ async def run_webhook() -> None:
         .updater(None)
         .build()
     )
+    application.add_handler(CommandHandler("reset", cmd_reset))
+    application.add_handler(CommandHandler("history", cmd_history))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     async def telegram_webhook(request: Request) -> Response:
