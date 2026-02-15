@@ -13,21 +13,62 @@ logger = logging.getLogger("orchestrator")
 
 # Tool contract: only title required; never mention JSON to the user
 SYSTEM_PROMPT = """You are the AI orchestrator for Spaztick. You do not modify the database directly.
-When the user wants to create, update, complete, or list tasks, respond ONLY with a single JSON object. Do not ask for description or priority—only the task title is required. All other fields are optional.
+When the user wants to create, update, complete, or list tasks or projects, respond ONLY with a single JSON object. Do not ask for description or priority—only the title/name is required for create. All other fields are optional.
 Do not tell the user about JSON, tool calls, or formats. Never show or mention the JSON structure in your reply. Just output the JSON with no other text.
 
-Available tools: task_create, task_update, task_complete, task_list.
+Available tools: task_create, task_list, delete_task, project_create, project_list, delete_project.
 
-task_create: Only "title" is required. Omit description, priority, dates, projects, tags if the user did not provide them. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Status defaults to inbox.
-Output format for create: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (description, due_date, available_date, etc.).
+task_create: Only "title" is required. Omit description, priority, dates, projects, tags if the user did not provide them. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). New tasks are always incomplete; do not send status for create.
+Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave.
 
 task_list: {"name": "task_list", "parameters": {}}
 
-Important: Do NOT use generic phrases as the task title. If the user only says "new task", "create a task", "add a task", "new", "task", or similar without giving an actual task title or describing what the task is, do NOT call task_create with that phrase as the title. Instead respond in plain language asking once for the task title (e.g. "What's the task?" or "What would you like to call the task?"). Only call task_create when the user has provided a real title or clearly described the task (e.g. "Buy milk", "Roast coffee due Monday").
+delete_task: User identifies the task by its friendly id (the task number, e.g. 1 or #1). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete.
+Output format: {"name": "delete_task", "parameters": {"number": 1}} or {"name": "delete_task", "parameters": {"number": 1, "confirm": true}}. Use "number" (the task's friendly id from task_list).
+
+project_create: Only "title" is required (the project name). Omit description if the user did not provide it. New projects default to open (active) status; do not send status for create.
+Output format: {"name": "project_create", "parameters": {"title": "..."}} and add optional "description" if the user gave it.
+
+project_list: {"name": "project_list", "parameters": {}}
+
+delete_project: User identifies the project by its friendly id (short_id, e.g. "1off" or "work"). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete. Deleting a project removes it from all tasks that use it; some tasks may end up with no project assignments.
+Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}. Use "short_id" (the project's friendly id from project_list).
+
+Important for task_create: Do NOT use generic phrases as the task title. If the user only says "new task", "create a task", "add a task", "new", "task", or similar without giving an actual task title or describing what the task is, do NOT call task_create with that phrase as the title. Instead respond in plain language asking once for the task title. Only call task_create when the user has provided a real title or clearly described the task (e.g. "Buy milk", "Roast coffee due Monday").
+Same for project_create: only call when the user has provided a real project name (e.g. "Work", "1-Off Tasks"), not generic phrases like "new project" or "a project".
 """
 
-# task_create schema: required title; optional description, notes, status (inbox|active|blocked), priority (0-3), projects[], tags[], available_date, due_date
-TASK_CREATE_STATUS = frozenset({"inbox", "active", "blocked"})
+# task_create schema: required title; optional description, notes, priority (0-3), projects[], tags[], available_date, due_date. Status is always incomplete on create.
+TASK_CREATE_STATUS = frozenset({"incomplete"})
+
+# project_create: required title (project name); optional description. Status defaults to active (open).
+PROJECT_CREATE_STATUS = frozenset({"active", "archived"})
+
+
+def _parse_task_number(params: dict[str, Any]) -> int | None:
+    """Parse task friendly id (number) from params. Accepts number, task_number; value can be int or string like '1' or '#1'."""
+    raw = params.get("number") or params.get("task_number")
+    if raw is None:
+        return None
+    if isinstance(raw, int):
+        return raw
+    s = str(raw).strip().lstrip("#")
+    if not s:
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
+
+def _parse_confirm(params: dict[str, Any]) -> bool:
+    """True if user confirmed (confirm: true or yes)."""
+    c = params.get("confirm")
+    if c is True:
+        return True
+    if isinstance(c, str) and c.strip().lower() in ("true", "yes", "1"):
+        return True
+    return False
 
 
 def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
@@ -49,7 +90,7 @@ def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"status must be one of {sorted(TASK_CREATE_STATUS)}")
         out["status"] = s
     else:
-        out["status"] = "inbox"
+        out["status"] = "incomplete"
     if "priority" in params and params["priority"] is not None and str(params["priority"]).strip() != "":
         try:
             p = int(params["priority"])
@@ -70,6 +111,29 @@ def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
         out["available_date"] = str(params["available_date"]).strip() or None
     if "due_date" in params and params["due_date"] is not None:
         out["due_date"] = str(params["due_date"]).strip() or None
+    return out
+
+
+def _validate_project_create(params: dict[str, Any]) -> dict[str, Any]:
+    """Validate and normalize project_create parameters. Raises ValueError if invalid. Uses 'title' as project name."""
+    if not isinstance(params, dict):
+        raise ValueError("parameters must be an object")
+    title = params.get("title") or params.get("name")
+    if not title or not str(title).strip():
+        raise ValueError("title is required")
+    out: dict[str, Any] = {"title": str(title).strip()}
+    if "description" in params and params["description"] is not None:
+        out["description"] = str(params["description"]).strip() or None
+    status = params.get("status")
+    if status is not None:
+        s = str(status).strip().lower()
+        if s == "open":
+            s = "active"
+        if s not in PROJECT_CREATE_STATUS:
+            raise ValueError(f"status must be one of {sorted(PROJECT_CREATE_STATUS)}")
+        out["status"] = s
+    else:
+        out["status"] = "active"
     return out
 
 
@@ -136,7 +200,7 @@ def _looks_like_json(text: str) -> bool:
 def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
     """Format a created task as a user-friendly message for Telegram."""
     title = (task.get("title") or "").strip() or "(no title)"
-    status = task.get("status") or "inbox"
+    status = task.get("status") or "incomplete"
     due = task.get("due_date")
     num = task.get("number")
     prefix = f"Task #{num} created: " if num is not None else "Task created: "
@@ -147,22 +211,48 @@ def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
 
 
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50) -> str:
-    """Format a list of tasks as a user-friendly message for Telegram."""
+    """Format a list of tasks as a user-friendly message for Telegram. Uses task number (friendly id) only."""
     if not tasks:
         return "No tasks yet."
     total = len(tasks)
     show = tasks[:max_show]
     lines = [f"Tasks ({total}):"]
-    for i, t in enumerate(show, 1):
+    for t in show:
         title = (t.get("title") or "").strip() or "(no title)"
-        status = t.get("status") or "inbox"
+        status = t.get("status") or "incomplete"
         due = t.get("due_date")
         num = t.get("number")
-        label = f"#{num}" if num is not None else str(i)
+        label = f"#{num}" if num is not None else (t.get("id") or "")[:8]
         part = f"{label}. {title} [{status}]"
         if due:
             part += f" — due {due}"
         lines.append(part)
+    if total > max_show:
+        lines.append(f"... and {total - max_show} more.")
+    return "\n".join(lines)
+
+
+def _format_project_created_for_telegram(project: dict[str, Any]) -> str:
+    """Format a created project as a user-friendly message for Telegram."""
+    name = (project.get("name") or "").strip() or "(no name)"
+    short_id = project.get("short_id")
+    status = project.get("status") or "active"
+    prefix = f"Project {short_id} created: " if short_id else "Project created: "
+    return prefix + f"{name} [{status}]."
+
+
+def _format_project_list_for_telegram(projects: list[dict[str, Any]], max_show: int = 50) -> str:
+    """Format a list of projects as a user-friendly message for Telegram. Uses short_id (friendly id) only."""
+    if not projects:
+        return "No projects yet."
+    total = len(projects)
+    show = projects[:max_show]
+    lines = [f"Projects ({total}):"]
+    for p in show:
+        name = (p.get("name") or "").strip() or "(no name)"
+        short_id = p.get("short_id") or (p.get("id") or "")[:8]
+        status = p.get("status") or "active"
+        lines.append(f"{short_id}. {name} [{status}]")
     if total > max_show:
         lines.append(f"... and {total - max_show} more.")
     return "\n".join(lines)
@@ -192,7 +282,7 @@ def run_orchestrator(
 ) -> tuple[str, bool]:
     """
     Run the orchestrator. Returns (response_text, tool_used).
-    tool_used is True when task_create or task_list was successfully executed (caller should clear history).
+    tool_used is True when a mutating tool (task_create, task_list, project_create, project_list, delete_task, delete_project) was successfully executed (caller should clear history). For delete_* without confirm, tool_used is False so the user can confirm in the next message.
     """
     import httpx
 
@@ -233,12 +323,76 @@ def run_orchestrator(
     else:
         logger.info("LLM response is not a tool call, returning as-is")
     if not parsed:
-        text = response_text.strip() or "I didn't understand. You can ask me to create a task or list your tasks."
+        text = response_text.strip() or "I didn't understand. You can ask me to create or list tasks or projects."
         if _looks_like_json(text):
-            return ("I didn't understand. Try: \"Create a task: [title]\" or \"List my tasks\".", False)
+            return ("I didn't understand. Try: \"Create a task: [title]\", \"List my tasks\", \"Delete task #1\", \"Create a project: [name]\", \"List my projects\", or \"Delete project 1off\".", False)
         return (text, False)
 
     name, params = parsed
+    if name == "project_list":
+        try:
+            from project_service import list_projects
+            projects = list_projects()
+        except Exception as e:
+            return (f"Error listing projects: {e}", False)
+        return (_format_project_list_for_telegram(projects), True)
+    if name == "project_create":
+        try:
+            validated = _validate_project_create(params)
+        except ValueError as e:
+            return (f"Invalid project_create parameters: {e}", False)
+        try:
+            from project_service import create_project
+            project = create_project(
+                name=validated["title"],
+                description=validated.get("description"),
+                status=validated.get("status", "active"),
+            )
+        except Exception as e:
+            return (f"Error creating project: {e}", False)
+        return (_format_project_created_for_telegram(project), True)
+    if name == "delete_project":
+        short_id = (params.get("short_id") or params.get("project_id") or "").strip()
+        if not short_id:
+            return ("delete_project requires short_id (the project's friendly id, e.g. 1off or work).", False)
+        try:
+            from project_service import get_project_by_short_id, delete_project
+            project = get_project_by_short_id(short_id)
+        except Exception as e:
+            return (f"Error looking up project: {e}", False)
+        if not project:
+            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False)
+        if not _parse_confirm(params):
+            name_str = (project.get("name") or "").strip() or short_id
+            return (
+                f"Delete project {short_id} ({name_str})? It will be removed from all tasks that use it; "
+                "some tasks may end up with no project assignments. Reply \"yes\" to confirm.",
+                False,
+            )
+        try:
+            delete_project(project["id"])
+        except Exception as e:
+            return (f"Error deleting project: {e}", False)
+        return (f"Project {short_id} deleted. It has been removed from all tasks.", True)
+    if name == "delete_task":
+        num = _parse_task_number(params)
+        if num is None:
+            return ("delete_task requires number (the task's friendly id, e.g. 1 or #1). List tasks to see numbers.", False)
+        try:
+            from task_service import get_task_by_number, delete_task
+            task = get_task_by_number(num)
+        except Exception as e:
+            return (f"Error looking up task: {e}", False)
+        if not task:
+            return (f"No task #{num}. List tasks to see numbers.", False)
+        if not _parse_confirm(params):
+            title = (task.get("title") or "").strip() or "(no title)"
+            return (f"Delete task #{num} ({title})? This cannot be undone. Reply \"yes\" to confirm.", False)
+        try:
+            delete_task(task["id"])
+        except Exception as e:
+            return (f"Error deleting task: {e}", False)
+        return (f"Task #{num} deleted.", True)
     if name == "task_list":
         try:
             from task_service import list_tasks as svc_list_tasks
@@ -247,7 +401,7 @@ def run_orchestrator(
             return (f"Error listing tasks: {e}", False)
         return (_format_task_list_for_telegram(tasks), True)
     if name != "task_create":
-        fallback = f"Tool '{name}' is not implemented yet. You can create a task or list tasks."
+        fallback = f"Tool '{name}' is not implemented yet. You can create, list, or delete tasks and projects."
         text = response_text.strip() or fallback
         return (fallback if _looks_like_json(text) else text, False)
 
@@ -271,7 +425,7 @@ def run_orchestrator(
             title=validated["title"],
             description=validated.get("description"),
             notes=validated.get("notes"),
-            status=validated.get("status", "inbox"),
+            status=validated.get("status", "incomplete"),
             priority=validated.get("priority"),
             available_date=validated.get("available_date"),
             due_date=validated.get("due_date"),

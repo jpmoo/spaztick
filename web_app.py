@@ -192,6 +192,57 @@ def api_delete_task(task_id: str):
     return {"status": "deleted"}
 
 
+# --- Projects API ---
+
+@app.get("/api/projects")
+def api_list_projects(status: str | None = None):
+    from project_service import list_projects
+    return list_projects(status=status or None)
+
+
+@app.post("/api/projects")
+def api_create_project(body: dict):
+    from project_service import create_project
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    return create_project(
+        name,
+        description=body.get("description") or None,
+        status=(body.get("status") or "active").strip() or "active",
+    )
+
+
+@app.get("/api/projects/{project_id}")
+def api_get_project(project_id: str):
+    from project_service import get_project
+    p = get_project(project_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return p
+
+
+@app.put("/api/projects/{project_id}")
+def api_update_project(project_id: str, body: dict):
+    from project_service import update_project, get_project
+    if get_project(project_id) is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return update_project(
+        project_id,
+        name=body.get("name") if "name" in body else None,
+        description=body.get("description") if "description" in body else None,
+        status=body.get("status") if "status" in body else None,
+    ) or {}
+
+
+@app.delete("/api/projects/{project_id}")
+def api_delete_project(project_id: str):
+    from project_service import delete_project
+    if not delete_project(project_id):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"status": "deleted"}
+
+
 # --- Serve config UI ---
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -216,6 +267,7 @@ HTML_PAGE = """<!DOCTYPE html>
     .row { display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap; }
     .row > * { flex: 1; min-width: 120px; }
     .status { font-size: 0.875rem; color: var(--muted); margin-top: 0.5rem; }
+    .muted { color: var(--muted); font-size: 0.875rem; }
     .status.running { color: #4ade80; }
     .error { color: var(--danger); font-size: 0.875rem; margin-top: 0.5rem; }
     .success { color: #4ade80; font-size: 0.875rem; margin-top: 0.5rem; }
@@ -313,9 +365,34 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 
   <div class="card">
+    <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Projects</h2>
+    <button type="button" class="secondary" id="new_project" style="margin-bottom:0.5rem;">New project</button>
+    <p class="status" id="projects_status">Loading…</p>
+    <ul class="task-list" id="project_list"></ul>
+  </div>
+
+  <div class="card">
     <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Tasks</h2>
     <p class="status" id="tasks_status">Loading…</p>
     <ul class="task-list" id="task_list"></ul>
+  </div>
+
+  <div class="modal-overlay" id="project_modal">
+    <div class="modal">
+      <h3>Edit project</h3>
+      <input type="hidden" id="project_id" />
+      <div><label>Short ID (read-only)</label><input type="text" id="project_short_id_display" readonly /></div>
+      <div><label>Name</label><input type="text" id="project_name" /></div>
+      <div><label>Description (markdown)</label><textarea id="project_description" rows="4"></textarea></div>
+      <div><label>Status</label><select id="project_status"><option value="active">active</option><option value="archived">archived</option></select></div>
+      <div><label>Created</label><input type="text" id="project_created_at" readonly /></div>
+      <div><label>Updated</label><input type="text" id="project_updated_at" readonly /></div>
+      <div class="modal-actions">
+        <button type="button" id="project_save">Save</button>
+        <button type="button" class="danger" id="project_delete">Delete</button>
+        <button type="button" class="secondary" id="project_cancel">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <div class="modal-overlay" id="task_modal">
@@ -327,11 +404,11 @@ HTML_PAGE = """<!DOCTYPE html>
       <div><label>Title</label><input type="text" id="task_title" /></div>
       <div><label>Description</label><textarea id="task_description"></textarea></div>
       <div><label>Notes</label><textarea id="task_notes"></textarea></div>
-      <div><label>Status</label><select id="task_status"><option value="inbox">inbox</option><option value="active">active</option><option value="blocked">blocked</option><option value="done">done</option><option value="archived">archived</option></select></div>
+      <div><label>Status</label><select id="task_status"><option value="incomplete">incomplete</option><option value="complete">complete</option></select></div>
       <div><label>Priority (0-3)</label><input type="number" id="task_priority" min="0" max="3" /></div>
       <div><label>Available date</label><input type="text" id="task_available_date" placeholder="YYYY-MM-DD" /></div>
       <div><label>Due date</label><input type="text" id="task_due_date" placeholder="YYYY-MM-DD" /></div>
-      <div><label>Projects (comma-separated)</label><input type="text" id="task_projects" placeholder="project1, project2" /></div>
+      <div><label>Projects</label><div id="task_projects_container"></div></div>
       <div><label>Tags (comma-separated)</label><input type="text" id="task_tags" placeholder="tag1, tag2" /></div>
       <div><label>Created</label><input type="text" id="task_created_at" readonly /></div>
       <div><label>Updated</label><input type="text" id="task_updated_at" readonly /></div>
@@ -431,6 +508,90 @@ HTML_PAGE = """<!DOCTYPE html>
       }
     };
 
+    let projectsList = [];
+    async function loadProjects() {
+      const el = $('project_list');
+      const statusEl = $('projects_status');
+      try {
+        const r = await fetch('/api/projects');
+        projectsList = await r.json();
+        if (!Array.isArray(projectsList)) throw new Error(projectsList.detail || 'Invalid response');
+        statusEl.className = 'status';
+        if (!projectsList.length) {
+          el.innerHTML = '';
+          statusEl.textContent = 'No projects yet.';
+          return;
+        }
+        statusEl.textContent = projectsList.length + ' project(s)';
+        el.innerHTML = projectsList.map(p => {
+          const label = (p.short_id ? p.short_id + ': ' : '') + (p.name || '(no name)') + ' [' + (p.status || 'active') + ']';
+          return '<li data-id="' + p.id + '">' + label + '</li>';
+        }).join('');
+        el.querySelectorAll('li').forEach(li => li.addEventListener('click', () => openProjectModal(li.dataset.id)));
+      } catch (e) {
+        el.innerHTML = '';
+        statusEl.textContent = 'Error: ' + (e.message || 'Loading projects failed');
+        statusEl.className = 'status error';
+      }
+    }
+
+    function openProjectModal(id) {
+      if (!id) {
+        $('project_id').value = '';
+        $('project_short_id_display').value = '';
+        $('project_name').value = '';
+        $('project_description').value = '';
+        $('project_status').value = 'active';
+        $('project_created_at').value = '';
+        $('project_updated_at').value = '';
+        $('project_modal').classList.add('open');
+        return;
+      }
+      fetch('/api/projects/' + encodeURIComponent(id))
+        .then(r => r.json())
+        .then(p => {
+          $('project_id').value = p.id;
+          $('project_short_id_display').value = p.short_id || '';
+          $('project_name').value = p.name || '';
+          $('project_description').value = p.description || '';
+          $('project_status').value = p.status || 'active';
+          $('project_created_at').value = p.created_at || '';
+          $('project_updated_at').value = p.updated_at || '';
+          $('project_modal').classList.add('open');
+        })
+        .catch(() => { $('projects_status').textContent = 'Failed to load project'; });
+    }
+    $('new_project').onclick = () => openProjectModal(null);
+    $('project_save').onclick = async () => {
+      const id = $('project_id').value;
+      const body = {
+        name: $('project_name').value.trim(),
+        description: $('project_description').value.trim() || null,
+        status: $('project_status').value
+      };
+      if (!body.name) { alert('Name is required'); return; }
+      try {
+        if (id) {
+          await fetch('/api/projects/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        } else {
+          await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        }
+        $('project_modal').classList.remove('open');
+        loadProjects();
+        loadTasks();
+      } catch (e) { alert('Save failed: ' + e.message); }
+    };
+    $('project_delete').onclick = () => {
+      if (!confirm('Delete this project? Task associations will be removed.')) return;
+      const id = $('project_id').value;
+      if (!id) { $('project_modal').classList.remove('open'); return; }
+      fetch('/api/projects/' + encodeURIComponent(id), { method: 'DELETE' })
+        .then(() => { $('project_modal').classList.remove('open'); loadProjects(); loadTasks(); })
+        .catch(e => alert('Delete failed: ' + e.message));
+    };
+    $('project_cancel').onclick = () => $('project_modal').classList.remove('open');
+    $('project_modal').addEventListener('click', (e) => { if (e.target === $('project_modal')) $('project_modal').classList.remove('open'); });
+
     async function loadTasks() {
       const el = $('task_list');
       const statusEl = $('tasks_status');
@@ -456,7 +617,7 @@ HTML_PAGE = """<!DOCTYPE html>
         el.innerHTML = tasks.slice(0, 100).map((t, i) => {
           const due = t.due_date ? ' — due ' + t.due_date : '';
           const label = t.number != null ? '#' + t.number : (i + 1);
-          return '<li data-id="' + t.id + '">' + label + '. ' + (t.title || '(no title)') + ' [' + (t.status || 'inbox') + ']' + due + '</li>';
+          return '<li data-id="' + t.id + '">' + label + '. ' + (t.title || '(no title)') + ' [' + (t.status || 'incomplete') + ']' + due + '</li>';
         }).join('');
         el.querySelectorAll('li').forEach(li => li.addEventListener('click', () => openTaskModal(li.dataset.id)));
       } catch (e) {
@@ -476,11 +637,15 @@ HTML_PAGE = """<!DOCTYPE html>
           $('task_title').value = t.title || '';
           $('task_description').value = t.description || '';
           $('task_notes').value = t.notes || '';
-          $('task_status').value = t.status || 'inbox';
+          $('task_status').value = t.status || 'incomplete';
           $('task_priority').value = t.priority !== undefined && t.priority !== null ? t.priority : '';
           $('task_available_date').value = t.available_date || '';
           $('task_due_date').value = t.due_date || '';
-          $('task_projects').value = (t.projects || []).join(', ');
+          const container = $('task_projects_container');
+          const taskProjectIds = t.projects || [];
+          container.innerHTML = projectsList.length
+            ? projectsList.map(p => '<label style="display:block;margin-bottom:0.25rem;"><input type="checkbox" data-project-id="' + p.id + '" ' + (taskProjectIds.indexOf(p.id) >= 0 ? 'checked' : '') + ' /> ' + (p.short_id || p.id) + ': ' + (p.name || '') + '</label>').join('')
+            : '<span class="muted">No projects. Create one above.</span>';
           $('task_tags').value = (t.tags || []).join(', ');
           $('task_created_at').value = t.created_at || '';
           $('task_updated_at').value = t.updated_at || '';
@@ -492,7 +657,7 @@ HTML_PAGE = """<!DOCTYPE html>
 
     $('task_save').onclick = async () => {
       const id = $('task_id').value;
-      const projects = $('task_projects').value.split(',').map(s => s.trim()).filter(Boolean);
+      const projects = Array.from($('task_projects_container').querySelectorAll('input[data-project-id]:checked')).map(cb => cb.getAttribute('data-project-id'));
       const tags = $('task_tags').value.split(',').map(s => s.trim()).filter(Boolean);
       const body = {
         title: $('task_title').value.trim(),
@@ -529,6 +694,7 @@ HTML_PAGE = """<!DOCTYPE html>
     $('task_modal').addEventListener('click', (e) => { if (e.target === $('task_modal')) $('task_modal').classList.remove('open'); });
 
     loadConfig().then(loadModels);
+    loadProjects();
     loadTasks();
     refreshStatus();
     setInterval(refreshStatus, 5000);

@@ -20,8 +20,8 @@ except ImportError:
 
 from database import get_connection, get_db_path, has_number_column, init_database
 
-# Valid task statuses (constrained state machine)
-STATUSES = frozenset({"inbox", "active", "blocked", "done", "archived"})
+# Valid task statuses: only two
+STATUSES = frozenset({"incomplete", "complete"})
 PRIORITY_MIN, PRIORITY_MAX = 0, 3
 
 
@@ -57,7 +57,7 @@ def create_task(
     *,
     description: str | None = None,
     notes: str | None = None,
-    status: str = "inbox",
+    status: str = "incomplete",
     priority: int | None = None,
     available_date: str | None = None,
     due_date: str | None = None,
@@ -221,7 +221,7 @@ def update_task(
             updates.append("notes = ?"); params.append(notes)
         if status is not None:
             updates.append("status = ?"); params.append(status)
-            if status == "done":
+            if status == "complete":
                 updates.append("completed_at = ?"); params.append(now)
         if priority is not None:
             updates.append("priority = ?"); params.append(priority)
@@ -339,11 +339,11 @@ def complete_recurring_task(task_id: str, advance_recurrence: bool = True) -> di
         if not row:
             return None
         row = dict(row)
-        if row["status"] == "done":
+        if row["status"] == "complete":
             return get_task(task_id)
         now = _now_iso()
         conn.execute(
-            "UPDATE tasks SET status = 'done', completed_at = ?, updated_at = ? WHERE id = ?",
+            "UPDATE tasks SET status = 'complete', completed_at = ?, updated_at = ? WHERE id = ?",
             (now, now, task_id),
         )
         _record_history(conn, task_id, "completed", {"completed_at": now})
@@ -382,7 +382,7 @@ def complete_recurring_task(task_id: str, advance_recurrence: bool = True) -> di
                     row["title"],
                     description=row.get("description"),
                     notes=row.get("notes"),
-                    status="inbox",
+                    status="incomplete",
                     priority=row.get("priority"),
                     available_date=avail,
                     due_date=due,

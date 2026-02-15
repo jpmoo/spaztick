@@ -13,7 +13,7 @@ _DEFAULT_DB_PATH = Path(__file__).resolve().parent / "spaztick.db"
 
 _SCHEMA = """
 -- Primary table: tasks
--- status: inbox | active | blocked | done | archived
+-- status: incomplete | complete (new tasks are always incomplete)
 -- priority: 0-3
 -- recurrence: JSON object or NULL; recurrence_parent_id links instances in chain
 CREATE TABLE IF NOT EXISTS tasks (
@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     title TEXT NOT NULL,
     description TEXT,
     notes TEXT,
-    status TEXT NOT NULL CHECK (status IN ('inbox', 'active', 'blocked', 'done', 'archived')),
+    status TEXT NOT NULL CHECK (status IN ('incomplete', 'complete')),
     priority INTEGER CHECK (priority >= 0 AND priority <= 3),
     available_date TEXT,
     due_date TEXT,
@@ -39,12 +39,27 @@ CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_parent ON tasks(recurrence_paren
 CREATE INDEX IF NOT EXISTS idx_tasks_available_date ON tasks(available_date);
 CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
 
--- Task–project association
+-- Projects (id = primary key; short_id = user-friendly 1–4 alphanumeric, unique)
+CREATE TABLE IF NOT EXISTS projects (
+    id TEXT PRIMARY KEY,
+    short_id TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('active', 'archived'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_projects_short_id ON projects(short_id);
+CREATE INDEX IF NOT EXISTS idx_projects_status ON projects(status);
+
+-- Task–project association (project_id references projects.id)
 CREATE TABLE IF NOT EXISTS task_projects (
     task_id TEXT NOT NULL,
     project_id TEXT NOT NULL,
     PRIMARY KEY (task_id, project_id),
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_projects_project ON task_projects(project_id);
@@ -125,9 +140,60 @@ def init_database(path: Path | None = None) -> Path:
         """)
     # Index on number (after column exists)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_number ON tasks(number)")
+    # Migration: status only incomplete | complete (recreate table if old CHECK exists)
+    _migrate_status_to_incomplete_complete(conn)
     conn.commit()
     conn.close()
     return db_path
+
+
+def _migrate_status_to_incomplete_complete(conn: sqlite3.Connection) -> None:
+    """If tasks table has old status CHECK, recreate with only incomplete|complete."""
+    try:
+        conn.execute(
+            "INSERT INTO tasks (id, number, title, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+            ("__mig_status_check__", 999999, "x", "incomplete", "2020-01-01T00:00:00Z", "2020-01-01T00:00:00Z"),
+        )
+        conn.execute("DELETE FROM tasks WHERE id = '__mig_status_check__'")
+        return  # already accepts 'incomplete'
+    except sqlite3.OperationalError:
+        pass  # CHECK failed, need to migrate
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("""
+        CREATE TABLE tasks_new (
+            id TEXT PRIMARY KEY,
+            number INTEGER UNIQUE,
+            title TEXT NOT NULL,
+            description TEXT,
+            notes TEXT,
+            status TEXT NOT NULL CHECK (status IN ('incomplete', 'complete')),
+            priority INTEGER CHECK (priority >= 0 AND priority <= 3),
+            available_date TEXT,
+            due_date TEXT,
+            recurrence TEXT,
+            recurrence_parent_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            FOREIGN KEY (recurrence_parent_id) REFERENCES tasks(id)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO tasks_new
+        SELECT id, number, title, description, notes,
+               CASE WHEN status = 'done' THEN 'complete' ELSE 'incomplete' END,
+               priority, available_date, due_date, recurrence, recurrence_parent_id,
+               created_at, updated_at, completed_at
+        FROM tasks
+    """)
+    conn.execute("DROP TABLE tasks")
+    conn.execute("ALTER TABLE tasks_new RENAME TO tasks")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_number ON tasks(number)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_parent ON tasks(recurrence_parent_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_available_date ON tasks(available_date)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date)")
+    conn.execute("PRAGMA foreign_keys = ON")
 
 
 def _ensure_number_column(conn: sqlite3.Connection) -> None:
