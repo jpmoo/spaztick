@@ -4,7 +4,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    ZoneInfo = None  # Python < 3.9
 
 # Run from project root so config and ollama_client can be imported
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -128,27 +133,46 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Send a message to get a response. You can ask to create a task (e.g. \"Create a task: Buy milk\").")
         return
     chat_id = update.message.chat.id
-    history = _chat_histories.get(chat_id, [])
-    history.append({"role": "user", "content": text})
+    # History disabled: set USE_HISTORY = True below to reinstate conversation history.
+    USE_HISTORY = False
+    history = _chat_histories.get(chat_id, []) if USE_HISTORY else []
+    if USE_HISTORY:
+        history = list(history)
+        history.append({"role": "user", "content": text})
     await update.message.chat.send_action("typing")
     base_url = config.ollama_base_url
     model = config.model
     system_prefix = config.system_message.strip() or ""
+    tz_name = getattr(config, "user_timezone", None) or "UTC"
+    try:
+        if ZoneInfo is not None:
+            now_str = datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d %H:%M")
+        else:
+            now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+            tz_name = "UTC"
+    except Exception:
+        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        tz_name = "UTC"
+    date_line = f"It is {now_str} in the user's time zone {tz_name}."
     if config.user_name and config.user_name.strip():
-        system_prefix = f"You are chatting with {config.user_name.strip()}.\n\n{system_prefix}".strip()
+        system_prefix = f"You are chatting with {config.user_name.strip()}.\n{date_line}\n\n{system_prefix}".strip()
+    else:
+        system_prefix = f"{date_line}\n\n{system_prefix}".strip()
+    effective_history = history if USE_HISTORY else []
     try:
         loop = asyncio.get_event_loop()
         response, tool_used = await loop.run_in_executor(
             None,
-            lambda: _run_orchestrator(text, base_url, model, system_prefix, history),
+            lambda: _run_orchestrator(text, base_url, model, system_prefix, effective_history),
         )
         if not response:
             response = "(No response)"
         await update.message.reply_text(response)
-        if tool_used:
-            _chat_histories[chat_id] = []
-        else:
-            _chat_histories[chat_id] = history + [{"role": "assistant", "content": response}]
+        if USE_HISTORY:
+            if tool_used:
+                _chat_histories[chat_id] = []
+            else:
+                _chat_histories[chat_id] = history + [{"role": "assistant", "content": response}]
     except Exception as e:
         logger.exception("Orchestrator request failed")
         err = str(e)
@@ -158,7 +182,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
         else:
             await update.message.reply_text(f"Error: {e}")
-        _chat_histories[chat_id] = history
+        if USE_HISTORY:
+            _chat_histories[chat_id] = history
 
 
 def run_polling() -> None:

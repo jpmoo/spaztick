@@ -127,6 +127,8 @@ Never invent IDs, tasks, projects, or stored data.
 Never generate results that come from the database.
 You only generate tool calls.
 
+Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume the year of the next occurrence of that date from today.
+
 """
 
 # Available tools section (unchanged from original)
@@ -706,7 +708,17 @@ def run_orchestrator(
     tool_used is True when a mutating tool was successfully executed (caller should clear history). For delete_* without confirm, tool_used is False.
     """
     url = f"{ollama_base_url.rstrip('/')}/api/generate"
-    history_block = _format_history(history or [])
+    # When history is empty (caller can disable conversation history), only the current user message is sent.
+    history_list = history or []
+    history_block = _format_history(history_list)
+    # Avoid appending user_message twice: caller often passes history that already includes the current message.
+    last_is_current = (
+        len(history_list) > 0
+        and (history_list[-1].get("role") or "user").lower() == "user"
+        and (history_list[-1].get("content") or "").strip() == user_message.strip()
+    )
+    def _prompt_with_user() -> str:
+        return (history_block + "User: " + user_message).strip() if not last_is_current else history_block.strip()
 
     # Step 1: Classify intent (TOOL vs CHAT)
     try:
@@ -719,7 +731,7 @@ def run_orchestrator(
 
     if intent == "CHAT":
         try:
-            chat_prompt = (history_block + "User: " + user_message).strip()
+            chat_prompt = _prompt_with_user()
             response_text = _call_ollama(CHAT_MODE_PROMPT, chat_prompt, url, model)
         except Exception as e:
             logger.exception("Chat mode call failed")
@@ -729,7 +741,7 @@ def run_orchestrator(
 
     # Step 2: TOOL — get tool call from orchestrator, then execute
     full_system = (system_prefix.strip() + "\n\n" + TOOL_ORCHESTRATOR_PROMPT).strip() if system_prefix else TOOL_ORCHESTRATOR_PROMPT
-    tool_prompt = (history_block + "User: " + user_message).strip()
+    tool_prompt = _prompt_with_user()
     logger.info("Tool mode request prompt_len=%d system_len=%d", len(tool_prompt), len(full_system))
     try:
         response_text = _call_ollama(full_system, tool_prompt, url, model)

@@ -26,6 +26,7 @@ class AppConfig(BaseModel):
     use_polling: bool = Field(default=True, description="Use long polling instead of webhook (no port/HTTPS needed)")
     database_path: str = Field(default="", description="Path to SQLite database file; empty = project dir / spaztick.db")
     user_timezone: str = Field(default="UTC", description="IANA timezone for relative dates (e.g. America/New_York). Used for 'today'/'tomorrow'.")
+    api_key: str = Field(default="", description="API key for external app access. If set, /api/external/* requires X-API-Key header. Empty = external API disabled.")
 
     @property
     def ollama_base_url(self) -> str:

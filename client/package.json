@@ -1,0 +1,18 @@
+{
+  "name": "spaztick-client",
+  "version": "0.1.0",
+  "description": "Spaztick desktop client — tasks, projects, and chat",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0"
+  },
+  "build": {
+    "appId": "com.spaztick.client",
+    "productName": "Spaztick",
+    "directories": { "output": "dist" }
+  }
+}

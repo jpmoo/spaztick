@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -45,6 +45,7 @@ class ConfigUpdate(BaseModel):
     use_polling: bool = True
     database_path: str = ""
     user_timezone: str = "UTC"
+    api_key: str = ""
 
 
 # --- API routes ---
@@ -67,6 +68,7 @@ def get_config() -> ConfigUpdate:
         use_polling=c.use_polling,
         database_path=getattr(c, "database_path", "") or "",
         user_timezone=getattr(c, "user_timezone", "") or "UTC",
+        api_key=getattr(c, "api_key", "") or "",
     )
 
 
@@ -86,6 +88,7 @@ def put_config(body: ConfigUpdate) -> dict[str, str]:
     c.use_polling = body.use_polling
     c.database_path = getattr(body, "database_path", "") or ""
     c.user_timezone = getattr(body, "user_timezone", "") or "UTC"
+    c.api_key = getattr(body, "api_key", "") or ""
     c.save()
     return {"status": "saved"}
 
@@ -252,6 +255,228 @@ def api_delete_project(project_id: str):
     return {"status": "deleted"}
 
 
+# --- External API (authenticated; same app on 8081) ---
+
+def _require_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> None:
+    """Dependency: require X-API-Key header to match config. 403 if no key set; 401 if wrong."""
+    c = load_config()
+    key = (getattr(c, "api_key", "") or "").strip()
+    if not key:
+        raise HTTPException(status_code=403, detail="External API disabled. Set API key in web UI.")
+    if not x_api_key or x_api_key.strip() != key:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key. Use X-API-Key header.")
+
+
+# External: Tasks
+@app.get("/api/external/tasks", dependencies=[Depends(_require_api_key)])
+def external_list_tasks(
+    status: str | None = None,
+    project_id: str | None = None,
+    tag: str | None = None,
+    due_by: str | None = None,
+    available_by: str | None = None,
+    title_contains: str | None = None,
+    sort_by: str | None = None,
+    flagged: bool | None = None,
+    limit: int = 500,
+):
+    from task_service import list_tasks
+    try:
+        tasks = list_tasks(
+            status=status,
+            project_id=project_id,
+            tag=tag,
+            due_by=due_by,
+            available_by=available_by,
+            title_contains=title_contains,
+            sort_by=sort_by,
+            flagged=flagged,
+            limit=min(limit, 1000),
+        )
+        return [dict(t) for t in tasks]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/external/tasks/{task_id_or_number}", dependencies=[Depends(_require_api_key)])
+def external_get_task(task_id_or_number: str):
+    from task_service import get_task, get_task_by_number
+    t = get_task(task_id_or_number)
+    if t is None and task_id_or_number.isdigit():
+        t = get_task_by_number(int(task_id_or_number))
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return t
+
+
+@app.post("/api/external/tasks", dependencies=[Depends(_require_api_key)])
+def external_create_task(body: dict):
+    from task_service import create_task
+    title = (body.get("title") or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title is required")
+    try:
+        return create_task(
+            title,
+            description=body.get("description") or None,
+            notes=body.get("notes") or None,
+            status=(body.get("status") or "incomplete").strip() or "incomplete",
+            priority=body.get("priority") if body.get("priority") is not None else None,
+            available_date=body.get("available_date") or None,
+            due_date=body.get("due_date") or None,
+            projects=body.get("projects"),
+            tags=body.get("tags"),
+            flagged=body.get("flagged", False),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.put("/api/external/tasks/{task_id}", dependencies=[Depends(_require_api_key)])
+def external_update_task(task_id: str, body: dict):
+    from task_service import get_task, get_task_by_number, update_task, remove_task_project, remove_task_tag, add_task_project, add_task_tag
+    t = get_task(task_id)
+    if t is None and task_id.isdigit():
+        t = get_task_by_number(int(task_id))
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    tid = t["id"]
+    update_task(
+        tid,
+        title=body.get("title"),
+        description=body.get("description"),
+        notes=body.get("notes"),
+        status=body.get("status"),
+        priority=body.get("priority") if body.get("priority") is not None else None,
+        available_date=body.get("available_date") or None,
+        due_date=body.get("due_date") or None,
+        flagged=body.get("flagged") if "flagged" in body else None,
+    )
+    if "projects" in body:
+        for pid in (t.get("projects") or []):
+            remove_task_project(tid, pid)
+        for pid in body.get("projects") or []:
+            if str(pid).strip():
+                add_task_project(tid, str(pid).strip())
+    if "tags" in body:
+        for tag in (t.get("tags") or []):
+            remove_task_tag(tid, tag)
+        for tag in body.get("tags") or []:
+            if str(tag).strip():
+                add_task_tag(tid, str(tag).strip())
+    from task_service import get_task as _get
+    return _get(tid)
+
+
+@app.delete("/api/external/tasks/{task_id}", dependencies=[Depends(_require_api_key)])
+def external_delete_task(task_id: str):
+    from task_service import get_task, get_task_by_number, delete_task
+    t = get_task(task_id)
+    if t is None and task_id.isdigit():
+        t = get_task_by_number(int(task_id))
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if not delete_task(t["id"]):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": "deleted"}
+
+
+# External: Projects
+@app.get("/api/external/projects", dependencies=[Depends(_require_api_key)])
+def external_list_projects(status: str | None = None):
+    from project_service import list_projects
+    return list_projects(status=status or None)
+
+
+@app.get("/api/external/projects/{project_id}", dependencies=[Depends(_require_api_key)])
+def external_get_project(project_id: str):
+    from project_service import get_project, get_project_by_short_id
+    p = get_project(project_id)
+    if p is None:
+        p = get_project_by_short_id(project_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return p
+
+
+@app.post("/api/external/projects", dependencies=[Depends(_require_api_key)])
+def external_create_project(body: dict):
+    from project_service import create_project
+    name = (body.get("name") or body.get("title") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    return create_project(
+        name,
+        description=body.get("description") or None,
+        status=(body.get("status") or "active").strip() or "active",
+    )
+
+
+@app.put("/api/external/projects/{project_id}", dependencies=[Depends(_require_api_key)])
+def external_update_project(project_id: str, body: dict):
+    from project_service import update_project, get_project, get_project_by_short_id
+    p = get_project(project_id) or get_project_by_short_id(project_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return update_project(
+        p["id"],
+        name=body.get("name") if "name" in body else None,
+        description=body.get("description") if "description" in body else None,
+        status=body.get("status") if "status" in body else None,
+    ) or {}
+
+
+@app.delete("/api/external/projects/{project_id}", dependencies=[Depends(_require_api_key)])
+def external_delete_project(project_id: str):
+    from project_service import delete_project, get_project, get_project_by_short_id
+    p = get_project(project_id) or get_project_by_short_id(project_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not delete_project(p["id"]):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"status": "deleted"}
+
+
+# External: Chat (same flow as Telegram — orchestrator + Ollama + tools)
+class ChatRequest(BaseModel):
+    message: str
+    model: str | None = None  # override config model if set
+
+
+@app.post("/api/external/chat", dependencies=[Depends(_require_api_key)])
+def external_chat(body: ChatRequest):
+    from orchestrator import run_orchestrator
+    from datetime import datetime
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        ZoneInfo = None
+    c = load_config()
+    base_url = c.ollama_base_url
+    model = (body.model or c.model or "llama3.2").strip()
+    system_prefix = (c.system_message or "").strip() or "You are a helpful assistant."
+    tz_name = getattr(c, "user_timezone", None) or "UTC"
+    try:
+        if ZoneInfo is not None:
+            now_str = datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d %H:%M")
+        else:
+            now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+            tz_name = "UTC"
+    except Exception:
+        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+        tz_name = "UTC"
+    date_line = f"It is {now_str} in the user's time zone {tz_name}."
+    if c.user_name and (c.user_name or "").strip():
+        system_prefix = f"You are chatting with {c.user_name.strip()}.\n{date_line}\n\n{system_prefix}".strip()
+    else:
+        system_prefix = f"{date_line}\n\n{system_prefix}".strip()
+    try:
+        response_text, tool_used = run_orchestrator(body.message.strip(), base_url, model, system_prefix, history=[])
+        return {"response": response_text or "", "tool_used": tool_used}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # --- Serve config UI ---
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -372,7 +597,68 @@ HTML_PAGE = """<!DOCTYPE html>
     </div>
     <div>
       <label>Your timezone (for &quot;today&quot; / &quot;tomorrow&quot;)</label>
-      <input type="text" id="user_timezone" placeholder="e.g. America/New_York or UTC" />
+      <select id="user_timezone">
+        <option value="UTC">UTC</option>
+        <optgroup label="Americas">
+          <option value="America/New_York">America/New_York (Eastern)</option>
+          <option value="America/Chicago">America/Chicago (Central)</option>
+          <option value="America/Denver">America/Denver (Mountain)</option>
+          <option value="America/Los_Angeles">America/Los_Angeles (Pacific)</option>
+          <option value="America/Phoenix">America/Phoenix (Arizona)</option>
+          <option value="America/Anchorage">America/Anchorage</option>
+          <option value="America/Honolulu">America/Honolulu</option>
+          <option value="America/Toronto">America/Toronto</option>
+          <option value="America/Vancouver">America/Vancouver</option>
+          <option value="America/Edmonton">America/Edmonton</option>
+          <option value="America/Winnipeg">America/Winnipeg</option>
+          <option value="America/Halifax">America/Halifax</option>
+          <option value="America/St_Johns">America/St_Johns</option>
+          <option value="America/Sao_Paulo">America/Sao_Paulo</option>
+          <option value="America/Buenos_Aires">America/Buenos_Aires</option>
+        </optgroup>
+        <optgroup label="Europe">
+          <option value="Europe/London">Europe/London</option>
+          <option value="Europe/Paris">Europe/Paris</option>
+          <option value="Europe/Berlin">Europe/Berlin</option>
+          <option value="Europe/Amsterdam">Europe/Amsterdam</option>
+          <option value="Europe/Brussels">Europe/Brussels</option>
+          <option value="Europe/Madrid">Europe/Madrid</option>
+          <option value="Europe/Rome">Europe/Rome</option>
+          <option value="Europe/Stockholm">Europe/Stockholm</option>
+          <option value="Europe/Moscow">Europe/Moscow</option>
+          <option value="Europe/Istanbul">Europe/Istanbul</option>
+        </optgroup>
+        <optgroup label="Asia">
+          <option value="Asia/Dubai">Asia/Dubai</option>
+          <option value="Asia/Kolkata">Asia/Kolkata</option>
+          <option value="Asia/Bangkok">Asia/Bangkok</option>
+          <option value="Asia/Singapore">Asia/Singapore</option>
+          <option value="Asia/Hong_Kong">Asia/Hong_Kong</option>
+          <option value="Asia/Shanghai">Asia/Shanghai</option>
+          <option value="Asia/Tokyo">Asia/Tokyo</option>
+          <option value="Asia/Seoul">Asia/Seoul</option>
+        </optgroup>
+        <optgroup label="Australia / Pacific">
+          <option value="Australia/Sydney">Australia/Sydney</option>
+          <option value="Australia/Melbourne">Australia/Melbourne</option>
+          <option value="Australia/Perth">Australia/Perth</option>
+          <option value="Pacific/Auckland">Pacific/Auckland</option>
+          <option value="Pacific/Fiji">Pacific/Fiji</option>
+        </optgroup>
+        <optgroup label="Africa">
+          <option value="Africa/Cairo">Africa/Cairo</option>
+          <option value="Africa/Johannesburg">Africa/Johannesburg</option>
+        </optgroup>
+      </select>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">External API</h2>
+    <p class="status" style="margin-bottom:0.5rem;">Optional. When set, external apps can call <code>/api/external/*</code> (tasks, projects, chat) on this server. Send <code>X-API-Key: &lt;key&gt;</code> on every request. Empty = external API disabled.</p>
+    <div>
+      <label>API key</label>
+      <input type="password" id="api_key" placeholder="Leave empty to disable" autocomplete="off" />
     </div>
   </div>
 
@@ -461,7 +747,16 @@ HTML_PAGE = """<!DOCTYPE html>
       $('web_ui_port').value = c.web_ui_port ?? 8081;
       $('use_polling').checked = c.use_polling !== false;
       $('database_path').value = c.database_path || '';
-      $('user_timezone').value = c.user_timezone || 'UTC';
+      const tz = c.user_timezone || 'UTC';
+      const tzSel = $('user_timezone');
+      if (!Array.from(tzSel.options).some(o => o.value === tz)) {
+        const opt = document.createElement('option');
+        opt.value = tz;
+        opt.textContent = tz + ' (saved)';
+        tzSel.insertBefore(opt, tzSel.firstChild);
+      }
+      tzSel.value = tz;
+      $('api_key').value = c.api_key || '';
       $('webhook_url_row').style.display = usePolling() ? 'none' : 'block';
     }
 
@@ -508,7 +803,8 @@ HTML_PAGE = """<!DOCTYPE html>
         web_ui_port: parseInt($('web_ui_port').value, 10) || 8081,
         use_polling: usePolling(),
         database_path: $('database_path').value.trim(),
-        user_timezone: $('user_timezone').value.trim() || 'UTC'
+        user_timezone: $('user_timezone').value.trim() || 'UTC',
+        api_key: $('api_key').value.trim()
       };
       try {
         await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
