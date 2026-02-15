@@ -109,13 +109,14 @@ def init_database(path: Path | None = None) -> Path:
     conn = sqlite3.connect(str(db_path))
     conn.executescript(_SCHEMA)
     # Migration: add number column if missing (existing DBs)
-    has_number = any(
-        row[1] == "number"
-        for row in conn.execute("PRAGMA table_info(tasks)").fetchall()
-    )
-    if not has_number:
+    try:
         conn.execute("ALTER TABLE tasks ADD COLUMN number INTEGER")
-        # Backfill: assign 1, 2, 3... by created_at, id
+        added = True
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
+        added = False
+    if added:
         conn.execute("""
             UPDATE tasks SET number = (
                 SELECT 1 + COUNT(*) FROM tasks t2
