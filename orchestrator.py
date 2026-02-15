@@ -475,11 +475,14 @@ def _looks_like_json(text: str) -> bool:
 def _call_ollama(system: str, prompt: str, url: str, model: str, timeout: float = 120.0) -> str:
     """Call Ollama /api/generate with the given system and prompt. Returns response text or raises."""
     import httpx
+    logger.info("LLM request → url=%s model=%s\n--- system ---\n%s\n--- prompt ---\n%s", url, model, system, prompt)
     payload = {"model": model, "prompt": prompt, "system": system, "stream": False}
     r = httpx.post(url, json=payload, timeout=timeout)
     r.raise_for_status()
     data = r.json()
-    return data.get("response", "")
+    response_text = data.get("response", "")
+    logger.info("LLM response ←\n%s", response_text)
+    return response_text
 
 
 def _parse_intent(response_text: str) -> str:

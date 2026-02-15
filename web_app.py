@@ -335,9 +335,9 @@ HTML_PAGE = """<!DOCTYPE html>
       <input type="password" id="telegram_bot_token" placeholder="123456:ABC-DEF..." autocomplete="off" />
     </div>
     <div>
-      <label>Allowed Telegram users (optional)</label>
-      <input type="text" id="telegram_allowed_users" placeholder="@jpmoo, @other (comma-separated; empty = allow all)" />
-      <span class="status" style="display:block;margin-top:0.25rem;">Only these users can message the bot. Others get &quot;Unauthorized&quot;.</span>
+      <label>Whitelist: allowed Telegram users</label>
+      <input type="text" id="telegram_allowed_users" placeholder="@jpmoo, @other (comma-separated @usernames)" />
+      <span class="status" style="display:block;margin-top:0.25rem;">Only these @usernames can use the bot. Leave <strong>empty</strong> to allow everyone. Otherwise non-listed users get &quot;Unauthorized&quot;. Save settings to apply.</span>
     </div>
     <div class="row">
       <div>

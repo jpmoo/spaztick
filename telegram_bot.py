@@ -36,13 +36,20 @@ def _is_user_allowed(update: Update) -> bool:
     """True if no whitelist is set, or if the message sender's @username is in the whitelist."""
     config = load_config()
     raw = getattr(config, "telegram_allowed_users", "") or ""
+    raw = (raw or "").strip()
     allowed = [u.strip().lstrip("@").lower() for u in raw.split(",") if u.strip()]
+    user = update.effective_user
+    username = (user.username or "").strip().lower() if user else ""
+    user_id = user.id if user else None
     if not allowed:
         return True
-    user = update.effective_user
-    if not user or not user.username:
+    if not user or not username:
+        logger.warning("Telegram whitelist active but sender has no @username (id=%s). Denying.", user_id)
         return False
-    return user.username.lower() in allowed
+    if username in allowed:
+        return True
+    logger.warning("Telegram user not in whitelist: @%s (id=%s). Replying Unauthorized.", username, user_id)
+    return False
 
 
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -54,6 +61,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     chat_id = update.message.chat.id
     _chat_histories[chat_id] = []
+    logger.info("Telegram /reset from allowed user chat_id=%s", chat_id)
     await update.message.reply_text("Conversation history cleared. Starting fresh.")
 
 
@@ -65,6 +73,7 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Unauthorized")
         return
     chat_id = update.message.chat.id
+    logger.info("Telegram /history from allowed user chat_id=%s", chat_id)
     history = _chat_histories.get(chat_id, [])
     if not history:
         await update.message.reply_text("No history yet. Conversation is empty.")
@@ -113,6 +122,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not _is_user_allowed(update):
         await update.message.reply_text("Unauthorized")
         return
+    logger.info("Telegram message from allowed user chat_id=%s", update.message.chat.id)
     text = update.message.text.strip()
     if not text:
         await update.message.reply_text("Send a message to get a response. You can ask to create a task (e.g. \"Create a task: Buy milk\").")
