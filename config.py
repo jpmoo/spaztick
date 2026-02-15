@@ -24,6 +24,7 @@ class AppConfig(BaseModel):
     web_ui_port: int = Field(default=8081, ge=1, le=65535, description="Port for configuration web UI")
     use_polling: bool = Field(default=True, description="Use long polling instead of webhook (no port/HTTPS needed)")
     database_path: str = Field(default="", description="Path to SQLite database file; empty = project dir / spaztick.db")
+    user_timezone: str = Field(default="UTC", description="IANA timezone for relative dates (e.g. America/New_York). Used for 'today'/'tomorrow'.")
 
     @property
     def ollama_base_url(self) -> str:

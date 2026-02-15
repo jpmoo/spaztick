@@ -43,6 +43,7 @@ class ConfigUpdate(BaseModel):
     web_ui_port: int = Field(8081, ge=1, le=65535)
     use_polling: bool = True
     database_path: str = ""
+    user_timezone: str = "UTC"
 
 
 # --- API routes ---
@@ -63,6 +64,7 @@ def get_config() -> ConfigUpdate:
         web_ui_port=c.web_ui_port,
         use_polling=c.use_polling,
         database_path=getattr(c, "database_path", "") or "",
+        user_timezone=getattr(c, "user_timezone", "") or "UTC",
     )
 
 
@@ -80,6 +82,7 @@ def put_config(body: ConfigUpdate) -> dict[str, str]:
     c.web_ui_port = body.web_ui_port
     c.use_polling = body.use_polling
     c.database_path = getattr(body, "database_path", "") or ""
+    c.user_timezone = getattr(body, "user_timezone", "") or "UTC"
     c.save()
     return {"status": "saved"}
 
@@ -127,6 +130,62 @@ def telegram_status() -> dict[str, bool | int | None]:
     return {"running": True, "pid": _telegram_process.pid}
 
 
+# --- Tasks API (for web app list / edit / delete) ---
+
+@app.get("/api/tasks")
+def api_list_tasks() -> list[dict]:
+    from task_service import list_tasks as svc_list_tasks
+    return svc_list_tasks(limit=500)
+
+
+@app.get("/api/tasks/{task_id}")
+def api_get_task(task_id: str):
+    from task_service import get_task
+    t = get_task(task_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return t
+
+
+@app.put("/api/tasks/{task_id}")
+def api_update_task(task_id: str, body: dict):
+    from task_service import get_task, update_task, remove_task_project, remove_task_tag, add_task_project, add_task_tag
+    t = get_task(task_id)
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    update_task(
+        task_id,
+        title=body.get("title"),
+        description=body.get("description"),
+        notes=body.get("notes"),
+        status=body.get("status"),
+        priority=body.get("priority") if body.get("priority") is not None else None,
+        available_date=body.get("available_date") or None,
+        due_date=body.get("due_date") or None,
+    )
+    if "projects" in body:
+        for pid in t.get("projects") or []:
+            remove_task_project(task_id, pid)
+        for pid in body.get("projects") or []:
+            if str(pid).strip():
+                add_task_project(task_id, str(pid).strip())
+    if "tags" in body:
+        for tag in t.get("tags") or []:
+            remove_task_tag(task_id, tag)
+        for tag in body.get("tags") or []:
+            if str(tag).strip():
+                add_task_tag(task_id, str(tag).strip())
+    return get_task(task_id)
+
+
+@app.delete("/api/tasks/{task_id}")
+def api_delete_task(task_id: str):
+    from task_service import delete_task
+    if not delete_task(task_id):
+        raise HTTPException(status_code=404, detail="Task not found")
+    return {"status": "deleted"}
+
+
 # --- Serve config UI ---
 
 HTML_PAGE = """<!DOCTYPE html>
@@ -154,6 +213,14 @@ HTML_PAGE = """<!DOCTYPE html>
     .status.running { color: #4ade80; }
     .error { color: var(--danger); font-size: 0.875rem; margin-top: 0.5rem; }
     .success { color: #4ade80; font-size: 0.875rem; margin-top: 0.5rem; }
+    .task-list { list-style: none; padding: 0; margin: 0; }
+    .task-list li { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); cursor: pointer; }
+    .task-list li:hover { background: var(--border); }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 100; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; max-width: 480px; width: 90%; max-height: 90vh; overflow-y: auto; }
+    .modal h3 { margin: 0 0 1rem; }
+    .modal-actions { display: flex; gap: 0.5rem; margin-top: 1rem; }
   </style>
 </head>
 <body>
@@ -221,11 +288,15 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 
   <div class="card">
-    <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Database</h2>
+    <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Database &amp; timezone</h2>
     <p class="status" style="margin-bottom:0.5rem;">SQLite path. Empty = project dir / spaztick.db</p>
     <div>
       <label>Database path (optional)</label>
       <input type="text" id="database_path" placeholder="/path/to/spaztick.db" />
+    </div>
+    <div>
+      <label>Your timezone (for &quot;today&quot; / &quot;tomorrow&quot;)</label>
+      <input type="text" id="user_timezone" placeholder="e.g. America/New_York or UTC" />
     </div>
   </div>
 
@@ -233,6 +304,37 @@ HTML_PAGE = """<!DOCTYPE html>
     <button type="button" id="save">Save config</button>
     <p class="success" id="save_msg" style="display:none;">Config saved.</p>
     <p class="error" id="save_err" style="display:none;"></p>
+  </div>
+
+  <div class="card">
+    <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Tasks</h2>
+    <p class="status" id="tasks_status">Loading…</p>
+    <ul class="task-list" id="task_list"></ul>
+  </div>
+
+  <div class="modal-overlay" id="task_modal">
+    <div class="modal">
+      <h3>Edit task</h3>
+      <input type="hidden" id="task_id" />
+      <div><label>ID (read-only)</label><input type="text" id="task_id_display" readonly /></div>
+      <div><label>Title</label><input type="text" id="task_title" /></div>
+      <div><label>Description</label><textarea id="task_description"></textarea></div>
+      <div><label>Notes</label><textarea id="task_notes"></textarea></div>
+      <div><label>Status</label><select id="task_status"><option value="inbox">inbox</option><option value="active">active</option><option value="blocked">blocked</option><option value="done">done</option><option value="archived">archived</option></select></div>
+      <div><label>Priority (0-3)</label><input type="number" id="task_priority" min="0" max="3" /></div>
+      <div><label>Available date</label><input type="text" id="task_available_date" placeholder="YYYY-MM-DD" /></div>
+      <div><label>Due date</label><input type="text" id="task_due_date" placeholder="YYYY-MM-DD" /></div>
+      <div><label>Projects (comma-separated)</label><input type="text" id="task_projects" placeholder="project1, project2" /></div>
+      <div><label>Tags (comma-separated)</label><input type="text" id="task_tags" placeholder="tag1, tag2" /></div>
+      <div><label>Created</label><input type="text" id="task_created_at" readonly /></div>
+      <div><label>Updated</label><input type="text" id="task_updated_at" readonly /></div>
+      <div><label>Completed</label><input type="text" id="task_completed_at" readonly /></div>
+      <div class="modal-actions">
+        <button type="button" id="task_save">Save</button>
+        <button type="button" class="danger" id="task_delete">Delete</button>
+        <button type="button" class="secondary" id="task_cancel">Cancel</button>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -255,6 +357,7 @@ HTML_PAGE = """<!DOCTYPE html>
       $('web_ui_port').value = c.web_ui_port ?? 8081;
       $('use_polling').checked = c.use_polling !== false;
       $('database_path').value = c.database_path || '';
+      $('user_timezone').value = c.user_timezone || 'UTC';
       $('webhook_url_row').style.display = usePolling() ? 'none' : 'block';
     }
 
@@ -299,7 +402,8 @@ HTML_PAGE = """<!DOCTYPE html>
         webhook_public_url: $('webhook_public_url').value.trim(),
         web_ui_port: parseInt($('web_ui_port').value, 10) || 8081,
         use_polling: usePolling(),
-        database_path: $('database_path').value.trim()
+        database_path: $('database_path').value.trim(),
+        user_timezone: $('user_timezone').value.trim() || 'UTC'
       };
       try {
         await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -320,7 +424,92 @@ HTML_PAGE = """<!DOCTYPE html>
       }
     };
 
+    async function loadTasks() {
+      try {
+        const r = await fetch('/api/tasks');
+        const tasks = await r.json();
+        const el = $('task_list');
+        const statusEl = $('tasks_status');
+        if (!tasks.length) {
+          el.innerHTML = '';
+          statusEl.textContent = 'No tasks yet.';
+          return;
+        }
+        statusEl.textContent = tasks.length + ' task(s)';
+        el.innerHTML = tasks.slice(0, 100).map((t, i) => {
+          const due = t.due_date ? ' — due ' + t.due_date : '';
+          return '<li data-id="' + t.id + '">' + (i + 1) + '. ' + (t.title || '(no title)') + ' [' + (t.status || 'inbox') + ']' + due + '</li>';
+        }).join('');
+        el.querySelectorAll('li').forEach(li => li.addEventListener('click', () => openTaskModal(li.dataset.id)));
+      } catch (e) {
+        $('tasks_status').textContent = 'Error: ' + e.message;
+        $('tasks_status').className = 'status error';
+      }
+    }
+
+    function openTaskModal(id) {
+      fetch('/api/tasks/' + encodeURIComponent(id))
+        .then(r => r.json())
+        .then(t => {
+          $('task_id').value = t.id;
+          $('task_id_display').value = t.id;
+          $('task_title').value = t.title || '';
+          $('task_description').value = t.description || '';
+          $('task_notes').value = t.notes || '';
+          $('task_status').value = t.status || 'inbox';
+          $('task_priority').value = t.priority !== undefined && t.priority !== null ? t.priority : '';
+          $('task_available_date').value = t.available_date || '';
+          $('task_due_date').value = t.due_date || '';
+          $('task_projects').value = (t.projects || []).join(', ');
+          $('task_tags').value = (t.tags || []).join(', ');
+          $('task_created_at').value = t.created_at || '';
+          $('task_updated_at').value = t.updated_at || '';
+          $('task_completed_at').value = t.completed_at || '';
+          $('task_modal').classList.add('open');
+        })
+        .catch(() => $('tasks_status').textContent = 'Failed to load task');
+    }
+
+    $('task_save').onclick = async () => {
+      const id = $('task_id').value;
+      const projects = $('task_projects').value.split(',').map(s => s.trim()).filter(Boolean);
+      const tags = $('task_tags').value.split(',').map(s => s.trim()).filter(Boolean);
+      const body = {
+        title: $('task_title').value.trim(),
+        description: $('task_description').value.trim() || null,
+        notes: $('task_notes').value.trim() || null,
+        status: $('task_status').value,
+        priority: $('task_priority').value === '' ? null : parseInt($('task_priority').value, 10),
+        available_date: $('task_available_date').value.trim() || null,
+        due_date: $('task_due_date').value.trim() || null,
+        projects,
+        tags
+      };
+      try {
+        await fetch('/api/tasks/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        $('task_modal').classList.remove('open');
+        loadTasks();
+      } catch (e) {
+        alert('Save failed: ' + e.message);
+      }
+    };
+
+    $('task_delete').onclick = () => {
+      if (!confirm('Delete this task? This cannot be undone.')) return;
+      const id = $('task_id').value;
+      fetch('/api/tasks/' + encodeURIComponent(id), { method: 'DELETE' })
+        .then(() => {
+          $('task_modal').classList.remove('open');
+          loadTasks();
+        })
+        .catch(e => alert('Delete failed: ' + e.message));
+    };
+
+    $('task_cancel').onclick = () => $('task_modal').classList.remove('open');
+    $('task_modal').addEventListener('click', (e) => { if (e.target === $('task_modal')) $('task_modal').classList.remove('open'); });
+
     loadConfig().then(loadModels);
+    loadTasks();
     refreshStatus();
     setInterval(refreshStatus, 5000);
   </script>

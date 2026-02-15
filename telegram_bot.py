@@ -21,14 +21,24 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def _run_orchestrator(user_message: str, base_url: str, model: str, system_prefix: str) -> str:
-    """Sync orchestrator call (run in executor)."""
+# Per-chat conversation history; cleared after successful tool (task_create / task_list)
+_chat_histories: dict[int, list[dict[str, str]]] = {}
+
+
+def _run_orchestrator(
+    user_message: str,
+    base_url: str,
+    model: str,
+    system_prefix: str,
+    history: list[dict[str, str]],
+) -> tuple[str, bool]:
+    """Sync orchestrator call (run in executor). Returns (response_text, tool_used)."""
     from orchestrator import run_orchestrator
-    return run_orchestrator(user_message, base_url, model, system_prefix)
+    return run_orchestrator(user_message, base_url, model, system_prefix, history=history)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle incoming message: run orchestrator (tool calls → Task Service), reply with result."""
+    """Handle incoming message: run orchestrator with history; clear history after successful tool."""
     if not update.message or not update.message.text:
         return
     config = load_config()
@@ -39,6 +49,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not text:
         await update.message.reply_text("Send a message to get a response. You can ask to create a task (e.g. \"Create a task: Buy milk\").")
         return
+    chat_id = update.message.chat.id
+    history = _chat_histories.get(chat_id, [])
+    history.append({"role": "user", "content": text})
     await update.message.chat.send_action("typing")
     base_url = config.ollama_base_url
     model = config.model
@@ -47,16 +60,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         system_prefix = f"You are chatting with {config.user_name.strip()}.\n\n{system_prefix}".strip()
     try:
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
+        response, tool_used = await loop.run_in_executor(
             None,
-            lambda: _run_orchestrator(text, base_url, model, system_prefix),
+            lambda: _run_orchestrator(text, base_url, model, system_prefix, history),
         )
         if not response:
             response = "(No response)"
         await update.message.reply_text(response)
+        if tool_used:
+            _chat_histories[chat_id] = []
+        else:
+            _chat_histories[chat_id] = history + [{"role": "assistant", "content": response}]
     except Exception as e:
         logger.exception("Orchestrator request failed")
         await update.message.reply_text(f"Error: {e}")
+        _chat_histories[chat_id] = history
 
 
 def run_polling() -> None:

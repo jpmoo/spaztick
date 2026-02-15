@@ -202,6 +202,24 @@ def update_task(
         conn.close()
 
 
+def delete_task(task_id: str) -> bool:
+    """Delete a task and its history. Returns True if deleted, False if not found."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            return False
+        conn.execute("DELETE FROM task_history WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE FROM task_projects WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE FROM task_tags WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE FROM task_dependencies WHERE task_id = ? OR depends_on_task_id = ?", (task_id, task_id))
+        conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+
 def add_task_project(task_id: str, project_id: str) -> None:
     conn = get_connection()
     try:

@@ -11,39 +11,19 @@ from typing import Any
 
 logger = logging.getLogger("orchestrator")
 
-# Tool contract from Spaztick_task_create_Tool_Specification
-SYSTEM_PROMPT = """You are the AI orchestrator for Spaztick.
-You do not directly modify the database.
-You must respond ONLY with a valid JSON tool call when the user intends to create, update, complete, or list tasks.
+# Tool contract: only title required; never mention JSON to the user
+SYSTEM_PROMPT = """You are the AI orchestrator for Spaztick. You do not modify the database directly.
+When the user wants to create, update, complete, or list tasks, respond ONLY with a single JSON object. Do not ask for description or priority—only the task title is required. All other fields are optional.
+Do not tell the user about JSON, tool calls, or formats. Never show or mention the JSON structure in your reply. Just output the JSON with no other text.
 
-Available tools:
-- task_create
-- task_update
-- task_complete
-- task_list
+Available tools: task_create, task_update, task_complete, task_list.
 
-When creating a task:
-- title is required.
-- description is optional.
-- notes must be Markdown if present.
-- status defaults to "inbox" unless explicitly specified.
-- priority must be an integer between 0 and 3.
-- projects must be an array of project IDs.
-- tags must be an array of strings.
-- available_date and due_date must be ISO format (YYYY-MM-DD).
+task_create: Only "title" is required. Omit description, priority, dates, projects, tags if the user did not provide them. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Status defaults to inbox.
+Output format for create: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (description, due_date, available_date, etc.).
 
-If insufficient information is provided, ask a clarification question instead of calling a tool.
+task_list: {"name": "task_list", "parameters": {}}
 
-You MUST use this exact structure when creating a task. The top-level object must have "name" and "parameters"; the task fields go inside "parameters". Only this format will execute the tool. Do not return task fields at the top level.
-
-To create a task, respond with:
-{"name": "task_create", "parameters": {"title": "Your task title", "description": "...", "due_date": "YYYY-MM-DD", ...}}
-
-To list all tasks, respond with:
-{"name": "task_list", "parameters": {}}
-
-Wrong (will NOT run—only the wrapper format above will):
-{"title": "...", "description": "..."}
+If the user gave a title (or clear intent like "add task X"), create the task with that title and any dates/details they mentioned. Do not ask for "description or priority" or "ISO format". If you truly need the title and they did not give it, ask once briefly for just the task title.
 """
 
 # task_create schema: required title; optional description, notes, status (inbox|active|blocked), priority (0-3), projects[], tags[], available_date, due_date
@@ -184,26 +164,48 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
     return "\n".join(lines)
 
 
-def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system_prefix: str) -> str:
+def _format_history(history: list[dict[str, str]]) -> str:
+    """Format conversation history for the prompt."""
+    if not history:
+        return ""
+    lines = []
+    for h in history:
+        role = (h.get("role") or "user").lower()
+        content = (h.get("content") or "").strip()
+        if role == "user":
+            lines.append(f"User: {content}")
+        else:
+            lines.append(f"Assistant: {content}")
+    return "\n".join(lines) + "\n\n"
+
+
+def run_orchestrator(
+    user_message: str,
+    ollama_base_url: str,
+    model: str,
+    system_prefix: str,
+    history: list[dict[str, str]] | None = None,
+) -> tuple[str, bool]:
     """
-    Run the orchestrator: send user message to Ollama with system prompt; if response is a
-    valid task_create tool call, validate, create task via Task Service, return canonical JSON.
-    Otherwise return the LLM response as-is (e.g. clarification question).
+    Run the orchestrator. Returns (response_text, tool_used).
+    tool_used is True when task_create or task_list was successfully executed (caller should clear history).
     """
     import httpx
 
     full_system = (system_prefix.strip() + "\n\n" + SYSTEM_PROMPT).strip() if system_prefix else SYSTEM_PROMPT
+    history_block = _format_history(history or [])
+    prompt = (history_block + "User: " + user_message).strip()
     payload = {
         "model": model,
-        "prompt": user_message,
+        "prompt": prompt,
         "system": full_system,
         "stream": False,
     }
     url = f"{ollama_base_url.rstrip('/')}/api/generate"
     logger.info(
-        "LLM request url=%s model=%s prompt_len=%d system_len=%d prompt=%s",
-        url, model, len(user_message), len(full_system),
-        repr(user_message[:500] + ("..." if len(user_message) > 500 else "")),
+        "LLM request url=%s model=%s prompt_len=%d system_len=%d user_msg=%s",
+        url, model, len(prompt), len(full_system),
+        repr(user_message[:300] + ("..." if len(user_message) > 300 else "")),
     )
     try:
         r = httpx.post(url, json=payload, timeout=120.0)
@@ -219,7 +221,7 @@ def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system
         )
     except Exception as e:
         logger.exception("LLM request failed")
-        return f"Error calling the model: {e}"
+        return (f"Error calling the model: {e}", False)
 
     parsed = _parse_tool_call(response_text)
     if parsed:
@@ -229,8 +231,8 @@ def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system
     if not parsed:
         text = response_text.strip() or "I didn't understand. You can ask me to create a task or list your tasks."
         if _looks_like_json(text):
-            return "I didn't understand. Try: \"Create a task: [title]\" or \"List my tasks\"."
-        return text
+            return ("I didn't understand. Try: \"Create a task: [title]\" or \"List my tasks\".", False)
+        return (text, False)
 
     name, params = parsed
     if name == "task_list":
@@ -238,17 +240,26 @@ def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system
             from task_service import list_tasks as svc_list_tasks
             tasks = svc_list_tasks(limit=500)
         except Exception as e:
-            return f"Error listing tasks: {e}"
-        return _format_task_list_for_telegram(tasks)
+            return (f"Error listing tasks: {e}", False)
+        return (_format_task_list_for_telegram(tasks), True)
     if name != "task_create":
         fallback = f"Tool '{name}' is not implemented yet. You can create a task or list tasks."
         text = response_text.strip() or fallback
-        return fallback if _looks_like_json(text) else text
+        return (fallback if _looks_like_json(text) else text, False)
 
     try:
         validated = _validate_task_create(params)
     except ValueError as e:
-        return f"Invalid task_create parameters: {e}"
+        return (f"Invalid task_create parameters: {e}", False)
+
+    tz_name = "UTC"
+    try:
+        from config import load as load_config
+        tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+    except Exception:
+        pass
+    from date_utils import resolve_task_dates
+    validated = resolve_task_dates(validated, tz_name)
 
     try:
         from task_service import create_task as svc_create_task
@@ -264,6 +275,6 @@ def run_orchestrator(user_message: str, ollama_base_url: str, model: str, system
             tags=validated.get("tags"),
         )
     except Exception as e:
-        return f"Error creating task: {e}"
+        return (f"Error creating task: {e}", False)
 
-    return _format_task_created_for_telegram(task)
+    return (_format_task_created_for_telegram(task), True)
