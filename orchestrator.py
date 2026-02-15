@@ -23,7 +23,7 @@ Output format for create: {"name": "task_create", "parameters": {"title": "..."}
 
 task_list: {"name": "task_list", "parameters": {}}
 
-If the user gave a title (or clear intent like "add task X"), create the task with that title and any dates/details they mentioned. Do not ask for "description or priority" or "ISO format". If you truly need the title and they did not give it, ask once briefly for just the task title.
+Important: Do NOT use generic phrases as the task title. If the user only says "new task", "create a task", "add a task", "new", "task", or similar without giving an actual task title or describing what the task is, do NOT call task_create with that phrase as the title. Instead respond in plain language asking once for the task title (e.g. "What's the task?" or "What would you like to call the task?"). Only call task_create when the user has provided a real title or clearly described the task (e.g. "Buy milk", "Roast coffee due Monday").
 """
 
 # task_create schema: required title; optional description, notes, status (inbox|active|blocked), priority (0-3), projects[], tags[], available_date, due_date
