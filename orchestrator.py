@@ -11,15 +11,126 @@ from typing import Any
 
 logger = logging.getLogger("orchestrator")
 
-# Tool contract: only title required; never mention JSON to the user
-SYSTEM_PROMPT = """You are the AI orchestrator for Spaztick. You help with tasks and projects, and you are also conversational.
+# --- Intent router: classifies user message as TOOL or CHAT ---
+INTENT_ROUTER_PROMPT = """You are the Spaztick Intent Router.
 
-When the user asks for any task or project operation (list tasks, show tasks, create a task, mark task 1 complete, tell me about task 1, list projects, delete project X, etc.), you MUST respond with ONLY the single JSON tool call. No other text. No "I'll list your tasks", no "Here they are", no greeting—only the raw JSON object. The user expects a command result, not chat.
+Your job is to classify the user message as either:
 
-When the user is just chatting, greeting you, saying thanks, or asking something that does not match any tool (e.g. "Hi", "What's the weather?", "How are you?"), reply in normal conversational language. Do NOT output JSON. Be friendly and helpful. If they ask something off-topic, you can answer briefly and offer to help with tasks or projects if they’d like.
+- "TOOL"  -> The user is requesting a task or project operation.
+- "CHAT"  -> The user is greeting, chatting, thanking, or asking something unrelated to tasks or projects.
 
-CRITICAL — When the user asks to list/show/get/create/update/delete/view tasks or projects, reply with ONLY the JSON tool call. No preamble, no "Here are your tasks". Just {"name": "...", "parameters": {...}}. Rule: task/project command -> ONLY JSON. Chat -> conversational.
+You must respond with ONLY a valid JSON object in this exact format:
 
+{"intent": "TOOL"}
+
+or
+
+{"intent": "CHAT"}
+
+No other text. No explanation. No commentary.
+
+CLASSIFICATION RULES:
+
+Classify as TOOL if the message contains ANY of the following:
+
+- References to tasks or projects (task, tasks, project, projects)
+- Commands like list, show, get, create, add, new, update, edit, change, delete, remove
+- Words like flagged, overdue, due, available, completed, done
+- A task number reference (e.g., "1", "#1", "task 1") in context
+- Filtering phrases (e.g., "due today", "over the next three days", "available tomorrow")
+- Anything that appears to operate on stored task/project data
+
+If there is ANY ambiguity, default to "TOOL".
+
+Classify as CHAT only when the message clearly does not involve tasks or projects (e.g., greetings, small talk, weather, general questions unrelated to Spaztick).
+
+Never invent tasks.
+Never generate tool calls.
+Only classify intent."""
+
+# --- Chat mode: conversational reply when user is not requesting a tool ---
+CHAT_MODE_PROMPT = """You are Spaztick's conversational assistant.
+
+You are friendly, concise, and helpful.
+
+This mode is used only when the user is chatting, greeting you, thanking you, or asking something unrelated to tasks or projects.
+
+IMPORTANT RULES:
+
+- Do NOT generate JSON.
+- Do NOT call tools.
+- Do NOT invent, describe, summarize, or list any tasks or projects.
+- Do NOT fabricate any stored data.
+- If the user asks something that appears to require task or project data, politely respond that you can help with that and suggest a task command.
+
+You may:
+- Greet the user.
+- Answer general knowledge questions briefly.
+- Offer help with tasks or projects.
+- Encourage them to create, list, or manage tasks.
+
+Tone:
+- Friendly but concise.
+- Not overly verbose.
+- Not overly enthusiastic.
+- Helpful and grounded.
+
+Examples:
+
+User: "Hi"
+-> Respond with a friendly greeting.
+
+User: "Thanks!"
+-> Respond briefly and warmly.
+
+User: "What's the weather?"
+-> Give a short answer and optionally remind them you can help manage tasks.
+
+User: "Tell me about my tasks"
+-> Respond: "It looks like you want to work with your tasks. Try saying 'list tasks' and I'll pull them up for you."
+
+Never invent tasks.
+Never guess about stored data.
+Never simulate tool output."""
+
+# --- Tool mode: intro + available tools section ---
+TOOL_ORCHESTRATOR_INTRO = """You are the Spaztick Tool Orchestrator.
+
+You are in TOOL MODE.
+
+Your job is to convert the user's request into EXACTLY ONE valid JSON tool call.
+
+CRITICAL RULES:
+
+- You must output ONLY a single JSON object.
+- No prose.
+- No greetings.
+- No explanations.
+- No markdown.
+- No code blocks.
+- No additional keys.
+- No commentary.
+- No multiple tool calls.
+- Never fabricate task or project data.
+- Never simulate tool results.
+- Never answer conversationally.
+
+If the user request requires a task or project operation, you MUST return exactly one tool call in this format:
+
+{"name": "<tool_name>", "parameters": { ... }}
+
+If the user request is unclear but appears task/project related, choose the most appropriate tool and fill parameters conservatively.
+
+If required information is missing for creation (e.g., user says "new task" without a title), respond conversationally asking for clarification - DO NOT call a tool.
+
+Never invent IDs, tasks, projects, or stored data.
+Never generate results that come from the database.
+You only generate tool calls.
+
+"""
+
+# Available tools section (unchanged from original)
+AVAILABLE_TOOLS_SECTION = """
 Available tools: task_create, task_list, task_info, task_update, delete_task, project_create, project_list, project_info, delete_project.
 
 task_create: Only "title" is required. Omit description, priority, dates, projects, tags, flagged if the user did not provide them. New tasks are incomplete and not flagged by default. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Optional "flagged": true to create a flagged task.
@@ -59,6 +170,9 @@ When the user asks about a task or project by number/short_id (e.g. "tell me abo
 Important for task_create: Do NOT use generic phrases as the task title. If the user only says "new task", "create a task", "add a task", or similar without giving an actual title, respond in plain language asking once for the task title (conversational reply, no JSON). Only call task_create when they have given a real title (e.g. "Buy milk").
 Same for project_create: only call when they have given a real project name. Otherwise reply conversationally.
 """
+
+TOOL_ORCHESTRATOR_PROMPT = TOOL_ORCHESTRATOR_INTRO + AVAILABLE_TOOLS_SECTION
+
 
 # task_create schema: required title; optional description, notes, priority (0-3), projects[], tags[], available_date, due_date, flagged (default false). Status is always incomplete on create.
 TASK_CREATE_STATUS = frozenset({"incomplete"})
@@ -358,6 +472,29 @@ def _looks_like_json(text: str) -> bool:
     return (t.startswith("{") and "}" in t) or (t.startswith("[") and "]" in t)
 
 
+def _call_ollama(system: str, prompt: str, url: str, model: str, timeout: float = 120.0) -> str:
+    """Call Ollama /api/generate with the given system and prompt. Returns response text or raises."""
+    import httpx
+    payload = {"model": model, "prompt": prompt, "system": system, "stream": False}
+    r = httpx.post(url, json=payload, timeout=timeout)
+    r.raise_for_status()
+    data = r.json()
+    return data.get("response", "")
+
+
+def _parse_intent(response_text: str) -> str:
+    """Parse intent router response. Returns 'TOOL' or 'CHAT'. Defaults to 'TOOL' on parse failure."""
+    obj = _extract_json_object(response_text or "")
+    if not obj or not isinstance(obj, dict):
+        return "TOOL"
+    intent = obj.get("intent")
+    if isinstance(intent, str):
+        i = intent.strip().upper()
+        if i == "CHAT":
+            return "CHAT"
+    return "TOOL"
+
+
 def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
     """Format a created task as a user-friendly message for Telegram."""
     title = (task.get("title") or "").strip() or "(no title)"
@@ -562,39 +699,39 @@ def run_orchestrator(
 ) -> tuple[str, bool]:
     """
     Run the orchestrator. Returns (response_text, tool_used).
-    tool_used is True when a mutating tool (task_create, task_list, task_update, project_create, project_list, delete_task, delete_project) was successfully executed (caller should clear history). For delete_* without confirm, tool_used is False so the user can confirm in the next message.
+    Two-call flow: (1) Intent router classifies TOOL vs CHAT. (2) CHAT -> conversational LLM; TOOL -> tool-orchestrator LLM, then execute tool.
+    tool_used is True when a mutating tool was successfully executed (caller should clear history). For delete_* without confirm, tool_used is False.
     """
-    import httpx
-
-    full_system = (system_prefix.strip() + "\n\n" + SYSTEM_PROMPT).strip() if system_prefix else SYSTEM_PROMPT
-    history_block = _format_history(history or [])
-    prompt = (history_block + "User: " + user_message).strip()
-    payload = {
-        "model": model,
-        "prompt": prompt,
-        "system": full_system,
-        "stream": False,
-    }
     url = f"{ollama_base_url.rstrip('/')}/api/generate"
-    logger.info(
-        "LLM request url=%s model=%s prompt_len=%d system_len=%d user_msg=%s",
-        url, model, len(prompt), len(full_system),
-        repr(user_message[:300] + ("..." if len(user_message) > 300 else "")),
-    )
+    history_block = _format_history(history or [])
+
+    # Step 1: Classify intent (TOOL vs CHAT)
     try:
-        r = httpx.post(url, json=payload, timeout=120.0)
-        r.raise_for_status()
-        data = r.json()
-        response_text = data.get("response", "")
-        eval_duration = data.get("eval_duration")
-        logger.info(
-            "LLM response len=%d eval_duration=%s response=%s",
-            len(response_text),
-            eval_duration,
-            repr(response_text[:1000] + ("..." if len(response_text) > 1000 else "")),
-        )
+        intent_response = _call_ollama(INTENT_ROUTER_PROMPT, user_message.strip(), url, model)
+        intent = _parse_intent(intent_response)
     except Exception as e:
-        logger.exception("LLM request failed")
+        logger.exception("Intent router call failed")
+        return (f"Error calling the model: {e}", False)
+    logger.info("Intent router classified as: %s", intent)
+
+    if intent == "CHAT":
+        try:
+            chat_prompt = (history_block + "User: " + user_message).strip()
+            response_text = _call_ollama(CHAT_MODE_PROMPT, chat_prompt, url, model)
+        except Exception as e:
+            logger.exception("Chat mode call failed")
+            return (f"Error calling the model: {e}", False)
+        text = response_text.strip() or "I didn't understand. You can ask me to list or create tasks and projects."
+        return (text, False)
+
+    # Step 2: TOOL — get tool call from orchestrator, then execute
+    full_system = (system_prefix.strip() + "\n\n" + TOOL_ORCHESTRATOR_PROMPT).strip() if system_prefix else TOOL_ORCHESTRATOR_PROMPT
+    tool_prompt = (history_block + "User: " + user_message).strip()
+    logger.info("Tool mode request prompt_len=%d system_len=%d", len(tool_prompt), len(full_system))
+    try:
+        response_text = _call_ollama(full_system, tool_prompt, url, model)
+    except Exception as e:
+        logger.exception("Tool orchestrator call failed")
         return (f"Error calling the model: {e}", False)
 
     parsed = _parse_tool_call(response_text)

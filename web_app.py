@@ -38,6 +38,7 @@ class ConfigUpdate(BaseModel):
     user_name: str = ""
     system_message: str = "You are a helpful assistant."
     telegram_bot_token: str = ""
+    telegram_allowed_users: str = ""
     telegram_listener_port: int = Field(8443, ge=1, le=65535)
     webhook_public_url: str = ""
     web_ui_port: int = Field(8081, ge=1, le=65535)
@@ -59,6 +60,7 @@ def get_config() -> ConfigUpdate:
         user_name=c.user_name or "",
         system_message=c.system_message,
         telegram_bot_token=c.telegram_bot_token if c.telegram_bot_token else "",
+        telegram_allowed_users=getattr(c, "telegram_allowed_users", "") or "",
         telegram_listener_port=c.telegram_listener_port,
         webhook_public_url=c.webhook_public_url or "",
         web_ui_port=c.web_ui_port,
@@ -77,6 +79,7 @@ def put_config(body: ConfigUpdate) -> dict[str, str]:
     c.user_name = body.user_name
     c.system_message = body.system_message
     c.telegram_bot_token = body.telegram_bot_token
+    c.telegram_allowed_users = getattr(body, "telegram_allowed_users", "") or ""
     c.telegram_listener_port = body.telegram_listener_port
     c.webhook_public_url = body.webhook_public_url
     c.web_ui_port = body.web_ui_port
@@ -331,6 +334,11 @@ HTML_PAGE = """<!DOCTYPE html>
       <label>Bot token (from @BotFather)</label>
       <input type="password" id="telegram_bot_token" placeholder="123456:ABC-DEF..." autocomplete="off" />
     </div>
+    <div>
+      <label>Allowed Telegram users (optional)</label>
+      <input type="text" id="telegram_allowed_users" placeholder="@jpmoo, @other (comma-separated; empty = allow all)" />
+      <span class="status" style="display:block;margin-top:0.25rem;">Only these users can message the bot. Others get &quot;Unauthorized&quot;.</span>
+    </div>
     <div class="row">
       <div>
         <label><input type="checkbox" id="use_polling" checked /> Use long polling</label>
@@ -447,6 +455,7 @@ HTML_PAGE = """<!DOCTYPE html>
       $('user_name').value = c.user_name || '';
       $('system_message').value = c.system_message || '';
       $('telegram_bot_token').value = c.telegram_bot_token || '';
+      $('telegram_allowed_users').value = c.telegram_allowed_users || '';
       $('telegram_listener_port').value = c.telegram_listener_port ?? 8443;
       $('webhook_public_url').value = c.webhook_public_url || '';
       $('web_ui_port').value = c.web_ui_port ?? 8081;
@@ -493,6 +502,7 @@ HTML_PAGE = """<!DOCTYPE html>
         user_name: $('user_name').value.trim(),
         system_message: $('system_message').value.trim() || 'You are a helpful assistant.',
         telegram_bot_token: $('telegram_bot_token').value.trim(),
+        telegram_allowed_users: $('telegram_allowed_users').value.trim(),
         telegram_listener_port: parseInt($('telegram_listener_port').value, 10) || 8443,
         webhook_public_url: $('webhook_public_url').value.trim(),
         web_ui_port: parseInt($('web_ui_port').value, 10) || 8081,

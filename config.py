@@ -19,6 +19,7 @@ class AppConfig(BaseModel):
     user_name: str = Field(default="", description="Name of the user chatting; prefixed to system message as 'You are chatting with {name}.'")
     system_message: str = Field(default="You are a helpful assistant.", description="System prompt for the model")
     telegram_bot_token: str = Field(default="", description="Telegram bot token from @BotFather")
+    telegram_allowed_users: str = Field(default="", description="Comma-separated @usernames allowed to use the bot (e.g. @jpmoo). Empty = allow all.")
     telegram_listener_port: int = Field(default=8443, ge=1, le=65535, description="Port for Telegram webhook (80, 88, 443, 8443 allowed by Telegram)")
     webhook_public_url: str = Field(default="", description="Public HTTPS URL for webhook (e.g. https://yourdomain.com), required when not using polling")
     web_ui_port: int = Field(default=8081, ge=1, le=65535, description="Port for configuration web UI")

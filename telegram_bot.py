@@ -32,9 +32,25 @@ logger = logging.getLogger(__name__)
 _chat_histories: dict[int, list[dict[str, str]]] = {}
 
 
+def _is_user_allowed(update: Update) -> bool:
+    """True if no whitelist is set, or if the message sender's @username is in the whitelist."""
+    config = load_config()
+    raw = getattr(config, "telegram_allowed_users", "") or ""
+    allowed = [u.strip().lstrip("@").lower() for u in raw.split(",") if u.strip()]
+    if not allowed:
+        return True
+    user = update.effective_user
+    if not user or not user.username:
+        return False
+    return user.username.lower() in allowed
+
+
 async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Flush conversation history for this chat and start anew."""
     if not update.message:
+        return
+    if not _is_user_allowed(update):
+        await update.message.reply_text("Unauthorized")
         return
     chat_id = update.message.chat.id
     _chat_histories[chat_id] = []
@@ -44,6 +60,9 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Show the conversation history currently gathered for the prompt."""
     if not update.message:
+        return
+    if not _is_user_allowed(update):
+        await update.message.reply_text("Unauthorized")
         return
     chat_id = update.message.chat.id
     history = _chat_histories.get(chat_id, [])
@@ -90,6 +109,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     config = load_config()
     if not config.telegram_bot_token:
         await update.message.reply_text("Bot token not configured. Set it in the web UI.")
+        return
+    if not _is_user_allowed(update):
+        await update.message.reply_text("Unauthorized")
         return
     text = update.message.text.strip()
     if not text:
