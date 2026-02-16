@@ -39,8 +39,58 @@ logger = logging.getLogger(__name__)
 # Per-chat conversation history; cleared after successful tool (task_create / task_list)
 _chat_histories: dict[int, list[dict[str, str]]] = {}
 
-# When history is disabled: pending delete confirmation (chat_id -> {"tool": "delete_task", "number": N} or {"tool": "delete_project", "short_id": "x"})
-_pending_confirm: dict[int, dict] = {}
+# When history is disabled: pending delete confirmation. Persisted to file so it survives restarts and works across workers.
+_PENDING_CONFIRM_PATH = Path(__file__).resolve().parent / "telegram_pending_confirm.json"
+
+
+def _load_pending_confirm() -> dict[int, dict]:
+    """Load pending confirmations from file (chat_id -> payload)."""
+    out: dict[int, dict] = {}
+    if not _PENDING_CONFIRM_PATH.exists():
+        return out
+    try:
+        raw = _PENDING_CONFIRM_PATH.read_text()
+        data = json.loads(raw) if raw.strip() else {}
+        for k, v in (data or {}).items():
+            if isinstance(v, dict) and v.get("tool") in ("delete_task", "delete_project"):
+                try:
+                    out[int(k)] = v
+                except (TypeError, ValueError):
+                    pass
+    except Exception as e:
+        logger.warning("Could not load telegram_pending_confirm.json: %s", e)
+    return out
+
+
+def _save_pending_confirm(pending: dict[int, dict]) -> None:
+    """Write pending confirmations to file."""
+    data = {str(k): v for k, v in pending.items()}
+    try:
+        _PENDING_CONFIRM_PATH.write_text(json.dumps(data, indent=0))
+    except Exception as e:
+        logger.warning("Could not save telegram_pending_confirm.json: %s", e)
+
+
+def _get_pending_confirm(chat_id: int) -> dict | None:
+    """Get pending confirmation for chat; use in-memory first, then file."""
+    # In-memory is authoritative for this process; sync from file on read if missing
+    if chat_id in _pending_confirm_inmem:
+        return _pending_confirm_inmem[chat_id]
+    loaded = _load_pending_confirm()
+    return loaded.get(chat_id)
+
+
+def _set_pending_confirm(chat_id: int, payload: dict | None) -> None:
+    """Set or clear pending confirmation for chat; keep in-memory and persist to file."""
+    if payload is None:
+        _pending_confirm_inmem.pop(chat_id, None)
+    else:
+        _pending_confirm_inmem[chat_id] = payload
+    _save_pending_confirm(_pending_confirm_inmem)
+
+
+# In-memory cache; persisted to _PENDING_CONFIRM_PATH so "yes" works across restarts/workers
+_pending_confirm_inmem: dict[int, dict] = _load_pending_confirm()
 
 
 def _is_user_allowed(update: Update) -> bool:
@@ -72,7 +122,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     chat_id = update.message.chat.id
     _chat_histories[chat_id] = []
-    _pending_confirm.pop(chat_id, None)
+    _set_pending_confirm(chat_id, None)
     logger.info("Telegram /reset from allowed user chat_id=%s", chat_id)
     await update.message.reply_text("Conversation history cleared. Starting fresh.")
 
@@ -162,17 +212,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     USE_HISTORY = False
     # When history is off: if user says yes/confirm and we have a pending delete, execute it via web app API
     if not USE_HISTORY:
-        pending = _pending_confirm.get(chat_id)
+        pending = _get_pending_confirm(chat_id)
         if pending and text.lower() in ("yes", "confirm", "y"):
             await update.message.chat.send_action("typing")
             web_base = f"http://127.0.0.1:{getattr(config, 'web_ui_port', 8081)}"
             loop = asyncio.get_event_loop()
             ok, msg = await loop.run_in_executor(None, lambda: _execute_pending_confirm_http(web_base, pending))
-            _pending_confirm.pop(chat_id, None)
+            _set_pending_confirm(chat_id, None)
             await update.message.reply_text(msg)
             return
         if pending and text.lower() in ("no", "n", "cancel"):
-            _pending_confirm.pop(chat_id, None)
+            _set_pending_confirm(chat_id, None)
             await update.message.reply_text("Cancelled.")
             return
     history = _chat_histories.get(chat_id, []) if USE_HISTORY else []
@@ -206,9 +256,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             lambda: _run_orchestrator(text, base_url, model, system_prefix, effective_history),
         )
         if pending_confirm:
-            _pending_confirm[chat_id] = pending_confirm
+            _set_pending_confirm(chat_id, pending_confirm)
         if tool_used:
-            _pending_confirm.pop(chat_id, None)
+            _set_pending_confirm(chat_id, None)
         if not response:
             response = "(No response)"
         await update.message.reply_text(response)
