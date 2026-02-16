@@ -675,6 +675,53 @@ def _format_project_created_for_telegram(project: dict[str, Any]) -> str:
     return prefix + f"{name} [{status}]."
 
 
+def _format_recurrence_short(rec: Any) -> str | None:
+    """Format recurrence dict as a short human-readable string for API/chat/Telegram."""
+    if not rec or not isinstance(rec, dict):
+        return None
+    freq = rec.get("freq") or "daily"
+    interval = rec.get("interval") or 1
+    parts = []
+    if interval != 1:
+        parts.append(f"every {interval}")
+    freq_label = freq.capitalize()
+    if freq == "weekly" and rec.get("by_weekday"):
+        days = rec["by_weekday"]
+        day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+        try:
+            resolved = [day_names[int(d)] if isinstance(d, int) else str(d)[:2].capitalize() for d in days]
+        except (ValueError, TypeError):
+            resolved = [str(d) for d in days]
+        parts.append(f"Weekly on {', '.join(resolved)}")
+    elif freq == "monthly":
+        if rec.get("monthly_rule") == "day_of_month" and rec.get("monthly_day") is not None:
+            parts.append(f"Monthly on day {rec['monthly_day']}")
+        elif rec.get("monthly_rule") == "weekday_of_month":
+            week_num = rec.get("monthly_week")
+            week_labels = {1: "First", 2: "Second", 3: "Third", 4: "Fourth", 5: "Last"}
+            wd = rec.get("monthly_weekday")
+            day_names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+            wd_str = day_names[int(wd)] if isinstance(wd, int) and 0 <= wd <= 6 else str(wd)
+            parts.append(f"Monthly on {week_labels.get(week_num, week_num)} {wd_str}")
+        else:
+            parts.append(freq_label)
+    elif freq == "yearly" and rec.get("yearly_month") is not None and rec.get("yearly_day") is not None:
+        months = ["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        m = rec["yearly_month"]
+        parts.append(f"Yearly on {months[m] if 1 <= m <= 12 else m}/{rec['yearly_day']}")
+    else:
+        parts.append(freq_label)
+    end = rec.get("end_condition") or "never"
+    if end == "after_count" and rec.get("end_after_count") is not None:
+        parts.append(f", {rec['end_after_count']} times")
+    elif end == "end_date" and rec.get("end_date"):
+        parts.append(f", until {rec['end_date']}")
+    anchor = rec.get("anchor") or "scheduled"
+    if anchor == "completed":
+        parts.append(" (from completed date)")
+    return " ".join(parts) if parts else "Recurring"
+
+
 def _format_task_info_text(
     task: dict[str, Any],
     parent_tasks: list[dict[str, Any]],
@@ -689,6 +736,9 @@ def _format_task_info_text(
     lines = [f"Task {label}: {title}", f"Status: {task.get('status') or 'incomplete'}"]
     if task.get("priority") is not None:
         lines.append(f"Priority: {task['priority']}")
+    rec_str = _format_recurrence_short(task.get("recurrence"))
+    if rec_str:
+        lines.append(f"Recurrence: {rec_str}")
     if task.get("description"):
         lines.append(f"Description: {task['description'].strip()}")
     if task.get("notes"):

@@ -61,8 +61,6 @@
         </div>
       </div>
     </aside>
-    <div class="resize-handle resize-handle-vertical" id="left-panel-resize-handle" title="Drag to resize" aria-label="Resize left panel"></div>
-
     <main id="center-panel" class="panel center-panel">
       <div class="panel-header center-panel-header">
         <button type="button" id="center-refresh-btn" class="icon-btn" title="Refresh" aria-label="Refresh">
@@ -104,16 +102,13 @@
         <p class="placeholder">Select a project or list from the left, or a task from here.</p>
       </div>
     </main>
-
     <aside id="right-panel" class="panel right-panel">
-      <div class="resize-handle resize-handle-vertical" id="right-panel-resize-handle" title="Drag to resize" aria-label="Resize right panel"></div>
       <div class="panel-header">
         <h2 id="inspector-title">Inspector</h2>
       </div>
       <div class="panel-content inspector-content" id="inspector-content">
         <p class="placeholder">Select an item to inspect.</p>
       </div>
-      <div class="resize-handle resize-handle-horizontal" id="chat-resize-handle" title="Drag to resize" aria-label="Resize chat"></div>
       <div class="chat-region" id="chat-region">
         <div class="chat-header-row">
           <button type="button" id="chat-clear" class="chat-clear-btn" title="Clear chat" aria-label="Clear chat">
@@ -285,6 +280,20 @@
         </section>
         <section class="list-settings-section">
           <h3 class="list-settings-section-title">Visible columns</h3>
+          <div class="list-settings-columns-options">
+            <div class="list-settings-flagged">
+              <input type="checkbox" id="list-settings-show-flagged" />
+              <label for="list-settings-show-flagged">Show focused</label>
+            </div>
+            <div class="list-settings-flagged">
+              <input type="checkbox" id="list-settings-show-completed" />
+              <label for="list-settings-show-completed">Show completed</label>
+            </div>
+            <div class="list-settings-flagged">
+              <input type="checkbox" id="list-settings-show-highlight-due" />
+              <label for="list-settings-show-highlight-due">Highlight due/overdue</label>
+            </div>
+          </div>
           <ul id="list-settings-columns" class="list-settings-columns" aria-label="Visible columns"></ul>
         </section>
         <section class="list-settings-section">
@@ -296,6 +305,108 @@
       <div class="modal-footer">
         <button type="button" id="list-settings-cancel" class="btn-secondary">Cancel</button>
         <button type="button" id="list-settings-save" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="recurrence-modal-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-recurrence" role="dialog" aria-labelledby="recurrence-modal-title" aria-modal="true">
+      <div class="modal-header">
+        <h2 id="recurrence-modal-title">Recurrence</h2>
+        <button type="button" id="recurrence-modal-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body modal-body-scroll">
+        <div class="setting-row">
+          <span class="setting-label">Recur from</span>
+          <div class="recurrence-anchor">
+            <label><input type="radio" name="recurrence-anchor" value="scheduled" /> Scheduled date</label>
+            <label><input type="radio" name="recurrence-anchor" value="completed" /> Completed date</label>
+          </div>
+        </div>
+        <div class="setting-row">
+          <label for="recurrence-freq">Frequency</label>
+          <select id="recurrence-freq">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="yearly">Yearly</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <label for="recurrence-interval">Every</label>
+          <input type="number" id="recurrence-interval" min="1" value="1" /> <span id="recurrence-interval-unit">days</span>
+        </div>
+        <div id="recurrence-weekly-options" class="recurrence-freq-options hidden">
+          <div class="setting-label">On days</div>
+          <div class="recurrence-weekdays">
+            <label><input type="checkbox" data-day="0" /> Sun</label>
+            <label><input type="checkbox" data-day="1" /> Mon</label>
+            <label><input type="checkbox" data-day="2" /> Tue</label>
+            <label><input type="checkbox" data-day="3" /> Wed</label>
+            <label><input type="checkbox" data-day="4" /> Thu</label>
+            <label><input type="checkbox" data-day="5" /> Fri</label>
+            <label><input type="checkbox" data-day="6" /> Sat</label>
+          </div>
+        </div>
+        <div id="recurrence-monthly-options" class="recurrence-freq-options hidden">
+          <div class="setting-row">
+            <label><input type="radio" name="recurrence-monthly-rule" value="day_of_month" /> On day</label>
+            <input type="number" id="recurrence-monthly-day" min="1" max="31" value="1" />
+          </div>
+          <div class="setting-row">
+            <label><input type="radio" name="recurrence-monthly-rule" value="weekday_of_month" /> On</label>
+            <select id="recurrence-monthly-week">
+              <option value="1">First</option>
+              <option value="2">Second</option>
+              <option value="3">Third</option>
+              <option value="4">Fourth</option>
+              <option value="5">Last</option>
+            </select>
+            <select id="recurrence-monthly-weekday">
+              <option value="0">Sunday</option>
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+            </select>
+          </div>
+        </div>
+        <div id="recurrence-yearly-options" class="recurrence-freq-options hidden">
+          <div class="setting-row">
+            <label for="recurrence-yearly-month">Month</label>
+            <select id="recurrence-yearly-month">
+              <option value="1">January</option><option value="2">February</option><option value="3">March</option>
+              <option value="4">April</option><option value="5">May</option><option value="6">June</option>
+              <option value="7">July</option><option value="8">August</option><option value="9">September</option>
+              <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+            </select>
+            <label for="recurrence-yearly-day">Day</label>
+            <input type="number" id="recurrence-yearly-day" min="1" max="31" value="1" />
+          </div>
+        </div>
+        <section class="recurrence-end-section">
+          <h3 class="recurrence-section-title">End</h3>
+          <div class="setting-row">
+            <label><input type="radio" name="recurrence-end" value="never" checked /> Never</label>
+          </div>
+          <div class="setting-row">
+            <label><input type="radio" name="recurrence-end" value="after_count" /> After</label>
+            <input type="number" id="recurrence-end-after-count" min="1" value="5" /> occurrences
+          </div>
+          <div class="setting-row">
+            <label><input type="radio" name="recurrence-end" value="end_date" /> Don&apos;t repeat after</label>
+            <input type="date" id="recurrence-end-date" />
+          </div>
+        </section>
+        <div class="setting-row">
+          <button type="button" id="recurrence-clear" class="btn-secondary btn-sm">Clear recurrence</button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="recurrence-modal-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="recurrence-modal-save" class="btn-primary">Save</button>
       </div>
     </div>
   </div>

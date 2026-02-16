@@ -16,6 +16,7 @@ function createWindow() {
   });
 
   win.loadFile(path.join(__dirname, 'index.html'));
+  win.maximize();
 }
 
 app.whenReady().then(createWindow);

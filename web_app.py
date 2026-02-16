@@ -419,6 +419,7 @@ def external_create_task(body: dict):
             projects=body.get("projects"),
             tags=body.get("tags"),
             flagged=body.get("flagged", False),
+            recurrence=body.get("recurrence") if "recurrence" in body else None,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -445,6 +446,7 @@ def external_update_task(task_id: str, body: dict):
             available_date=(body["available_date"] or None) if "available_date" in body else _UNSET,
             due_date=(body["due_date"] or None) if "due_date" in body else _UNSET,
             flagged=body.get("flagged") if "flagged" in body else None,
+            recurrence=body["recurrence"] if "recurrence" in body else _UNSET,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

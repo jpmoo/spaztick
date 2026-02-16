@@ -118,6 +118,8 @@ body {
   overflow: hidden;
   --float-gap: 12px;
   --float-radius: 12px;
+  --left-panel-width: var(--panel-max-width);
+  --right-panel-width: var(--panel-max-width);
 }
 
 /* Center panel: full bleed, no rounded corners, acts as background; padding shrinks content area when side panels open */
@@ -185,35 +187,7 @@ body {
   pointer-events: none;
 }
 
-/* Vertical handles: fixed-height strip centered vertically; border cuts through center; full strip is hit area */
-.resize-handle-vertical {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  height: 100px;
-  width: 6px;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-/* Left panel: handle in main-area, centered on panel's right edge */
-#left-panel-resize-handle {
-  left: calc(var(--float-gap) + var(--left-panel-width, var(--panel-max-width)) - 3px);
-}
-/* Right panel: handle inside panel on its left edge, same vertical center */
-#right-panel #right-panel-resize-handle {
-  left: 0;
-  top: 50%;
-  transform: translateY(-50%);
-  right: auto;
-}
-.main-area.left-collapsed #left-panel-resize-handle {
-  display: none;
-}
-.main-area.right-collapsed #right-panel-resize-handle {
-  display: none;
-}
+/* Vertical panel resize handles are created and positioned in JS (position: fixed, full height) */
 
 /* Bottom bar: floating above center at bottom */
 .bottom-bar {
@@ -369,7 +343,26 @@ body[data-theme="dark"] .header-icon-settings {
 .right-panel .panel-header {
   background: var(--surface-header);
 }
-.right-panel .panel-header {
+/* No dead space above titles: side panels and chat flush to top */
+.left-panel,
+.right-panel {
+  padding: 0;
+}
+/* All three region titles (Navigator, Inspector, Chat) identical height, padding, and look */
+.left-panel .panel-header,
+.right-panel .panel-header,
+.right-panel .chat-header-row {
+  margin: 0;
+  padding: 0 16px;
+  height: var(--header-height);
+  min-height: var(--header-height);
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface-header);
+}
+.right-panel .chat-region {
   padding-top: 0;
   margin-top: 0;
 }
@@ -402,6 +395,21 @@ body[data-theme="dark"] .header-icon-settings {
 .navigator-header .header-icon {
   width: 18px;
   height: 18px;
+}
+/* Region title text: same for Navigator, Inspector, and Chat */
+.left-panel .panel-header h2,
+.right-panel .panel-header h2,
+.right-panel .chat-header-row h3 {
+  margin: 0;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+.right-panel .chat-header-row h3 {
+  flex: 1;
+  flex-shrink: 0;
 }
 .panel-header h2 {
   margin: 0;
@@ -760,6 +768,20 @@ body[data-theme="dark"] .header-icon-settings {
   color: var(--text);
 }
 .task-list .task-row .task-cell .description-icon-wrap .description-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+.task-list .task-row .task-cell .recurrence-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text);
+}
+.task-list .task-row .task-cell .recurrence-icon-wrap.empty {
+  color: var(--text-muted);
+  opacity: 0.22;
+}
+.task-list .task-row .task-cell .recurrence-icon-wrap .recurrence-icon {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
@@ -1421,6 +1443,19 @@ body[data-theme="dark"] .header-icon-settings {
   word-break: break-word;
   margin-bottom: 0.85em;
 }
+.inspector-content .inspector-edit-recurrence {
+  margin-left: 8px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--link-color, #2563eb);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.inspector-content .inspector-edit-recurrence:hover {
+  text-decoration: underline;
+}
 .resize-handle {
   flex-shrink: 0;
   height: 6px;
@@ -1766,6 +1801,66 @@ body[data-theme="cupertino"] .chat-message.model .bubble {
   width: 92vw;
 }
 /* List filter & sort modal: ~62.5% width (25% wider than 50%), body scrolls instead of growing */
+.modal.modal-recurrence {
+  max-width: 420px;
+  width: 100%;
+}
+.modal.modal-recurrence .modal-body.modal-body-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.modal.modal-recurrence .setting-row {
+  margin-bottom: 12px;
+}
+.modal.modal-recurrence .setting-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+.modal.modal-recurrence .recurrence-anchor {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.modal.modal-recurrence .recurrence-anchor label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.modal.modal-recurrence .recurrence-freq-options {
+  margin-bottom: 12px;
+}
+.modal.modal-recurrence .recurrence-freq-options.hidden {
+  display: none;
+}
+.modal.modal-recurrence .recurrence-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.modal.modal-recurrence .recurrence-weekdays label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.modal.modal-recurrence .recurrence-end-section {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.modal.modal-recurrence .recurrence-section-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
 .modal.modal-list-settings {
   max-width: 62.5vw;
   width: 62.5%;
@@ -1793,22 +1888,66 @@ body[data-theme="cupertino"] .chat-message.model .bubble {
 .list-settings-sort {
   margin-bottom: 10px;
 }
-.list-settings-columns {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
+.list-settings-columns-options {
+  margin-bottom: 10px;
 }
-.list-settings-columns .list-settings-column-row {
+.list-settings-columns-options .list-settings-flagged {
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 6px;
+}
+.list-settings-columns-options .list-settings-flagged input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+.list-settings-columns-options .list-settings-flagged label {
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+}
+.list-settings-columns {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  position: relative;
+}
+.list-settings-columns .list-settings-column-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  padding: 6px 0;
+  cursor: default;
+  user-select: none;
+  transition: background 0.15s ease;
+}
+.list-settings-columns .list-settings-column-row:hover {
+  background: var(--bg);
+}
+.list-settings-columns .list-settings-column-row.dragging {
+  opacity: 0.6;
+}
+.list-settings-columns .list-settings-column-row .drag-handle {
+  cursor: grab;
+  color: var(--text-muted);
+  padding: 2px;
+  flex-shrink: 0;
+}
+.list-settings-columns .list-settings-column-row .drag-handle:active {
+  cursor: grabbing;
+}
+.list-settings-columns .list-settings-column-row .drag-handle svg {
+  width: 14px;
+  height: 14px;
+  display: block;
 }
 .list-settings-columns .list-settings-column-row input[type="checkbox"] {
   margin: 0;
   flex-shrink: 0;
 }
 .list-settings-columns .list-settings-column-row label {
+  flex: 1;
   font-size: 13px;
   cursor: pointer;
   color: var(--text);

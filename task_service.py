@@ -303,8 +303,9 @@ def update_task(
     available_date: str | None = _UNSET,
     due_date: str | None = _UNSET,
     flagged: bool | None = None,
+    recurrence: dict | None = _UNSET,
 ) -> dict[str, Any] | None:
-    """Update task fields. Only provided fields are changed. Pass _UNSET to leave priority unchanged; None is stored as 0. Pass None for available_date/due_date to clear."""
+    """Update task fields. Only provided fields are changed. Pass _UNSET to leave priority/recurrence unchanged; None is stored as 0 for priority or clears recurrence."""
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if priority is not _UNSET and priority is not None and (priority < PRIORITY_MIN or priority > PRIORITY_MAX):
@@ -341,6 +342,9 @@ def update_task(
             updates.append("due_date = ?"); params.append(due_date)
         if flagged is not None:
             updates.append("flagged = ?"); params.append(1 if flagged else 0)
+        if recurrence is not _UNSET:
+            updates.append("recurrence = ?")
+            params.append(json.dumps(recurrence) if recurrence else None)
         params.append(task_id)
         conn.execute(f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?", params)
         _record_history(conn, task_id, "updated", {"updated_at": now})

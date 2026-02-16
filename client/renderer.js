@@ -27,7 +27,7 @@
   const NAV_PROJECT_ORDER_KEY = 'spaztick_nav_project_order';
   const NAV_LIST_ORDER_KEY = 'spaztick_nav_list_order';
 
-  const TASK_PROPERTY_KEYS = ['due_date', 'available_date', 'priority', 'description', 'projects', 'tags'];
+  const TASK_PROPERTY_KEYS = ['due_date', 'available_date', 'priority', 'description', 'projects', 'tags', 'recurrence'];
   const TASK_PROPERTY_LABELS = {
     due_date: 'Due date',
     available_date: 'Available date',
@@ -35,6 +35,7 @@
     description: 'Description',
     projects: 'Projects',
     tags: 'Tags',
+    recurrence: 'Recurrence',
   };
   const SORT_FIELD_KEYS = ['title', 'available_date', 'due_date', 'priority', 'status'];
   const SORT_FIELD_LABELS = {
@@ -395,7 +396,8 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (descriptionModalOverlay && !descriptionModalOverlay.classList.contains('hidden')) closeDescriptionModal();
+      if (recurrenceModalOverlay && !recurrenceModalOverlay.classList.contains('hidden')) closeRecurrenceModal();
+      else if (descriptionModalOverlay && !descriptionModalOverlay.classList.contains('hidden')) closeDescriptionModal();
       else if (customFormatOverlay && !customFormatOverlay.classList.contains('hidden')) closeCustomDateFormatModal();
       else if (!settingsOverlay.classList.contains('hidden')) closeSettings();
     }
@@ -444,6 +446,192 @@
   if (descriptionTabEdit) descriptionTabEdit.addEventListener('click', () => switchDescriptionTab(false));
   if (descriptionTabPreview) descriptionTabPreview.addEventListener('click', () => switchDescriptionTab(true));
 
+  // --- Recurrence modal ---
+  const recurrenceModalOverlay = document.getElementById('recurrence-modal-overlay');
+  let recurrenceModalTaskId = null;
+  let recurrenceModalCleared = false;
+
+  function recurrenceIntervalUnit() {
+    const freq = (document.getElementById('recurrence-freq') && document.getElementById('recurrence-freq').value) || 'daily';
+    return { daily: 'days', weekly: 'weeks', monthly: 'months', yearly: 'years' }[freq] || 'days';
+  }
+  function updateRecurrenceFreqOptions() {
+    const freq = document.getElementById('recurrence-freq') && document.getElementById('recurrence-freq').value;
+    const unitEl = document.getElementById('recurrence-interval-unit');
+    if (unitEl) unitEl.textContent = recurrenceIntervalUnit();
+    ['weekly', 'monthly', 'yearly'].forEach((name) => {
+      const el = document.getElementById('recurrence-' + name + '-options');
+      if (el) el.classList.toggle('hidden', freq !== name);
+    });
+  }
+  function recurrenceFormToObject() {
+    const anchorEl = document.querySelector('input[name="recurrence-anchor"]:checked');
+    const freqEl = document.getElementById('recurrence-freq');
+    const intervalEl = document.getElementById('recurrence-interval');
+    const freq = (freqEl && freqEl.value) || 'daily';
+    const interval = Math.max(1, parseInt(intervalEl && intervalEl.value, 10) || 1);
+    const rec = {
+      anchor: (anchorEl && anchorEl.value) || 'scheduled',
+      freq,
+      interval,
+      end_condition: 'never',
+    };
+    const endEl = document.querySelector('input[name="recurrence-end"]:checked');
+    const endVal = endEl && endEl.value;
+    if (endVal === 'after_count') {
+      const n = document.getElementById('recurrence-end-after-count');
+      rec.end_condition = 'after_count';
+      rec.end_after_count = Math.max(1, parseInt(n && n.value, 10) || 1);
+    } else if (endVal === 'end_date') {
+      const d = document.getElementById('recurrence-end-date') && document.getElementById('recurrence-end-date').value;
+      if (d) {
+        rec.end_condition = 'end_date';
+        rec.end_date = d;
+      }
+    }
+    if (freq === 'weekly') {
+      const days = [];
+      document.querySelectorAll('#recurrence-weekly-options input[type="checkbox"]:checked').forEach((cb) => {
+        const day = parseInt(cb.dataset.day, 10);
+        if (!Number.isNaN(day)) days.push(day);
+      });
+      if (days.length) rec.by_weekday = days.sort((a, b) => a - b);
+    }
+    if (freq === 'monthly') {
+      const ruleEl = document.querySelector('input[name="recurrence-monthly-rule"]:checked');
+      const rule = ruleEl && ruleEl.value;
+      if (rule === 'day_of_month') {
+        const dayEl = document.getElementById('recurrence-monthly-day');
+        rec.monthly_rule = 'day_of_month';
+        rec.monthly_day = Math.min(31, Math.max(1, parseInt(dayEl && dayEl.value, 10) || 1));
+      } else {
+        const weekEl = document.getElementById('recurrence-monthly-week');
+        const wdayEl = document.getElementById('recurrence-monthly-weekday');
+        rec.monthly_rule = 'weekday_of_month';
+        rec.monthly_week = parseInt(weekEl && weekEl.value, 10) || 1;
+        rec.monthly_weekday = parseInt(wdayEl && wdayEl.value, 10) || 0;
+      }
+    }
+    if (freq === 'yearly') {
+      const mEl = document.getElementById('recurrence-yearly-month');
+      const dEl = document.getElementById('recurrence-yearly-day');
+      rec.yearly_month = Math.min(12, Math.max(1, parseInt(mEl && mEl.value, 10) || 1));
+      rec.yearly_day = Math.min(31, Math.max(1, parseInt(dEl && dEl.value, 10) || 1));
+    }
+    return rec;
+  }
+  function recurrencePopulateForm(rec) {
+    recurrenceModalCleared = !rec || typeof rec !== 'object';
+    if (!rec || typeof rec !== 'object') {
+      document.querySelectorAll('input[name="recurrence-anchor"]').forEach((r) => { r.checked = r.value === 'scheduled'; });
+      const f = document.getElementById('recurrence-freq');
+      if (f) f.value = 'daily';
+      const i = document.getElementById('recurrence-interval');
+      if (i) i.value = '1';
+      updateRecurrenceFreqOptions();
+      document.querySelectorAll('#recurrence-weekly-options input[type="checkbox"]').forEach((cb) => { cb.checked = false; });
+      document.querySelectorAll('input[name="recurrence-monthly-rule"]').forEach((r) => { r.checked = r.value === 'day_of_month'; });
+      const md = document.getElementById('recurrence-monthly-day');
+      if (md) md.value = '1';
+      document.querySelectorAll('input[name="recurrence-end"]').forEach((r) => { r.checked = r.value === 'never'; });
+      document.getElementById('recurrence-end-after-count').value = '5';
+      const ed = document.getElementById('recurrence-end-date');
+      if (ed) ed.value = '';
+      return;
+    }
+    document.querySelectorAll('input[name="recurrence-anchor"]').forEach((r) => { r.checked = r.value === (rec.anchor || 'scheduled'); });
+    const f = document.getElementById('recurrence-freq');
+    if (f) f.value = rec.freq || 'daily';
+    const i = document.getElementById('recurrence-interval');
+    if (i) i.value = String(rec.interval != null ? rec.interval : 1);
+    updateRecurrenceFreqOptions();
+    const byWeekday = rec.by_weekday || [];
+    document.querySelectorAll('#recurrence-weekly-options input[type="checkbox"]').forEach((cb) => {
+      const day = parseInt(cb.dataset.day, 10);
+      cb.checked = byWeekday.indexOf(day) !== -1;
+    });
+    if (rec.monthly_rule === 'weekday_of_month') {
+      document.querySelectorAll('input[name="recurrence-monthly-rule"]').forEach((r) => { r.checked = r.value === 'weekday_of_month'; });
+      const w = document.getElementById('recurrence-monthly-week');
+      const wd = document.getElementById('recurrence-monthly-weekday');
+      if (w) w.value = String(rec.monthly_week != null ? rec.monthly_week : 1);
+      if (wd) wd.value = String(rec.monthly_weekday != null ? rec.monthly_weekday : 0);
+    } else {
+      document.querySelectorAll('input[name="recurrence-monthly-rule"]').forEach((r) => { r.checked = r.value === 'day_of_month'; });
+      const md = document.getElementById('recurrence-monthly-day');
+      if (md) md.value = String(rec.monthly_day != null ? rec.monthly_day : 1);
+    }
+    document.querySelectorAll('input[name="recurrence-end"]').forEach((r) => {
+      r.checked = (r.value === (rec.end_condition || 'never'));
+    });
+    const eac = document.getElementById('recurrence-end-after-count');
+    if (eac) eac.value = String(rec.end_after_count != null ? rec.end_after_count : 5);
+    const ed = document.getElementById('recurrence-end-date');
+    if (ed) ed.value = rec.end_date || '';
+    const ym = document.getElementById('recurrence-yearly-month');
+    const yd = document.getElementById('recurrence-yearly-day');
+    if (ym) ym.value = String(rec.yearly_month != null ? rec.yearly_month : 1);
+    if (yd) yd.value = String(rec.yearly_day != null ? rec.yearly_day : 1);
+    recurrenceModalCleared = false;
+  }
+
+  function openRecurrenceModal(taskId) {
+    recurrenceModalTaskId = taskId;
+    api(`/api/external/tasks/${encodeURIComponent(taskId)}`)
+      .then((task) => {
+        recurrencePopulateForm(task.recurrence || null);
+        if (recurrenceModalOverlay) {
+          recurrenceModalOverlay.classList.remove('hidden');
+          recurrenceModalOverlay.setAttribute('aria-hidden', 'false');
+        }
+      })
+      .catch((e) => {
+        console.error('Failed to load task for recurrence:', e);
+        alert(e.message || 'Failed to load task.');
+      });
+  }
+  function closeRecurrenceModal() {
+    recurrenceModalTaskId = null;
+    if (recurrenceModalOverlay) {
+      recurrenceModalOverlay.classList.add('hidden');
+      recurrenceModalOverlay.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  if (recurrenceModalOverlay) {
+    recurrenceModalOverlay.addEventListener('click', (e) => { if (e.target === recurrenceModalOverlay) closeRecurrenceModal(); });
+  }
+  const recurrenceModalClose = document.getElementById('recurrence-modal-close');
+  if (recurrenceModalClose) recurrenceModalClose.addEventListener('click', closeRecurrenceModal);
+  const recurrenceModalCancel = document.getElementById('recurrence-modal-cancel');
+  if (recurrenceModalCancel) recurrenceModalCancel.addEventListener('click', closeRecurrenceModal);
+  const recurrenceModalSave = document.getElementById('recurrence-modal-save');
+  if (recurrenceModalSave) {
+    recurrenceModalSave.addEventListener('click', async () => {
+      if (!recurrenceModalTaskId) return;
+      const rec = recurrenceModalCleared ? null : recurrenceFormToObject();
+      try {
+        const updated = await updateTask(recurrenceModalTaskId, { recurrence: rec });
+        updateTaskInLists(updated);
+        const row = document.querySelector(`.task-row[data-id="${recurrenceModalTaskId}"]`);
+        if (row && row.classList.contains('selected')) loadTaskDetails(recurrenceModalTaskId);
+        closeRecurrenceModal();
+        refreshTaskList();
+      } catch (e) {
+        console.error('Failed to save recurrence:', e);
+        alert(e.message || 'Failed to save recurrence.');
+      }
+    });
+  }
+  const recurrenceFreqEl = document.getElementById('recurrence-freq');
+  if (recurrenceFreqEl) recurrenceFreqEl.addEventListener('change', updateRecurrenceFreqOptions);
+  const recurrenceClearBtn = document.getElementById('recurrence-clear');
+  if (recurrenceClearBtn) {
+    recurrenceClearBtn.addEventListener('click', () => {
+      recurrenceModalCleared = true;
+      recurrencePopulateForm(null);
+    });
+  }
   // --- Theme cycle ---
   function getTheme() {
     const t = localStorage.getItem(THEME_KEY) || 'light';
@@ -1408,6 +1596,7 @@
     const circleTickSvg = '<svg class="status-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 8c0 4.418 3.59 8 8 8 4.418 0 8-3.59 8-8 0-4.418-3.59-8-8-8-4.418 0-8 3.59-8 8zm2 0c0-3.307 2.686-6 6-6 3.307 0 6 2.686 6 6 0 3.307-2.686 6-6 6-3.307 0-6-2.686-6-6zm9.778-1.672l-1.414-1.414L6.828 8.45 5.414 7.036 4 8.45l2.828 2.828 3.182-3.182 1.768-1.768z" fill-rule="evenodd"/></svg>';
     const folderOpenSvg = '<svg class="project-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>';
     const documentIconSvg = '<svg class="description-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.29289 1.29289C9.48043 1.10536 9.73478 1 10 1H18C19.6569 1 21 2.34315 21 4V20C21 21.6569 19.6569 23 18 23H6C4.34315 23 3 21.6569 3 20V8C3 7.73478 3.10536 7.48043 3.29289 7.29289L9.29289 1.29289ZM18 3H11V8C11 8.55228 10.5523 9 10 9H5V20C5 20.5523 5.44772 21 6 21H18C18.5523 21 19 20.5523 19 20V4C19 3.44772 18.5523 3 18 3ZM6.41421 7H9V4.41421L6.41421 7ZM7 13C7 12.4477 7.44772 12 8 12H16C16.5523 12 17 12.4477 17 13C17 13.5523 16.5523 14 16 14H8C7.44772 14 7 13.4477 7 13ZM7 17C7 16.4477 7.44772 16 8 16H16C16.5523 16 17 16.4477 17 17C17 17.5523 16.5523 18 16 18H8C7.44772 18 7 17.5523 7 17Z"/></svg>';
+    const refreshIconSvg = '<svg class="recurrence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4.06 13C4.02 12.67 4 12.34 4 12c0-4.42 3.58-8 8-8 2.5 0 4.73 1.15 6.2 2.94M19.94 11C19.98 11.33 20 11.66 20 12c0 4.42-3.58 8-8 8-2.5 0-4.73-1.15-6.2-2.94M9 17H6v.29M18.2 4v2.94M18.2 6.94V7L15.2 7M6 20v-2.71"/></svg>';
 
     function addCell(key, html, opts) {
       if (!html && !(opts && opts.descriptionTaskId != null)) return;
@@ -1435,6 +1624,9 @@
       if (opts && opts.priorityTaskId != null) {
         cell.dataset.priorityTaskId = opts.priorityTaskId;
         cell.dataset.priorityValue = opts.priorityValue != null ? String(opts.priorityValue) : '';
+      }
+      if (opts && opts.recurrenceTaskId != null) {
+        cell.dataset.recurrenceTaskId = opts.recurrenceTaskId;
       }
       row.appendChild(cell);
     }
@@ -1500,6 +1692,15 @@
         const tg = (t.tags || []);
         const hasVal = tg.length > 0;
         html = hasVal ? `<span class="cell-value">${tg.join(', ').replace(/</g, '&lt;')}</span>` : `<span class="cell-value empty" title="No tags">—</span>`;
+        addCell(key, html);
+        return;
+      } else if (key === 'recurrence') {
+        const hasRec = t.recurrence && typeof t.recurrence === 'object' && (t.recurrence.freq || t.recurrence.interval);
+        const iconClass = 'recurrence-icon-wrap ' + (hasRec ? '' : 'empty');
+        const title = hasRec ? 'Recurring (click to edit)' : 'Click to set recurrence';
+        html = `<span class="${iconClass}" title="${title}">${refreshIconSvg}</span>`;
+        addCell(key, html, { recurrenceTaskId: t.id });
+        return;
       }
       addCell(key, html);
     });
@@ -1532,6 +1733,14 @@
     if (priorityCell && priorityCell.dataset.priorityTaskId) {
       priorityCell.classList.add('task-cell-clickable');
       priorityCell.addEventListener('click', (ev) => openPriorityDropdown(ev, priorityCell));
+    }
+    const recurrenceCell = row.querySelector('.recurrence-cell');
+    if (recurrenceCell && recurrenceCell.dataset.recurrenceTaskId) {
+      recurrenceCell.classList.add('task-cell-clickable');
+      recurrenceCell.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openRecurrenceModal(recurrenceCell.dataset.recurrenceTaskId);
+      });
     }
     const titleCell = row.querySelector('.title-cell');
     if (titleCell && titleCell.dataset.titleTaskId) {
@@ -2152,8 +2361,37 @@
   const DATE_INSPECTOR_KEYS = ['due_date', 'available_date'];
   const DATETIME_INSPECTOR_KEYS = ['created_at', 'updated_at', 'completed_at'];
 
+  function formatRecurrenceForDisplay(rec) {
+    if (!rec || typeof rec !== 'object') return null;
+    const freq = rec.freq || 'daily';
+    const interval = rec.interval || 1;
+    const parts = [];
+    if (interval !== 1) parts.push(`every ${interval}`);
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    if (freq === 'weekly' && Array.isArray(rec.by_weekday) && rec.by_weekday.length) {
+      const resolved = rec.by_weekday.map((d) => (typeof d === 'number' && d >= 0 && d <= 6 ? dayNames[d] : String(d)));
+      parts.push(`Weekly on ${resolved.join(', ')}`);
+    } else if (freq === 'monthly') {
+      if (rec.monthly_rule === 'day_of_month' && rec.monthly_day != null) parts.push(`Monthly on day ${rec.monthly_day}`);
+      else if (rec.monthly_rule === 'weekday_of_month') {
+        const w = { 1: 'First', 2: 'Second', 3: 'Third', 4: 'Fourth', 5: 'Last' }[rec.monthly_week];
+        const wd = typeof rec.monthly_weekday === 'number' ? dayNames[rec.monthly_weekday] : rec.monthly_weekday;
+        parts.push(w && wd ? `Monthly on ${w} ${wd}` : 'Monthly');
+      } else parts.push('Monthly');
+    } else if (freq === 'yearly' && rec.yearly_month != null && rec.yearly_day != null) {
+      const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      parts.push(`Yearly on ${months[rec.yearly_month] || rec.yearly_month}/${rec.yearly_day}`);
+    } else parts.push(freq.charAt(0).toUpperCase() + freq.slice(1));
+    const end = rec.end_condition || 'never';
+    if (end === 'after_count' && rec.end_after_count != null) parts.push(`, ${rec.end_after_count} times`);
+    else if (end === 'end_date' && rec.end_date) parts.push(`, until ${rec.end_date}`);
+    if (rec.anchor === 'completed') parts.push(' (from completed date)');
+    return parts.length ? parts.join(' ') : 'Recurring';
+  }
+
   function formatInspectorValue(key, value) {
     if (value == null || value === '') return null;
+    if (key === 'recurrence') return formatRecurrenceForDisplay(value);
     if (key === 'description' || key === 'notes') return escapeHtml(value);
     if (Array.isArray(value)) return value.length ? escapeHtml(value.join(', ')) : null;
     if (typeof value === 'object') return escapeHtml(JSON.stringify(value));
@@ -2234,6 +2472,7 @@
     try {
       const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
       const div = document.getElementById('inspector-content');
+      div.dataset.taskId = taskId;
       let html = '';
       TASK_INSPECTOR_KEYS.forEach(([key, label]) => {
         if (!(key in t)) return;
@@ -2241,11 +2480,16 @@
         if (val === null && key !== 'description' && key !== 'notes') return;
         if (key === 'description' || key === 'notes') {
           html += `<p><strong>${label}</strong></p><p class="inspector-block">${val || '—'}</p>`;
+        } else if (key === 'recurrence') {
+          html += `<p><strong>${label}:</strong> ${val !== null ? val : '—'} <button type="button" class="inspector-edit-recurrence" data-task-id="${String(taskId).replace(/"/g, '&quot;')}">Edit</button></p>`;
         } else {
           html += `<p><strong>${label}:</strong> ${val !== null ? val : '—'}</p>`;
         }
       });
       div.innerHTML = html || '<p class="placeholder">No details.</p>';
+      div.querySelectorAll('.inspector-edit-recurrence').forEach((btn) => {
+        btn.addEventListener('click', () => openRecurrenceModal(btn.dataset.taskId));
+      });
     } catch (e) {
       document.getElementById('inspector-content').innerHTML = `<p class="placeholder">${e.message || 'Error'}</p>`;
     }
@@ -2320,35 +2564,6 @@
     }
   }
 
-  // --- Resize chat (drag separator) ---
-  if (chatResizeHandle && rightPanel && inspectorContent) {
-    const MIN_INSPECTOR = 80;
-    const MIN_CHAT = 120;
-    let dragStartY = 0;
-    let dragStartHeight = 0;
-    chatResizeHandle.addEventListener('mousedown', (e) => {
-      e.preventDefault();
-      dragStartY = e.clientY;
-      dragStartHeight = inspectorContent.getBoundingClientRect().height;
-      const onMove = (e2) => {
-        const dy = e2.clientY - dragStartY;
-        const panelRect = rightPanel.getBoundingClientRect();
-        const newH = Math.max(MIN_INSPECTOR, Math.min(panelRect.height - MIN_CHAT, dragStartHeight + dy));
-        rightPanel.style.setProperty('--inspector-height', `${newH}px`);
-      };
-      const onUp = () => {
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-        const h = inspectorContent.getBoundingClientRect().height;
-        if (typeof h === 'number' && h >= MIN_INSPECTOR) {
-          try { localStorage.setItem(INSPECTOR_HEIGHT_KEY, String(Math.round(h))); } catch (_) {}
-        }
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    });
-  }
-
   // Restore persisted inspector/chat height on load
   if (rightPanel) {
     try {
@@ -2362,11 +2577,99 @@
     } catch (_) {}
   }
 
-  // --- Left panel width resize (drag vertical border) + persist ---
-  const leftPanelResizeHandle = document.getElementById('left-panel-resize-handle');
-  if (leftPanelResizeHandle && leftPanel && mainArea) {
-    leftPanelResizeHandle.addEventListener('mousedown', (e) => {
+  // --- Panel and chat resize: create handles in JS (position: fixed, thin strip, same look/feel) ---
+  const HANDLE_WIDTH = 6;
+  const HANDLE_HEIGHT = 6;
+  const MIN_INSPECTOR = 80;
+  const MIN_CHAT = 120;
+  let leftPanelResizeHandleEl = null;
+  let rightPanelResizeHandleEl = null;
+  let chatResizeHandleEl = null;
+
+  function positionPanelResizeHandles() {
+    if (!mainArea || !leftPanel || !rightPanel) return;
+    const leftCollapsed = leftPanel.classList.contains('collapsed');
+    const rightCollapsed = rightPanel.classList.contains('collapsed');
+    if (leftPanelResizeHandleEl) {
+      leftPanelResizeHandleEl.style.display = leftCollapsed ? 'none' : '';
+      if (!leftCollapsed) {
+        const r = leftPanel.getBoundingClientRect();
+        leftPanelResizeHandleEl.style.left = (r.right - HANDLE_WIDTH / 2) + 'px';
+        leftPanelResizeHandleEl.style.width = HANDLE_WIDTH + 'px';
+        leftPanelResizeHandleEl.style.top = r.top + 'px';
+        leftPanelResizeHandleEl.style.height = (r.bottom - r.top) + 'px';
+      }
+    }
+    if (rightPanelResizeHandleEl) {
+      rightPanelResizeHandleEl.style.display = rightCollapsed ? 'none' : '';
+      if (!rightCollapsed) {
+        const r = rightPanel.getBoundingClientRect();
+        rightPanelResizeHandleEl.style.left = (r.left - HANDLE_WIDTH / 2) + 'px';
+        rightPanelResizeHandleEl.style.width = HANDLE_WIDTH + 'px';
+        rightPanelResizeHandleEl.style.top = r.top + 'px';
+        rightPanelResizeHandleEl.style.height = (r.bottom - r.top) + 'px';
+      }
+    }
+    if (chatResizeHandleEl && inspectorContent) {
+      chatResizeHandleEl.style.display = rightCollapsed ? 'none' : '';
+      if (!rightCollapsed) {
+        const panelR = rightPanel.getBoundingClientRect();
+        const inspectorR = inspectorContent.getBoundingClientRect();
+        const y = inspectorR.bottom - HANDLE_HEIGHT / 2;
+        chatResizeHandleEl.style.left = panelR.left + 'px';
+        chatResizeHandleEl.style.width = (panelR.right - panelR.left) + 'px';
+        chatResizeHandleEl.style.top = (y - HANDLE_HEIGHT / 2) + 'px';
+        chatResizeHandleEl.style.height = HANDLE_HEIGHT + 'px';
+      }
+    }
+  }
+
+  function createPanelResizeHandles() {
+    if (!mainArea || !leftPanel || !rightPanel) return;
+    // Restore saved panel widths here so layout is correct before we position handles (same pattern as inspector height).
+    try {
+      const savedLeft = localStorage.getItem(LEFT_PANEL_WIDTH_KEY);
+      if (savedLeft != null && savedLeft !== '') {
+        const px = parseInt(savedLeft, 10);
+        if (Number.isFinite(px) && px >= MIN_LEFT_PANEL_WIDTH && px <= MAX_LEFT_PANEL_WIDTH) {
+          mainArea.style.setProperty('--left-panel-width', `${px}px`);
+        }
+      }
+      const savedRight = localStorage.getItem(RIGHT_PANEL_WIDTH_KEY);
+      if (savedRight != null && savedRight !== '') {
+        const px = parseInt(savedRight, 10);
+        if (Number.isFinite(px) && px >= MIN_RIGHT_PANEL_WIDTH && px <= MAX_RIGHT_PANEL_WIDTH) {
+          mainArea.style.setProperty('--right-panel-width', `${px}px`);
+        }
+      }
+    } catch (_) {}
+    const style = document.createElement('style');
+    style.textContent = `
+      .panel-resize-handle-vertical,
+      .panel-resize-handle-horizontal {
+        position: fixed;
+        z-index: 2147483647;
+        pointer-events: auto;
+        user-select: none;
+        -webkit-user-select: none;
+        margin: 0;
+        padding: 0;
+      }
+      .panel-resize-handle-vertical { cursor: ew-resize; }
+      .panel-resize-handle-horizontal { cursor: ns-resize; }
+      .panel-resize-handle-vertical:hover,
+      .panel-resize-handle-horizontal:hover { background: rgba(37, 99, 235, 0.12); }
+    `;
+    document.head.appendChild(style);
+
+    leftPanelResizeHandleEl = document.createElement('div');
+    leftPanelResizeHandleEl.id = 'left-panel-resize-handle';
+    leftPanelResizeHandleEl.className = 'panel-resize-handle-vertical';
+    leftPanelResizeHandleEl.title = 'Drag to resize';
+    leftPanelResizeHandleEl.setAttribute('aria-label', 'Resize left panel');
+    leftPanelResizeHandleEl.addEventListener('mousedown', (e) => {
       e.preventDefault();
+      e.stopPropagation();
       const startX = e.clientX;
       const startWidth = leftPanel.getBoundingClientRect().width;
       const onMove = (e2) => {
@@ -2374,6 +2677,7 @@
         let newW = Math.round(startWidth + dx);
         newW = Math.max(MIN_LEFT_PANEL_WIDTH, Math.min(MAX_LEFT_PANEL_WIDTH, newW));
         mainArea.style.setProperty('--left-panel-width', `${newW}px`);
+        positionPanelResizeHandles();
       };
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
@@ -2382,28 +2686,21 @@
         if (Number.isFinite(w) && w >= MIN_LEFT_PANEL_WIDTH) {
           try { localStorage.setItem(LEFT_PANEL_WIDTH_KEY, String(Math.round(w))); } catch (_) {}
         }
+        positionPanelResizeHandles();
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
-  }
-  if (mainArea) {
-    try {
-      const saved = localStorage.getItem(LEFT_PANEL_WIDTH_KEY);
-      if (saved != null && saved !== '') {
-        const px = parseInt(saved, 10);
-        if (Number.isFinite(px) && px >= MIN_LEFT_PANEL_WIDTH && px <= MAX_LEFT_PANEL_WIDTH) {
-          mainArea.style.setProperty('--left-panel-width', `${px}px`);
-        }
-      }
-    } catch (_) {}
-  }
+    document.body.appendChild(leftPanelResizeHandleEl);
 
-  // --- Right panel width resize (drag vertical border) + persist ---
-  const rightPanelResizeHandle = document.getElementById('right-panel-resize-handle');
-  if (rightPanelResizeHandle && rightPanel && mainArea) {
-    rightPanelResizeHandle.addEventListener('mousedown', (e) => {
+    rightPanelResizeHandleEl = document.createElement('div');
+    rightPanelResizeHandleEl.id = 'right-panel-resize-handle';
+    rightPanelResizeHandleEl.className = 'panel-resize-handle-vertical';
+    rightPanelResizeHandleEl.title = 'Drag to resize';
+    rightPanelResizeHandleEl.setAttribute('aria-label', 'Resize right panel');
+    rightPanelResizeHandleEl.addEventListener('mousedown', (e) => {
       e.preventDefault();
+      e.stopPropagation();
       const startX = e.clientX;
       const startWidth = rightPanel.getBoundingClientRect().width;
       const onMove = (e2) => {
@@ -2411,6 +2708,7 @@
         let newW = Math.round(startWidth - dx);
         newW = Math.max(MIN_RIGHT_PANEL_WIDTH, Math.min(MAX_RIGHT_PANEL_WIDTH, newW));
         mainArea.style.setProperty('--right-panel-width', `${newW}px`);
+        positionPanelResizeHandles();
       };
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
@@ -2419,21 +2717,68 @@
         if (Number.isFinite(w) && w >= MIN_RIGHT_PANEL_WIDTH) {
           try { localStorage.setItem(RIGHT_PANEL_WIDTH_KEY, String(Math.round(w))); } catch (_) {}
         }
+        positionPanelResizeHandles();
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
+    document.body.appendChild(rightPanelResizeHandleEl);
+
+    if (inspectorContent) {
+      chatResizeHandleEl = document.createElement('div');
+      chatResizeHandleEl.id = 'chat-resize-handle';
+      chatResizeHandleEl.className = 'panel-resize-handle-horizontal';
+      chatResizeHandleEl.title = 'Drag to resize';
+      chatResizeHandleEl.setAttribute('aria-label', 'Resize chat');
+      chatResizeHandleEl.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const dragStartY = e.clientY;
+        const dragStartHeight = inspectorContent.getBoundingClientRect().height;
+        const onMove = (e2) => {
+          const dy = e2.clientY - dragStartY;
+          const panelRect = rightPanel.getBoundingClientRect();
+          const newH = Math.max(MIN_INSPECTOR, Math.min(panelRect.height - MIN_CHAT, dragStartHeight + dy));
+          rightPanel.style.setProperty('--inspector-height', `${newH}px`);
+          positionPanelResizeHandles();
+        };
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          const h = inspectorContent.getBoundingClientRect().height;
+          if (typeof h === 'number' && h >= MIN_INSPECTOR) {
+            try { localStorage.setItem(INSPECTOR_HEIGHT_KEY, String(Math.round(h))); } catch (_) {}
+          }
+          positionPanelResizeHandles();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      document.body.appendChild(chatResizeHandleEl);
+    }
+
+    positionPanelResizeHandles();
+    window.addEventListener('resize', positionPanelResizeHandles);
   }
+
+  function attachPanelResizeHandles() {
+    createPanelResizeHandles();
+    if (mainArea && leftPanel && rightPanel) {
+      const mo = new MutationObserver(() => positionPanelResizeHandles());
+      mo.observe(leftPanel, { attributes: true, attributeFilter: ['class'] });
+      mo.observe(rightPanel, { attributes: true, attributeFilter: ['class'] });
+    }
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attachPanelResizeHandles);
+  } else {
+    attachPanelResizeHandles();
+  }
+  // Defer initial handle position until after layout has been applied (two frames so panel widths are committed).
   if (mainArea) {
-    try {
-      const saved = localStorage.getItem(RIGHT_PANEL_WIDTH_KEY);
-      if (saved != null && saved !== '') {
-        const px = parseInt(saved, 10);
-        if (Number.isFinite(px) && px >= MIN_RIGHT_PANEL_WIDTH && px <= MAX_RIGHT_PANEL_WIDTH) {
-          mainArea.style.setProperty('--right-panel-width', `${px}px`);
-        }
-      }
-    } catch (_) {}
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => { positionPanelResizeHandles(); });
+    });
   }
 
   // --- Display settings button & dropdown (or list filter/sort modal when viewing a list) ---
@@ -2581,14 +2926,22 @@
         sortEl.innerHTML = listSettingsSortToRow({});
       }
       const source = 'list:' + listId;
-      const { order, visible } = getDisplayProperties(source);
+      const { order, visible, showFlagged, showCompleted, showHighlightDue } = getDisplayProperties(source);
+      const flaggedCb = document.getElementById('list-settings-show-flagged');
+      const completedCb = document.getElementById('list-settings-show-completed');
+      const highlightDueCb = document.getElementById('list-settings-show-highlight-due');
+      if (flaggedCb) flaggedCb.checked = showFlagged;
+      if (completedCb) completedCb.checked = showCompleted;
+      if (highlightDueCb) highlightDueCb.checked = showHighlightDue;
       const allOrdered = [...order];
       TASK_PROPERTY_KEYS.forEach((k) => { if (!allOrdered.includes(k)) allOrdered.push(k); });
+      const dragHandleSvg = '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
       if (columnsEl) {
         columnsEl.innerHTML = allOrdered.map((key) => {
           const label = TASK_PROPERTY_LABELS[key] || key;
           const checked = visible.has(key);
-          return `<li class="list-settings-column-row">
+          return `<li class="list-settings-column-row" data-key="${key}">
+            <span class="drag-handle" aria-label="Drag to reorder">${dragHandleSvg}</span>
             <input type="checkbox" id="list-col-${key}" ${checked ? 'checked' : ''}>
             <label for="list-col-${key}">${label}</label>
           </li>`;
@@ -2609,6 +2962,30 @@
     const listId = currentListSettingsListId;
     const listSource = listId ? 'list:' + listId : null;
     if (columnsEl && listSource) {
+      const flaggedCb = document.getElementById('list-settings-show-flagged');
+      const completedCb = document.getElementById('list-settings-show-completed');
+      const highlightDueCb = document.getElementById('list-settings-show-highlight-due');
+      if (flaggedCb) {
+        flaggedCb.onchange = () => {
+          const { order: o, visible: v, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, flaggedCb.checked, sc, sh);
+          if (lastTaskSource === listSource) refreshTaskList();
+        };
+      }
+      if (completedCb) {
+        completedCb.onchange = () => {
+          const { order: o, visible: v, showFlagged: sf, showHighlightDue: sh } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, sf, completedCb.checked, sh);
+          if (lastTaskSource === listSource) refreshTaskList();
+        };
+      }
+      if (highlightDueCb) {
+        highlightDueCb.onchange = () => {
+          const { order: o, visible: v, showFlagged: sf, showCompleted: sc } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, sf, sc, highlightDueCb.checked);
+          if (lastTaskSource === listSource) refreshTaskList();
+        };
+      }
       columnsEl.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
         cb.addEventListener('change', (e) => {
           const key = e.target.id.replace('list-col-', '');
@@ -2621,6 +2998,7 @@
           if (lastTaskSource === listSource) refreshTaskList();
         });
       });
+      setupDisplayListDrag(columnsEl, listSource);
     }
     function syncDatePickerFromText(row) {
       const dateInput = row && row.querySelector('.list-filter-date-picker');
