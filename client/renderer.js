@@ -450,6 +450,8 @@
   const recurrenceModalOverlay = document.getElementById('recurrence-modal-overlay');
   let recurrenceModalTaskId = null;
   let recurrenceModalCleared = false;
+  /** True only when user clicked "Clear recurrence"; used so we send null only then, not when opening for a task with no recurrence. */
+  let recurrenceUserClickedClear = false;
 
   function recurrenceIntervalUnit() {
     const freq = (document.getElementById('recurrence-freq') && document.getElementById('recurrence-freq').value) || 'daily';
@@ -582,6 +584,7 @@
 
   function openRecurrenceModal(taskId) {
     recurrenceModalTaskId = taskId;
+    recurrenceUserClickedClear = false;
     api(`/api/external/tasks/${encodeURIComponent(taskId)}`)
       .then((task) => {
         recurrencePopulateForm(task.recurrence || null);
@@ -624,7 +627,7 @@
   if (recurrenceModalSave) {
     recurrenceModalSave.addEventListener('click', async () => {
       if (!recurrenceModalTaskId || recurrenceModalSave.disabled) return;
-      const rec = recurrenceModalCleared ? null : recurrenceFormToObject();
+      const rec = recurrenceUserClickedClear ? null : recurrenceFormToObject();
       try {
         const updated = await updateTask(recurrenceModalTaskId, { recurrence: rec });
         updateTaskInLists(updated);
@@ -643,6 +646,7 @@
   const recurrenceClearBtn = document.getElementById('recurrence-clear');
   if (recurrenceClearBtn) {
     recurrenceClearBtn.addEventListener('click', () => {
+      recurrenceUserClickedClear = true;
       recurrenceModalCleared = true;
       recurrencePopulateForm(null);
     });
