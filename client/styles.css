@@ -110,27 +110,6 @@ body {
   --float-radius: 12px;
 }
 
-/* Electron: detached look — rounded corners, margin, shadow from top-left (class on html) */
-html.electron-app body {
-  background: #dde1e6;
-}
-html.electron-app body[data-theme="dark"] {
-  background: #0d0e10;
-}
-html.electron-app body[data-theme="cupertino"] {
-  background: #e5e5ea;
-}
-html.electron-app #app {
-  margin: 12px;
-  border-radius: 12px;
-  overflow: hidden;
-  box-shadow: 4px 4px 24px rgba(0, 0, 0, 0.15);
-  height: calc(100vh - 24px);
-}
-html.electron-app body[data-theme="dark"] #app {
-  box-shadow: 4px 4px 24px rgba(0, 0, 0, 0.4);
-}
-
 /* Main area: center is full-bleed background; left/right panels float above it */
 .main-area {
   flex: 1;
@@ -158,12 +137,12 @@ html.electron-app body[data-theme="dark"] #app {
   padding-right: calc(var(--float-gap) + var(--right-panel-width, var(--panel-max-width)) + var(--float-gap));
 }
 
-/* Left panel: floating, rounded, gap from edges */
+/* Left panel: floating, rounded, gap from edges; ends above bottom bar */
 .left-panel {
   position: absolute;
   left: var(--float-gap);
   top: var(--float-gap);
-  bottom: var(--float-gap);
+  bottom: calc(var(--float-gap) + 48px + var(--float-gap));
   width: var(--left-panel-width, var(--panel-max-width));
   min-width: var(--left-panel-width, var(--panel-max-width));
   max-width: var(--left-panel-width, var(--panel-max-width));
@@ -182,12 +161,12 @@ html.electron-app body[data-theme="dark"] #app {
   pointer-events: none;
 }
 
-/* Right panel: floating, rounded, gap from edges */
+/* Right panel: floating, rounded, gap from edges; ends above bottom bar */
 .right-panel {
   position: absolute;
   right: var(--float-gap);
   top: var(--float-gap);
-  bottom: var(--float-gap);
+  bottom: calc(var(--float-gap) + 48px + var(--float-gap));
   width: var(--right-panel-width, var(--panel-max-width));
   min-width: var(--right-panel-width, var(--panel-max-width));
   max-width: var(--right-panel-width, var(--panel-max-width));
@@ -206,13 +185,13 @@ html.electron-app body[data-theme="dark"] #app {
   pointer-events: none;
 }
 
-/* Resize handles: between floating panels and center */
+/* Resize handles: between floating panels and center; end above bottom bar */
 .resize-handle-vertical {
   position: absolute;
   top: var(--float-gap);
-  bottom: var(--float-gap);
+  bottom: calc(var(--float-gap) + 48px + var(--float-gap));
   width: 4px;
-  min-height: 100%;
+  min-height: 0;
   z-index: 3;
 }
 #left-panel-resize-handle {
@@ -368,6 +347,12 @@ body[data-theme="dark"] .header-icon-settings {
 .left-panel .panel-header,
 .right-panel .panel-header {
   background: var(--surface-header);
+}
+/* Center panel: no title band — same surface as content, no border; 10px buffer above title/buttons */
+#center-panel .panel-header {
+  background: var(--surface);
+  border-bottom: none;
+  padding-top: 10px;
 }
 .navigator-header {
   gap: 8px;
@@ -1440,11 +1425,11 @@ body[data-theme="dark"] .header-icon-settings {
   opacity: 0.9;
 }
 
-/* Left panel: vertical resize handle (vertical line + ew-resize cursor) */
+/* Left/right panel: vertical resize handle (vertical line + ew-resize cursor); height from top/bottom in .resize-handle-vertical */
 .resize-handle.resize-handle-vertical {
   width: 4px;
   height: auto;
-  min-height: 100%;
+  min-height: 0;
   cursor: ew-resize;
 }
 .resize-handle.resize-handle-vertical::after {

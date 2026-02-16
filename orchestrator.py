@@ -167,7 +167,7 @@ Output format: {"name": "project_info", "parameters": {"short_id": "1off"}}.
 delete_project: User identifies the project by short_id only (e.g. "1off", "work"). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true. In this chat we never use full project names—only short_id.
 Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}.
 
-list_view: Show tasks from a saved list. Use when the user says "view list X", "show tasks on list X", "list tasks on list X". X is always the list's short_id (e.g. "test", "work").
+list_view: Show tasks from a saved list. Use when the user says "view list X", "show tasks on list X", "list tasks on list X", or asks for tasks from a named list. X is always the list's short_id (e.g. "test", "work"). Tasks are returned in the list's configured sort order (same as in the app). Prefer list_view over task_list whenever the user asks for a specific list by name or short_id.
 Parameters: list_id (the list's short_id). In this chat we never refer to lists by full name—only by short_id.
 Output format: {"name": "list_view", "parameters": {"list_id": "test"}}.
 
