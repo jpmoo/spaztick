@@ -421,6 +421,8 @@ def external_list_tasks(
     due_by: str | None = None,
     available_by: str | None = None,
     title_contains: str | None = None,
+    search: str | None = None,
+    q: str | None = None,
     sort_by: str | None = None,
     flagged: bool | None = None,
     priority: int | None = None,
@@ -430,15 +432,21 @@ def external_list_tasks(
     from task_service import list_tasks
     use_inbox = inbox or (project_id and str(project_id).strip().lower() == "inbox")
     pid = None if use_inbox else project_id
+    # When searching, default to incomplete so we only return matching incomplete tasks
+    effective_status = status
+    if (search or q) and not effective_status:
+        effective_status = "incomplete"
     try:
         tasks = list_tasks(
-            status=status,
+            status=effective_status,
             project_id=pid,
             inbox=use_inbox,
             tag=tag,
             due_by=due_by,
             available_by=available_by,
             title_contains=title_contains,
+            search=search,
+            q=q,
             sort_by=sort_by,
             flagged=flagged,
             priority=priority,

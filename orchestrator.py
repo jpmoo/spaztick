@@ -133,7 +133,7 @@ Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume th
 
 # Available tools section (unchanged from original)
 AVAILABLE_TOOLS_SECTION = """
-Available tools: task_create, task_list, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists.
+Available tools: task_create, task_list, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists.
 
 task_create: Only "title" is required. Omit description, priority, dates, projects, tags, flagged if the user did not provide them. New tasks are incomplete and not flagged by default. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Optional "flagged": true to create a flagged task.
 Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (e.g. flagged, due_date).
@@ -145,6 +145,10 @@ Overdue semantics: A task due today is NOT overdue unless the user says "overdue
 Dates: "today", "tomorrow", "yesterday", "now" (use "today")—app resolves them.
 Examples: "list overdue tasks" -> {"name": "task_list", "parameters": {"overdue": true, "status": "incomplete"}}. "list inbox tasks" or "tasks in inbox" -> {"name": "task_list", "parameters": {"short_id": "inbox", "status": "incomplete"}}. "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "gimme tasks in 1off available tomorrow" -> {"name": "task_list", "parameters": {"short_id": "1off", "available_by": "tomorrow", "status": "incomplete"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}.
 Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id (or "inbox"), due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged, priority. Priority: use 0-3, or "high"/"medium high"/"medium low"/"low", or "red"/"orange"/"yellow"/"green". E.g. "high priority tasks" -> priority "high" or 3; "red priority" -> 3; "priority 2" -> 2.
+
+task_find: Find tasks by a search term in title, description, or tag. Use when the user says "find tasks about X", "search for tasks with dogs", "tasks about meetings", "tasks tagged work", or similar. The term is matched in title, description, and tag (so one term finds all matching tasks).
+Required parameter: term (the search string, e.g. "dogs", "work", "meetings").
+Output format: {"name": "task_find", "parameters": {"term": "..."}}.
 
 task_info: User identifies the task by its friendly id (number). "Tell me about 1", "about task 1", "task #1", "task 1", or just "1" after discussing tasks/projects always means task_info with that number. Never answer with general knowledge about the number—always call task_info.
 Output format: {"name": "task_info", "parameters": {"number": 1}} (use the number the user said).
@@ -517,6 +521,16 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
     list_id = _extract_list_identifier_from_message(user_message)
     if list_id:
         return ("list_view", {"list_id": list_id})
+    # Find/search tasks by term (before generic list tasks)
+    m = re.search(r"\b(?:find|search\s+for|look\s+for)\s+(?:tasks?\s+)(?:about|with|containing|matching)\s+(.+?)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
+    if m:
+        return ("task_find", {"term": m.group(1).strip()})
+    m = re.search(r"\btasks?\s+(?:about|with|containing|tagged)\s+(.+?)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
+    if m:
+        return ("task_find", {"term": m.group(1).strip()})
+    m = re.search(r"^(?:find|search)\s+(.+?)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
+    if m and "task" in msg:
+        return ("task_find", {"term": m.group(1).strip()})
     # List/show tasks — match at start (allows "list tasks", "list tasks due today", "gimme tasks in 1off")
     if re.match(r"^(list|show|get|gimme|display|what are my|give me)\s+(my\s+)?tasks?\b", msg):
         return ("task_list", {"status": "incomplete"})
@@ -1169,6 +1183,23 @@ def run_orchestrator(
         except Exception as e:
             return (f"Error listing tasks: {e}", False, None)
         return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None)
+    if name == "task_find":
+        term = (params.get("term") or params.get("query") or "").strip()
+        if not term:
+            return ("task_find requires a search term (e.g. \"dogs\", \"work\").", False, None)
+        tz_name = "UTC"
+        try:
+            from config import load as load_config
+            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+        except Exception:
+            pass
+        try:
+            from task_service import list_tasks as svc_list_tasks
+            tasks = svc_list_tasks(limit=500, q=term, status="incomplete")
+        except Exception as e:
+            return (f"Error searching tasks: {e}", False, None)
+        header = f"Tasks matching \"{term}\":\n"
+        return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None)
     if name == "list_view":
         list_id = (params.get("list_id") or params.get("name") or "").strip()
         if not list_id:

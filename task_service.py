@@ -225,6 +225,8 @@ def list_tasks(
     completed_by: str | None = None,
     completed_after: str | None = None,
     title_contains: str | None = None,
+    search: str | None = None,
+    q: str | None = None,
     sort_by: str | None = None,
     flagged: bool | None = None,
     priority: int | None = None,
@@ -233,6 +235,8 @@ def list_tasks(
     """List tasks with optional filters. Returns minimal task dicts (no projects/tags/deps).
     due_by, available_by, available_or_due_by, completed_by, completed_after are ISO date strings (YYYY-MM-DD).
     title_contains: substring match on title (case-insensitive).
+    search: substring match on title OR description (case-insensitive).
+    q: match tag exactly OR title OR description (substring). Use for combined/tag search.
     sort_by: due_date, available_date, created_at, completed_at, title (default created_at DESC).
     priority: 0-3 to filter by exact priority (3 = highest).
     inbox: if True, only tasks that have no project (inbox = unassigned). Ignored if project_id is set.
@@ -271,6 +275,17 @@ def list_tasks(
         if title_contains and title_contains.strip():
             sql += " AND title LIKE ?"
             params.append(f"%{title_contains.strip()}%")
+        if search and search.strip():
+            s = search.strip()
+            sql += " AND (title LIKE ? OR description LIKE ?)"
+            params.append(f"%{s}%")
+            params.append(f"%{s}%")
+        if q and q.strip():
+            qv = q.strip()
+            sql += " AND (id IN (SELECT task_id FROM task_tags WHERE tag = ?) OR title LIKE ? OR description LIKE ?)"
+            params.append(qv)
+            params.append(f"%{qv}%")
+            params.append(f"%{qv}%")
         if flagged is not None:
             sql += " AND flagged = ?"
             params.append(1 if flagged else 0)

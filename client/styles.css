@@ -280,6 +280,81 @@ body[data-theme="dark"] .header-icon-settings {
 
 .bar-spacer {
   flex: 1;
+  min-width: 0;
+}
+.bottom-bar-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.bottom-bar-center .navigator-add-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.bottom-bar-center .navigator-add-btn:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+.bottom-bar-center .navigator-add-icon {
+  width: 18px;
+  height: 18px;
+}
+.bottom-bar-center .navigator-search-input {
+  width: 100%;
+  min-width: 400px;
+  max-width: 1280px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+}
+.bottom-bar-center .navigator-search-input::placeholder {
+  color: var(--text-muted);
+}
+.bottom-bar-center .navigator-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.bottom-bar-center .navigator-search-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.bottom-bar-center .navigator-search-btn:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+.bottom-bar-center .navigator-search-btn img {
+  width: 16px;
+  height: 16px;
+  filter: brightness(0);
+}
+body[data-theme="dark"] .bottom-bar-center .navigator-search-btn img {
+  filter: brightness(0) invert(1);
 }
 .bottom-bar .bar-btn + .bar-btn {
   margin-left: 4px;
@@ -425,6 +500,19 @@ body[data-theme="dark"] .header-icon-settings {
   padding: 14px 16px;
 }
 
+.center-description {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  padding: 0 20px 10px;
+  margin: 10px 0 0 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.center-description:empty {
+  display: none;
+}
 .center-panel .panel-content {
   padding: 18px 20px;
 }
@@ -1128,27 +1216,6 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   color: var(--accent);
   background: rgba(37, 99, 235, 0.12);
 }
-.navigator-add-btn {
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.navigator-add-btn:hover {
-  color: var(--text);
-  background: var(--bg);
-}
-.navigator-add-icon {
-  width: 22px;
-  height: 22px;
-}
 .navigator-add-popover {
   position: absolute;
   bottom: 100%;
@@ -1266,6 +1333,27 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   flex-shrink: 0;
   opacity: 0.9;
 }
+/* Left panel img icons (e.g. Favorites star) respect theme */
+.nav-section-header img.section-icon {
+  filter: brightness(0);
+}
+body[data-theme="dark"] .nav-section-header img.section-icon {
+  filter: brightness(0) invert(1);
+}
+#nav-section-favorites .nav-section-header img.section-icon {
+  width: 14px;
+  height: 14px;
+}
+.nav-item-favorite .nav-item-icon {
+  width: 14px;
+  height: 14px;
+}
+.nav-item-add-favorite img {
+  filter: brightness(0);
+}
+body[data-theme="dark"] .nav-item-add-favorite img {
+  filter: brightness(0) invert(1);
+}
 .nav-section-header .nav-section-title-text {
   flex: 1;
 }
@@ -1356,6 +1444,11 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   color: var(--text-muted);
   transition: color 0.15s ease;
 }
+.nav-item .nav-item-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
 .nav-item:hover {
   background: var(--bg);
 }
@@ -1405,9 +1498,16 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   background: var(--bg);
   color: var(--text);
 }
-.nav-item-actions .nav-action-btn svg {
+.nav-item-actions .nav-action-btn svg,
+.nav-item-actions .nav-action-btn img {
   width: 14px;
   height: 14px;
+}
+.nav-item-add-favorite {
+  display: none;
+}
+.left-panel-edit-mode .nav-item-add-favorite {
+  display: flex;
 }
 .nav-item-drag-handle {
   display: none;
@@ -1470,6 +1570,225 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   word-break: break-word;
   margin-bottom: 0.85em;
 }
+
+.inspector-label-line {
+  margin: 0 0 0.4em;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.inspector-dates-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 0.85em;
+}
+.inspector-date-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.inspector-date-row .inspector-date-dropdown-trigger {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.inspector-date-row .inspector-date-dropdown-trigger:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+  color: var(--text);
+}
+.inspector-date-row .inspector-date-input {
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  background: var(--surface);
+  color: var(--text);
+}
+.inspector-date-row .inspector-date-input.inspector-date-input-small {
+  width: calc(7em + 50px);
+  min-width: calc(7em + 50px);
+  max-width: none;
+}
+.inspector-date-row .inspector-date-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.inspector-date-row .inspector-date-icon svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.inspector-projects-wrap {
+  margin-bottom: 0.85em;
+}
+.inspector-projects-wrap .inspector-label-line {
+  margin-bottom: 0.35em;
+}
+.inspector-projects-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.inspector-projects-row .inspector-folder-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.inspector-projects-row .inspector-projects-trigger {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.inspector-projects-row .inspector-projects-trigger:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+  color: var(--text);
+}
+.inspector-projects-ids {
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+.inspector-actions-row .inspector-projects-wrap {
+  margin-bottom: 0;
+}
+.inspector-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 0.85em;
+}
+.inspector-action-icon {
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.inspector-action-icon:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.inspector-action-icon.muted {
+  opacity: 0.5;
+}
+.inspector-action-icon.muted:hover {
+  opacity: 0.85;
+}
+.inspector-action-icon .inspector-status-img {
+  width: 15px;
+  height: 15px;
+}
+.inspector-action-icon.inspector-flag-btn .inspector-flag-star,
+.inspector-action-icon.inspector-flag-btn .flagged-icon {
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1;
+}
+.inspector-action-icon.inspector-flag-btn.muted .inspector-flag-star,
+.inspector-action-icon.inspector-flag-btn.muted .flagged-icon {
+  color: var(--text-muted);
+  opacity: 0.35;
+}
+.inspector-action-icon.inspector-flag-btn:hover .inspector-flag-star.empty,
+.inspector-action-icon.inspector-flag-btn:hover .flagged-icon.empty {
+  opacity: 0.5;
+}
+.inspector-action-icon.inspector-recurrence-btn svg.recurrence-icon {
+  width: 16px;
+  height: 16px;
+}
+.inspector-actions-row .inspector-actions-projects {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 2px;
+}
+.inspector-actions-row .inspector-actions-projects .inspector-folder-icon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  width: 16px;
+  height: 16px;
+}
+.inspector-actions-row .inspector-actions-projects .inspector-projects-trigger {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.inspector-actions-row .inspector-actions-projects .inspector-projects-trigger:hover {
+  background: var(--bg-hover, rgba(0,0,0,0.05));
+  color: var(--text);
+}
+.inspector-actions-row .inspector-actions-projects .inspector-projects-ids {
+  font-size: 11px;
+  color: var(--text-muted);
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inspector-action-icon.inspector-save-btn img,
+.inspector-action-icon.inspector-delete-btn img {
+  width: 16px;
+  height: 16px;
+}
+
+/* Task inspector and right panel: img icons/buttons respect theme (assets are black; filter to match text) */
+.inspector-content .inspector-action-icon img,
+.inspector-content .inspector-action-btn img,
+.inspector-content .inspector-actions-row .inspector-actions-projects img.inspector-folder-icon,
+.right-panel button img {
+  filter: brightness(0);
+}
+body[data-theme="dark"] .inspector-content .inspector-action-icon img,
+body[data-theme="dark"] .inspector-content .inspector-action-btn img,
+body[data-theme="dark"] .inspector-content .inspector-actions-row .inspector-actions-projects img.inspector-folder-icon,
+body[data-theme="dark"] .right-panel button img {
+  filter: brightness(0) invert(1);
+}
+
 .inspector-content .inspector-edit-input,
 .inspector-content .inspector-edit-textarea {
   width: 100%;

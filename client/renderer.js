@@ -26,6 +26,7 @@
   const NAV_SECTION_OPEN_PREFIX = 'spaztick_nav_section_open_';
   const NAV_PROJECT_ORDER_KEY = 'spaztick_nav_project_order';
   const NAV_LIST_ORDER_KEY = 'spaztick_nav_list_order';
+  const NAV_FAVORITES_KEY = 'spaztick_favorites';
   const DEFAULT_OPEN_VIEW_KEY = 'spaztick_default_open_view';
   const TASK_LIST_SEPARATOR_KEY = 'spaztick_task_list_separator';
 
@@ -141,6 +142,7 @@
 
   let lastTasks = [];
   let lastTaskSource = null;
+  let lastSearchQuery = '';
   let displayedTasks = [];
 
   function getApiBase() {
@@ -571,7 +573,8 @@
         const updated = await updateTask(descriptionModalTaskId, { description: text });
         updateTaskInLists(updated);
         const row = document.querySelector(`.task-row[data-id="${descriptionModalTaskId}"]`);
-        if (row && row.classList.contains('selected')) loadTaskDetails(descriptionModalTaskId);
+        const inspectorDiv = document.getElementById('inspector-content');
+        if ((row && row.classList.contains('selected')) || (inspectorDiv && inspectorDiv.dataset.taskId === descriptionModalTaskId)) loadTaskDetails(descriptionModalTaskId);
         closeDescriptionModal();
       } catch (e) {
         console.error('Failed to update description:', e);
@@ -773,7 +776,8 @@
       const updated = await updateTask(recurrenceModalTaskId, { recurrence: rec });
       updateTaskInLists(updated);
       const row = document.querySelector(`.task-row[data-id="${recurrenceModalTaskId}"]`);
-      if (row && row.classList.contains('selected')) loadTaskDetails(recurrenceModalTaskId);
+      const inspectorDiv = document.getElementById('inspector-content');
+      if ((row && row.classList.contains('selected')) || (inspectorDiv && inspectorDiv.dataset.taskId === recurrenceModalTaskId)) loadTaskDetails(recurrenceModalTaskId);
       closeRecurrenceModal();
       refreshTaskList();
     } catch (e) {
@@ -1178,6 +1182,7 @@
 
   function refreshCenterView() {
     if (lastTaskSource === 'inbox') loadInboxTasks();
+    else if (lastTaskSource === 'search' && lastSearchQuery) runSearch(lastSearchQuery);
     else if (lastTaskSource && lastTaskSource.startsWith('list:')) {
       const listId = lastTaskSource.slice(5);
       if (listId) loadListTasks(listId);
@@ -1233,6 +1238,11 @@
   }
 
   const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  const CAL_EVENT_SVG = '<svg class="date-icon calendar-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M11.75 16C11.8881 16 12 15.8881 12 15.75V12.25C12 12.1119 11.8881 12 8.25 12V15.75C8 15.8881 8.11193 16 8.25 16H11.75Z"/></svg>';
+  const CAL_CHECK_SVG = '<svg class="date-icon calendar-check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M15 12L11 16L9 14"/></svg>';
+
+  const RECURRENCE_ICON_SVG = '<svg class="recurrence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4.06 13C4.02 12.67 4 12.34 4 12c0-4.42 3.58-8 8-8 2.5 0 4.73 1.15 6.2 2.94M19.94 11C19.98 11.33 20 11.66 20 12c0 4.42-3.58 8-8 8-2.5 0-4.73-1.15-6.2-2.94M9 17H6v.29M18.2 4v2.94M18.2 6.94V7L15.2 7M6 20v-2.71"/></svg>';
 
   const PRIORITY_CIRCLE_SVG = '<svg class="priority-circle-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="8"/></svg>';
   function priorityClass(p) {
@@ -1400,22 +1410,25 @@
     }
   }
 
-  function openDateDropdown(ev, cell) {
-    ev.stopPropagation();
-    closeDateDropdown();
-    const row = cell.closest('.task-row');
-    const taskId = row && row.dataset.id;
-    const field = cell.dataset.dateField;
-    let currentVal = (cell.dataset.dateValue || '').trim().substring(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(currentVal)) {
-      const t = new Date();
-      currentVal = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  /** Build date dropdown menu (Today, Tomorrow, Days of week, +/-, Clear, Pick date). onAfterApply called after applyTaskDate (e.g. to refresh inspector). */
+  function buildDateDropdownContent(taskId, field, currentVal, onAfterApply) {
+    let existingDate = (currentVal || '').trim().substring(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(existingDate)) {
+      existingDate = todayDateStr();
     }
-    if (!taskId || !field) return;
-
     const dropdown = document.createElement('div');
     dropdown.className = 'task-date-dropdown';
     dropdown.setAttribute('role', 'menu');
+
+    async function applyAndClose(dateStr) {
+      try {
+        await applyTaskDate(taskId, field, dateStr);
+        closeDateDropdown();
+        if (onAfterApply) onAfterApply();
+      } catch (err) {
+        console.error(err);
+      }
+    }
 
     function addDateButton(label, dateStr) {
       const btn = document.createElement('button');
@@ -1424,8 +1437,7 @@
       btn.textContent = label;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        applyTaskDate(taskId, field, dateStr);
-        closeDateDropdown();
+        applyAndClose(dateStr);
       });
       dropdown.appendChild(btn);
     }
@@ -1451,8 +1463,7 @@
       btn.textContent = name;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        applyTaskDate(taskId, field, nextWeekdayDate(i));
-        closeDateDropdown();
+        applyAndClose(nextWeekdayDate(i));
       });
       weekdaysSubmenu.appendChild(btn);
     });
@@ -1482,10 +1493,10 @@
     dropdown.appendChild(weekdaysWrap);
 
     const choices = [
-      { label: '+1 day', fn: () => dateAddDays(currentVal, 1) },
-      { label: '-1 day', fn: () => dateAddDays(currentVal, -1) },
-      { label: '+1 week', fn: () => dateAddDays(currentVal, 7) },
-      { label: '-1 week', fn: () => dateAddDays(currentVal, -7) },
+      { label: '+1 day', fn: () => dateAddDays(existingDate, 1) },
+      { label: '-1 day', fn: () => dateAddDays(existingDate, -1) },
+      { label: '+1 week', fn: () => dateAddDays(existingDate, 7) },
+      { label: '-1 week', fn: () => dateAddDays(existingDate, -7) },
     ];
     choices.forEach(({ label, fn }) => {
       const newDate = fn();
@@ -1496,8 +1507,7 @@
       btn.textContent = label;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        applyTaskDate(taskId, field, newDate);
-        closeDateDropdown();
+        applyAndClose(newDate);
       });
       dropdown.appendChild(btn);
     });
@@ -1508,32 +1518,26 @@
     clearBtn.textContent = 'Clear';
     clearBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      applyTaskDate(taskId, field, '');
-      closeDateDropdown();
+      applyAndClose('');
     });
     dropdown.appendChild(clearBtn);
 
-    const pickerWrap = document.createElement('div');
-    pickerWrap.className = 'task-date-dropdown-picker-wrap';
-    const pickerLabel = document.createElement('label');
-    pickerLabel.textContent = 'Pick date: ';
-    const picker = document.createElement('input');
-    picker.type = 'date';
-    const existingDate = (cell.dataset.dateValue || '').trim().substring(0, 10);
-    picker.value = /^\d{4}-\d{2}-\d{2}$/.test(existingDate) ? existingDate : '';
-    picker.className = 'task-date-picker-input';
-    picker.addEventListener('change', (e) => {
-      const v = e.target.value;
-      if (v) {
-        applyTaskDate(taskId, field, v);
-        closeDateDropdown();
-      }
-    });
-    pickerWrap.addEventListener('click', (e) => e.stopPropagation());
-    pickerLabel.appendChild(picker);
-    pickerWrap.appendChild(pickerLabel);
-    dropdown.appendChild(pickerWrap);
+    return dropdown;
+  }
 
+  function openDateDropdown(ev, cell) {
+    ev.stopPropagation();
+    closeDateDropdown();
+    const row = cell.closest('.task-row');
+    const taskId = row && row.dataset.id;
+    const field = cell.dataset.dateField;
+    let currentVal = (cell.dataset.dateValue || '').trim().substring(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(currentVal)) {
+      currentVal = todayDateStr();
+    }
+    if (!taskId || !field) return;
+
+    const dropdown = buildDateDropdownContent(taskId, field, currentVal, undefined);
     document.body.appendChild(dropdown);
     dateDropdownEl = dropdown;
 
@@ -1546,6 +1550,31 @@
     requestAnimationFrame(() => document.addEventListener('click', dateDropdownOutside));
   }
 
+  function openInspectorDateDropdown(ev, wrapEl) {
+    ev.stopPropagation();
+    closeDateDropdown();
+    const taskId = wrapEl.dataset.taskId;
+    const field = wrapEl.dataset.dateField;
+    const inputEl = wrapEl.querySelector('input[type="date"]');
+    let currentVal = (inputEl && inputEl.value || '').trim().substring(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(currentVal)) currentVal = todayDateStr();
+    if (!taskId || !field) return;
+
+    const dropdown = buildDateDropdownContent(taskId, field, currentVal, () => loadTaskDetails(taskId));
+    document.body.appendChild(dropdown);
+    dateDropdownEl = dropdown;
+
+    const trigger = wrapEl.querySelector('.inspector-date-dropdown-trigger');
+    const anchor = trigger || wrapEl;
+    const rect = anchor.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.left = `${rect.left}px`;
+    dropdown.style.top = `${rect.bottom + 4}px`;
+    dropdown.style.minWidth = '160px';
+
+    requestAnimationFrame(() => document.addEventListener('click', dateDropdownOutside));
+  }
+
   let projectsDropdownEl = null;
   function closeProjectsDropdown() {
     if (projectsDropdownEl && projectsDropdownEl.parentNode) projectsDropdownEl.parentNode.removeChild(projectsDropdownEl);
@@ -1553,7 +1582,7 @@
     document.removeEventListener('click', projectsDropdownOutside);
   }
   function projectsDropdownOutside(ev) {
-    if (projectsDropdownEl && !projectsDropdownEl.contains(ev.target) && !ev.target.closest('.projects-cell')) closeProjectsDropdown();
+    if (projectsDropdownEl && !projectsDropdownEl.contains(ev.target) && !ev.target.closest('.projects-cell') && !ev.target.closest('.inspector-projects-wrap')) closeProjectsDropdown();
   }
 
   let descriptionModalTaskId = null;
@@ -1605,16 +1634,24 @@
     }
   }
 
-  function openProjectsDropdown(ev, cell) {
+  function openProjectsDropdown(ev, cellOrAnchor, options) {
     ev.stopPropagation();
     closeProjectsDropdown();
-    const row = cell.closest('.task-row');
-    const taskId = row && row.dataset.id;
+    const fromInspector = options && (options.taskId != null || options.currentIds != null);
+    const row = fromInspector ? null : cellOrAnchor.closest('.task-row');
+    const taskId = fromInspector ? (options.taskId != null ? String(options.taskId) : (row && row.dataset.id)) : (row && row.dataset.id);
     let currentIds = [];
-    try {
-      currentIds = JSON.parse(cell.dataset.projectsJson || '[]');
-    } catch (_) {}
+    if (fromInspector && options.currentIds != null) {
+      currentIds = Array.isArray(options.currentIds) ? options.currentIds : [];
+    } else {
+      try {
+        currentIds = JSON.parse(cellOrAnchor.dataset.projectsJson || '[]');
+      } catch (_) {}
+    }
     if (!taskId) return;
+
+    const onAfterApply = options && options.onAfterApply;
+    const anchorEl = (options && options.anchorEl) || cellOrAnchor;
 
     const dropdown = document.createElement('div');
     dropdown.className = 'task-projects-dropdown';
@@ -1642,8 +1679,10 @@
       removeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const next = currentIds.filter((id) => String(id) !== String(pid));
-        applyTaskProjects(taskId, next);
-        closeProjectsDropdown();
+        applyTaskProjects(taskId, next).then(() => {
+          closeProjectsDropdown();
+          if (onAfterApply) onAfterApply();
+        });
       });
       currentList.appendChild(item);
     });
@@ -1691,8 +1730,10 @@
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const next = [...currentIds, p.id];
-            applyTaskProjects(taskId, next);
-            closeProjectsDropdown();
+            applyTaskProjects(taskId, next).then(() => {
+              closeProjectsDropdown();
+              if (onAfterApply) onAfterApply();
+            });
           });
           resultsDiv.appendChild(btn);
         });
@@ -1713,6 +1754,7 @@
             await applyTaskProjects(taskId, next);
             loadProjects();
             closeProjectsDropdown();
+            if (onAfterApply) onAfterApply();
           } catch (err) {
             console.error('Failed to create project:', err);
           }
@@ -1728,11 +1770,11 @@
     document.body.appendChild(dropdown);
     projectsDropdownEl = dropdown;
 
-    const cellRect = cell.getBoundingClientRect();
+    const rect = anchorEl.getBoundingClientRect();
     dropdown.style.position = 'fixed';
-    dropdown.style.left = `${cellRect.left}px`;
-    dropdown.style.top = `${cellRect.bottom + 4}px`;
-    dropdown.style.minWidth = `${Math.max(cellRect.width, 240)}px`;
+    dropdown.style.left = `${rect.left}px`;
+    dropdown.style.top = `${rect.bottom + 4}px`;
+    dropdown.style.minWidth = `${Math.max(rect.width, 240)}px`;
     dropdown.style.maxHeight = '320px';
     dropdown.style.overflowY = 'auto';
 
@@ -2081,7 +2123,10 @@
     if (inboxItem) inboxItem.classList.add('selected');
     projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     document.getElementById('center-title').textContent = 'Inbox';
+    const centerDescInbox = document.getElementById('center-description');
+    if (centerDescInbox) centerDescInbox.textContent = '';
     document.getElementById('center-content').innerHTML = '<p class="placeholder">Loading…</p>';
     document.getElementById('inspector-title').textContent = 'Inspector';
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
@@ -2105,6 +2150,51 @@
       document.getElementById('center-content').innerHTML = '<p class="placeholder">' + (e.message || 'Error') + '</p>';
       lastTasks = [];
       lastTaskSource = null;
+    }
+  }
+
+  async function runSearch(query) {
+    const q = (query || '').trim();
+    if (!q) return;
+    lastSearchQuery = q;
+    lastTaskSource = 'search';
+    const centerTitle = document.getElementById('center-title');
+    const centerDesc = document.getElementById('center-description');
+    const center = document.getElementById('center-content');
+    if (centerTitle) centerTitle.textContent = `Search for "${q}"`;
+    if (centerDesc) centerDesc.textContent = '';
+    center.innerHTML = '<p class="placeholder">Searching…</p>';
+    if (inboxItem) inboxItem.classList.remove('selected');
+    if (projectsList) projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    updateCenterHeaderForSource();
+    try {
+      const isTag = q.startsWith('#');
+      const term = isTag ? q.slice(1).trim() : q;
+      if (!term) {
+        center.innerHTML = '<p class="placeholder">Enter a search term or #tag.</p>';
+        return;
+      }
+      const params = new URLSearchParams();
+      params.set('limit', '500');
+      params.set('status', 'incomplete');
+      if (isTag) params.set('q', term);
+      else params.set('search', term);
+      const raw = await api(`/api/external/tasks?${params.toString()}`);
+      const list = Array.isArray(raw) ? raw : [];
+      const termLower = term.toLowerCase();
+      const tasks = list.filter((t) => {
+        const title = (t.title || '').toLowerCase();
+        const desc = (t.description || '').toLowerCase();
+        const tags = (t.tags || []).map((tag) => String(tag).toLowerCase());
+        if (isTag) return tags.some((tag) => tag === termLower || tag.includes(termLower));
+        return title.includes(termLower) || desc.includes(termLower) || tags.some((tag) => tag.includes(termLower));
+      });
+      renderTaskList(tasks, 'search');
+    } catch (e) {
+      center.innerHTML = '<p class="placeholder">' + (e.message || 'Search failed') + '</p>';
+      lastTasks = [];
     }
   }
 
@@ -2180,13 +2270,15 @@
       const archiveSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M20.5 7V13C20.5 16.7712 20.5 18.6569 19.3284 19.8284C18.1569 21 16.2712 21 12.5 21H11.5C7.72876 21 5.84315 21 4.67157 19.8284C3.5 18.6569 3.5 16.7712 3.5 13V7"/><path d="M2 5C2 4.05719 2 3.58579 2.29289 3.29289C2.58579 3 3.05719 3 4 3H20C20.9428 3 21.4142 3 21.7071 3.29289C22 3.58579 22 4.05719 22 5C22 5.94281 22 6.41421 21.7071 6.70711C21.4142 7 20.9428 7 20 7H4C3.05719 7 2.58579 7 2.29289 6.70711C2 6.41421 2 5.94281 2 5Z"/><path d="M12 7L12 16M12 16L15 12.6667M12 16L9 12.6667"/></svg>';
       const minusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>';
       const moveSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
+      const starIcon = '<img src="assets/favorite-star-svgrepo-com.svg" alt="" width="14" height="14" />';
       projectsList.innerHTML = projectListCache.map((p) => {
         const name = (p.name || p.short_id || 'Project').replace(/</g, '&lt;');
         const projectTasks = projectTasksMap.get(String(p.id)) || [];
         const countHtml = countRendererNav(countTasksByBucket(projectTasks));
         const label = (p.name || p.short_id || 'Project').replace(/</g, '&lt;').replace(/"/g, '&quot;');
         const idEsc = (p.id || '').replace(/"/g, '&quot;');
-        const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-archive" title="Archive" aria-label="Archive project">${archiveSvg}</button><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete project">${minusSvg}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
+        const addFavBtn = !isInFavorites('project', p.id) ? `<button type="button" class="nav-action-btn nav-item-add-favorite" title="Add to favorites" aria-label="Add to favorites">${starIcon}</button>` : '';
+        const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-archive" title="Archive" aria-label="Archive project">${archiveSvg}</button><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete project">${minusSvg}</button>${addFavBtn}<span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
         return `<li class="nav-item" data-type="project" data-id="${idEsc}" data-label="${label}">${name}${countHtml}${actions}</li>`;
       }).join('');
       projectsList.querySelectorAll('.nav-item').forEach((el) => {
@@ -2197,6 +2289,15 @@
       });
       projectsList.querySelectorAll('.nav-item-delete').forEach((btn) => {
         btn.addEventListener('click', (e) => { e.stopPropagation(); onProjectDelete(e); });
+      });
+      projectsList.querySelectorAll('.nav-item-add-favorite').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const li = btn.closest('.nav-item');
+          if (!li || !li.dataset.id) return;
+          addToFavorites('project', li.dataset.id, (li.dataset.label || 'Project').replace(/&quot;/g, '"'));
+          btn.remove();
+        });
       });
       projectsList.querySelectorAll('.nav-item-drag-handle').forEach((handle) => {
         handle.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); onNavItemDragStart(e, 'project'); });
@@ -2219,12 +2320,15 @@
     if (inboxItem) inboxItem.classList.remove('selected');
     projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     li.classList.add('selected');
     const type = li.dataset.type;
     const id = li.dataset.id;
     lastTaskSource = type === 'project' && id ? id : null;
     updateCenterHeaderForSource();
     document.getElementById('center-title').textContent = type === 'project' ? (li.dataset.label || 'Project') : 'List';
+    const centerDescNav = document.getElementById('center-description');
+    if (centerDescNav) centerDescNav.textContent = '';
     document.getElementById('center-content').innerHTML = '<p class="placeholder">Loading tasks…</p>';
     document.getElementById('inspector-title').textContent = 'Project';
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
@@ -2266,6 +2370,112 @@
       localStorage.setItem(NAV_LIST_ORDER_KEY, JSON.stringify(ids));
     } catch (_) {}
   }
+  function getFavorites() {
+    try {
+      const raw = localStorage.getItem(NAV_FAVORITES_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr.filter((f) => f && (f.type === 'project' || f.type === 'list') && f.id) : [];
+      }
+    } catch (_) {}
+    return [];
+  }
+  function saveFavorites(arr) {
+    try {
+      localStorage.setItem(NAV_FAVORITES_KEY, JSON.stringify(arr));
+    } catch (_) {}
+  }
+  function isInFavorites(type, id) {
+    const favs = getFavorites();
+    return favs.some((f) => f.type === type && String(f.id) === String(id));
+  }
+  function addToFavorites(type, id, label) {
+    if (isInFavorites(type, id)) return;
+    const favs = getFavorites();
+    favs.push({ type, id: String(id), label: String(label || (type === 'project' ? 'Project' : 'List')) });
+    saveFavorites(favs);
+    loadFavorites();
+  }
+  function removeFromFavorites(type, id) {
+    const favs = getFavorites().filter((f) => !(f.type === type && String(f.id) === String(id)));
+    saveFavorites(favs);
+    loadFavorites();
+  }
+  const favoritesListEl = document.getElementById('favorites-list');
+  const NAV_PROJECT_ICON_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>';
+  const NAV_LIST_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M8 5.00005C7.01165 5.00082 6.49359 5.01338 6.09202 5.21799C5.71569 5.40973 5.40973 5.71569 5.21799 6.09202C5 6.51984 5 7.07989 5 8.2V17.8C5 18.9201 5 19.4802 5.21799 19.908C5.40973 20.2843 5.71569 20.5903 6.09202 20.782C6.51984 21 7.07989 21 8.2 21H15.8C16.9201 21 17.4802 21 17.908 20.782C18.2843 20.5903 18.5903 20.2843 18.782 19.908C19 19.4802 19 18.9201 19 17.8V8.2C19 7.07989 19 6.51984 18.782 6.09202C18.5903 5.71569 18.2843 5.40973 17.908 5.21799C17.5064 5.01338 16.9884 5.00082 16 5.00005M8 5.00005V7H16V5.00005M8 5.00005V4.70711C8 4.25435 8.17986 3.82014 8.5 3.5C8.82014 3.17986 9.25435 3 9.70711 3H14.2929C14.7456 3 15.1799 3.17986 15.5 3.5C15.8201 3.82014 16 4.25435 16 4.70711V5.00005M15 12H12M15 16H12M9 12H9.01M9 16H9.01" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  function loadFavorites() {
+    if (!favoritesListEl) return;
+    const favs = getFavorites();
+    if (!favs.length) {
+      favoritesListEl.innerHTML = '<li class="nav-item placeholder">—</li>';
+      return;
+    }
+    const minusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>';
+    const moveSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
+    favoritesListEl.innerHTML = favs.map((f) => {
+      const name = (f.label || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      const idEsc = (f.id || '').replace(/"/g, '&quot;');
+      const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-delete nav-item-favorite-remove" title="Remove from favorites" aria-label="Remove from favorites">${minusSvg}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
+      const iconSvg = f.type === 'list' ? NAV_LIST_ICON_SVG : NAV_PROJECT_ICON_SVG;
+      const iconHtml = `<span class="nav-item-icon">${iconSvg}</span>`;
+      if (f.type === 'list') {
+        return `<li class="nav-item nav-item-favorite" data-type="list" data-list-id="${idEsc}" data-id="${idEsc}" data-label="${name}">${iconHtml}${name}${actions}</li>`;
+      }
+      return `<li class="nav-item nav-item-favorite" data-type="project" data-id="${idEsc}" data-label="${name}">${iconHtml}${name}${actions}</li>`;
+    }).join('');
+    favoritesListEl.querySelectorAll('.nav-item').forEach((el) => {
+      if (el.classList.contains('placeholder')) return;
+      el.addEventListener('click', onFavoriteItemClick);
+    });
+    favoritesListEl.querySelectorAll('.nav-item-favorite-remove').forEach((btn) => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); onFavoriteRemove(e); });
+    });
+    favoritesListEl.querySelectorAll('.nav-item-drag-handle').forEach((handle) => {
+      handle.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); onNavItemDragStart(e, 'favorites'); });
+    });
+  }
+  function onFavoriteItemClick(ev) {
+    if (ev.target.closest('.nav-item-actions')) return;
+    const li = ev.currentTarget;
+    if (li.classList.contains('placeholder')) return;
+    if (inboxItem) inboxItem.classList.remove('selected');
+    if (projectsList) projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    li.classList.add('selected');
+    const type = li.dataset.type;
+    const id = type === 'list' ? li.dataset.listId : li.dataset.id;
+    const label = li.dataset.label || (type === 'project' ? 'Project' : 'List');
+    if (type === 'project' && id) {
+      lastTaskSource = id;
+      document.getElementById('center-title').textContent = label;
+      const centerDesc = document.getElementById('center-description');
+      if (centerDesc) centerDesc.textContent = '';
+      document.getElementById('inspector-title').textContent = 'Project';
+      document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
+      updateCenterHeaderForSource();
+      loadProjectDetails(id);
+      loadProjectTasks(id);
+    } else if (type === 'list' && id) {
+      lastTaskSource = 'list:' + id;
+      document.getElementById('center-title').textContent = label;
+      const centerDesc = document.getElementById('center-description');
+      if (centerDesc) centerDesc.textContent = '';
+      document.getElementById('inspector-title').textContent = 'List';
+      document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
+      updateCenterHeaderForSource();
+      loadListTasks(id);
+      loadListDetails(id);
+    }
+  }
+  async function onFavoriteRemove(ev) {
+    const li = ev.target.closest('.nav-item-favorite');
+    if (!li) return;
+    const type = li.dataset.type;
+    const id = type === 'list' ? li.dataset.listId : li.dataset.id;
+    removeFromFavorites(type, id);
+  }
   function applyListOrder(lists) {
     if (!Array.isArray(lists) || !lists.length) return lists;
     const order = getListOrder();
@@ -2299,12 +2509,13 @@
     }
     const minusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>';
     const moveSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
+    const starIconList = '<img src="assets/favorite-star-svgrepo-com.svg" alt="" width="14" height="14" />';
     listsListEl.innerHTML = lists.map((list) => {
       const name = (list.name || '').replace(/</g, '&lt;');
       const label = (list.name || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
       const listIdEsc = (list.id || '').replace(/"/g, '&quot;');
-      /* Lists: delete + reorder only (no archive); no count display */
-      const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete list">${minusSvg}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
+      const addFavBtn = !isInFavorites('list', list.id) ? `<button type="button" class="nav-action-btn nav-item-add-favorite" title="Add to favorites" aria-label="Add to favorites">${starIconList}</button>` : '';
+      const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete list">${minusSvg}</button>${addFavBtn}<span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
       return `<li class="nav-item" data-type="list" data-list-id="${listIdEsc}" data-label="${label}">${name}${actions}</li>`;
     }).join('');
     listsListEl.querySelectorAll('.nav-item').forEach((el) => {
@@ -2312,6 +2523,15 @@
     });
     listsListEl.querySelectorAll('.nav-item-delete').forEach((btn) => {
       btn.addEventListener('click', (e) => { e.stopPropagation(); onListDelete(e); });
+    });
+    listsListEl.querySelectorAll('.nav-item-add-favorite').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const li = btn.closest('.nav-item');
+        if (!li || !li.dataset.listId) return;
+        addToFavorites('list', li.dataset.listId, (li.dataset.label || 'List').replace(/&quot;/g, '"'));
+        btn.remove();
+      });
     });
     listsListEl.querySelectorAll('.nav-item-drag-handle').forEach((handle) => {
       handle.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); onNavItemDragStart(e, 'list'); });
@@ -2324,11 +2544,14 @@
     if (inboxItem) inboxItem.classList.remove('selected');
     projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     li.classList.add('selected');
     const id = li.dataset.listId;
     const name = li.dataset.label || 'List';
     lastTaskSource = 'list:' + (id || '');
     document.getElementById('center-title').textContent = name;
+    const centerDescListClick = document.getElementById('center-description');
+    if (centerDescListClick) centerDescListClick.textContent = '';
     document.getElementById('inspector-title').textContent = 'List';
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
     updateCenterHeaderForSource();
@@ -2433,7 +2656,7 @@
     if (navDragState) return;
     const li = ev.target.closest('.nav-item');
     if (!li || li.classList.contains('placeholder')) return;
-    const listEl = kind === 'project' ? projectsList : listsListEl;
+    const listEl = kind === 'project' ? projectsList : kind === 'favorites' ? favoritesListEl : listsListEl;
     const items = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)'));
     const idx = items.indexOf(li);
     if (idx === -1) return;
@@ -2484,6 +2707,14 @@
       if (navDragState.kind === 'project') {
         const ids = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)')).map((el) => el.dataset.id).filter(Boolean);
         saveProjectOrder(ids);
+      } else if (navDragState.kind === 'favorites') {
+        const favs = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)')).map((el) => {
+          const type = el.dataset.type;
+          const id = type === 'list' ? el.dataset.listId : el.dataset.id;
+          const label = el.dataset.label || '';
+          return { type, id, label };
+        }).filter((f) => f.type && f.id);
+        saveFavorites(favs);
       } else {
         const ids = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)')).map((el) => el.dataset.listId).filter(Boolean);
         saveListOrder(ids);
@@ -2511,6 +2742,8 @@
     });
     lastTaskSource = 'list:' + listId;
     document.getElementById('center-title').textContent = list.name || 'List';
+    const centerDescOpen = document.getElementById('center-description');
+    if (centerDescOpen) centerDescOpen.textContent = '';
     document.getElementById('inspector-title').textContent = 'List';
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
     updateCenterHeaderForSource();
@@ -2628,12 +2861,20 @@
           </div>
         </div>
         <div class="inspector-project-actions">
+          ${!isInFavorites('project', p.id) ? `<button type="button" id="inspector-project-add-favorite" class="inspector-action-btn" title="Add to favorites" aria-label="Add to favorites"><img src="assets/favorite-star-svgrepo-com.svg" alt="" /></button>` : ''}
           <button type="button" id="inspector-project-archive" class="inspector-action-btn" title="Archive" aria-label="Archive"><img src="assets/archive-down-svgrepo-com.svg" alt="" /></button>
           <button type="button" id="inspector-project-delete" class="inspector-action-btn" title="Delete" aria-label="Delete"><img src="assets/trash-alt-svgrepo-com.svg" alt="" /></button>
           <button type="button" id="inspector-project-save" class="inspector-action-btn btn-primary" title="Save" aria-label="Save"><img src="assets/save-svgrepo-com.svg" alt="" /></button>
         </div>
       `;
       const pid = p.id;
+      const addFavProjectBtn = document.getElementById('inspector-project-add-favorite');
+      if (addFavProjectBtn) {
+        addFavProjectBtn.addEventListener('click', () => {
+          addToFavorites('project', pid, p.name || 'Project');
+          loadProjectDetails(pid);
+        });
+      }
       const nameInput = document.getElementById('inspector-project-name');
       const descInput = document.getElementById('inspector-project-description');
       document.getElementById('inspector-project-save').addEventListener('click', async () => {
@@ -2666,6 +2907,8 @@
           document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
           lastTaskSource = null;
           document.getElementById('center-title').textContent = '';
+          const centerDescEl = document.getElementById('center-description');
+          if (centerDescEl) centerDescEl.textContent = '';
           document.getElementById('center-content').innerHTML = '<p class="placeholder">Select a project or list.</p>';
         } catch (err) {
           alert(err.message || 'Failed to archive project.');
@@ -2680,11 +2923,17 @@
           document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
           lastTaskSource = null;
           document.getElementById('center-title').textContent = '';
+          const centerDesc = document.getElementById('center-description');
+          if (centerDesc) centerDesc.textContent = '';
           document.getElementById('center-content').innerHTML = '<p class="placeholder">Select a project or list.</p>';
         } catch (err) {
           alert(err.message || 'Failed to delete project.');
         }
       });
+      const centerDesc = document.getElementById('center-description');
+      if (centerDesc && (String(lastTaskSource) === String(p.id) || String(lastTaskSource) === String(p.short_id))) {
+        centerDesc.textContent = p.description || '';
+      }
     } catch (e) {
       document.getElementById('inspector-title').textContent = 'Inspector';
       document.getElementById('inspector-content').innerHTML = `<p class="placeholder">${e.message || 'Error loading project.'}</p>`;
@@ -2718,12 +2967,20 @@
           </div>
         </div>
         <div class="inspector-project-actions">
+          ${!isInFavorites('list', lst.id || listId) ? `<button type="button" id="inspector-list-add-favorite" class="inspector-action-btn" title="Add to favorites" aria-label="Add to favorites"><img src="assets/favorite-star-svgrepo-com.svg" alt="" /></button>` : ''}
           <button type="button" id="inspector-list-duplicate" class="inspector-action-btn" title="Duplicate" aria-label="Duplicate"><img src="assets/duplicate-document-svgrepo-com.svg" alt="" /></button>
           <button type="button" id="inspector-list-delete" class="inspector-action-btn" title="Delete" aria-label="Delete"><img src="assets/trash-alt-svgrepo-com.svg" alt="" /></button>
           <button type="button" id="inspector-list-save" class="inspector-action-btn btn-primary" title="Save" aria-label="Save"><img src="assets/save-svgrepo-com.svg" alt="" /></button>
         </div>
       `;
       const lid = lst.id || listId;
+      const addFavListBtn = document.getElementById('inspector-list-add-favorite');
+      if (addFavListBtn) {
+        addFavListBtn.addEventListener('click', () => {
+          addToFavorites('list', lid, lst.name || 'List');
+          loadListDetails(lid);
+        });
+      }
       const nameInput = document.getElementById('inspector-list-name');
       const descInput = document.getElementById('inspector-list-description');
       document.getElementById('inspector-list-save').addEventListener('click', async () => {
@@ -2752,11 +3009,17 @@
           document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
           lastTaskSource = null;
           document.getElementById('center-title').textContent = '';
+          const centerDescList = document.getElementById('center-description');
+          if (centerDescList) centerDescList.textContent = '';
           document.getElementById('center-content').innerHTML = '<p class="placeholder">Select a project or list.</p>';
         } catch (err) {
           alert(err.message || 'Failed to delete list.');
         }
       });
+      const centerDescListEl = document.getElementById('center-description');
+      if (centerDescListEl && lastTaskSource === 'list:' + (lst.id || listId)) {
+        centerDescListEl.textContent = lst.description || '';
+      }
       document.getElementById('inspector-list-duplicate').addEventListener('click', () => {
         duplicateListSource = lst;
         if (duplicateListName) duplicateListName.value = (lst.name ? `Copy of ${lst.name}` : 'Copy of list').trim();
@@ -2796,22 +3059,147 @@
       const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
       const div = document.getElementById('inspector-content');
       div.dataset.taskId = taskId;
+      const titleEsc = escapeHtml((t.title || '(no title)').trim());
+      const createdVal = t.created_at ? formatDateTimeForInspector(t.created_at) : '—';
+      const updatedVal = t.updated_at ? formatDateTimeForInspector(t.updated_at) : '—';
+      const completedVal = t.completed_at ? formatDateTimeForInspector(t.completed_at) : null;
+      const avDate = (t.available_date || '').toString().trim().substring(0, 10);
+      const dueDate = (t.due_date || '').toString().trim().substring(0, 10);
+      const avDateAttr = /^\d{4}-\d{2}-\d{2}$/.test(avDate) ? avDate : '';
+      const dueDateAttr = /^\d{4}-\d{2}-\d{2}$/.test(dueDate) ? dueDate : '';
+      const projectIds = Array.isArray(t.projects) ? t.projects : [];
+      const projectShortIds = projectIds.map((id) => projectIdToShortName(id)).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+      const projectsListStr = projectShortIds.join(', ') || '—';
+      const statusComplete = isTaskCompleted(t);
+      const flagged = t.flagged === true || t.flagged === 1;
+      const hasDescription = (t.description || '').toString().trim().length > 0;
+      const recText = formatRecurrenceForDisplay(t.recurrence);
+      const hasRecurrence = !!(t.recurrence && typeof t.recurrence === 'object' && (t.recurrence.freq || t.recurrence.interval));
+
       let html = '';
-      TASK_INSPECTOR_KEYS.forEach(([key, label]) => {
-        if (!(key in t)) return;
-        const val = formatInspectorValue(key, t[key]);
-        if (val === null && key !== 'description' && key !== 'notes') return;
-        if (key === 'description' || key === 'notes') {
-          html += `<p><strong>${label}</strong></p><p class="inspector-block">${val || '—'}</p>`;
-        } else if (key === 'recurrence') {
-          html += `<p><strong>${label}:</strong> ${val !== null ? val : '—'} <button type="button" class="inspector-edit-recurrence" data-task-id="${String(taskId).replace(/"/g, '&quot;')}">Edit</button></p>`;
-        } else {
-          html += `<p><strong>${label}:</strong> ${val !== null ? val : '—'}</p>`;
-        }
-      });
-      div.innerHTML = '<div class="inspector-content-inner">' + (html || '<p class="placeholder">No details.</p>') + '</div>';
-      div.querySelectorAll('.inspector-edit-recurrence').forEach((btn) => {
+      html += `<p class="inspector-label-line"><strong>Title:</strong> ${titleEsc}</p>`;
+      html += `<p class="inspector-label-line"><strong>Created:</strong> ${createdVal}</p>`;
+      html += `<p class="inspector-label-line"><strong>Updated:</strong> ${updatedVal}</p>`;
+      if (completedVal) html += `<p class="inspector-label-line"><strong>Last completed:</strong> ${completedVal}</p>`;
+
+      html += '<div class="inspector-dates-block">';
+      html += `<div class="inspector-date-row inspector-date-available" data-task-id="${escapeAttr(taskId)}" data-date-field="available_date">
+        <span class="inspector-date-icon" aria-hidden="true">${CAL_EVENT_SVG}</span>
+        <input type="date" class="inspector-date-input inspector-date-input-small" value="${escapeAttr(avDateAttr)}" title="Available date" aria-label="Available date" />
+        <button type="button" class="inspector-date-dropdown-trigger" title="Quick set available date" aria-haspopup="true" aria-label="Available date options">▾</button>
+      </div>`;
+      html += `<div class="inspector-date-row inspector-date-due" data-task-id="${escapeAttr(taskId)}" data-date-field="due_date">
+        <span class="inspector-date-icon" aria-hidden="true">${CAL_CHECK_SVG}</span>
+        <input type="date" class="inspector-date-input inspector-date-input-small" value="${escapeAttr(dueDateAttr)}" title="Due date" aria-label="Due date" />
+        <button type="button" class="inspector-date-dropdown-trigger" title="Quick set due date" aria-haspopup="true" aria-label="Due date options">▾</button>
+      </div>`;
+      html += '</div>';
+
+      html += '<div class="inspector-actions-row" data-task-id="' + escapeAttr(taskId) + '">';
+      html += '<button type="button" class="inspector-action-icon inspector-status-btn" title="' + (statusComplete ? 'Mark incomplete' : 'Mark complete') + '" aria-label="Toggle status">';
+      html += statusComplete ? '<img src="assets/circle-tick-svgrepo-com.svg" alt="" class="inspector-status-img" width="15" height="15" />' : '<img src="assets/circle-open-svgrepo-com.svg" alt="" class="inspector-status-img" width="15" height="15" />';
+      html += '</button>';
+      html += '<button type="button" class="inspector-action-icon inspector-flag-btn' + (flagged ? '' : ' muted') + '" data-flagged="' + (flagged ? '1' : '0') + '" title="' + (flagged ? 'Unflag' : 'Flag') + '" aria-label="Toggle flag">';
+      html += '<span class="inspector-flag-star flagged-icon' + (flagged ? '' : ' empty') + '">★</span>';
+      html += '</button>';
+      html += '<button type="button" class="inspector-action-icon inspector-notes-btn' + (hasDescription ? '' : ' muted') + '" data-description-task-id="' + escapeAttr(taskId) + '" title="Notes / description" aria-label="Edit notes">';
+      html += '<img src="assets/document-svgrepo-com.svg" alt="" width="18" height="18" />';
+      html += '</button>';
+      html += '<button type="button" class="inspector-action-icon inspector-recurrence-btn' + (hasRecurrence ? '' : ' muted') + '" data-task-id="' + escapeAttr(taskId) + '" title="' + (hasRecurrence ? 'Edit recurrence' : 'Set recurrence') + '" aria-label="Recurrence">';
+      html += RECURRENCE_ICON_SVG;
+      html += '</button>';
+      html += '<span class="inspector-actions-projects inspector-projects-wrap" data-task-id="' + escapeAttr(taskId) + '" data-projects-json="' + escapeAttr(JSON.stringify(projectIds)) + '">';
+      html += '<img src="assets/folder-open-svgrepo-com.svg" class="inspector-folder-icon" alt="" width="18" height="18" />';
+      html += '<button type="button" class="inspector-projects-trigger" title="Add or remove projects" aria-haspopup="true">▾</button>';
+      html += '<span class="inspector-projects-ids">' + escapeHtml(projectsListStr) + '</span>';
+      html += '</span>';
+      html += '<button type="button" class="inspector-action-icon inspector-save-btn" data-task-id="' + escapeAttr(taskId) + '" title="Refresh / Save" aria-label="Save">';
+      html += '<img src="assets/save-svgrepo-com.svg" alt="" width="16" height="16" />';
+      html += '</button>';
+      html += '<button type="button" class="inspector-action-icon inspector-delete-btn" data-task-id="' + escapeAttr(taskId) + '" title="Delete task" aria-label="Delete">';
+      html += '<img src="assets/trash-alt-svgrepo-com.svg" alt="" width="16" height="16" />';
+      html += '</button>';
+      html += '</div>';
+
+      div.innerHTML = '<div class="inspector-content-inner">' + html + '</div>';
+
+      div.querySelectorAll('.inspector-recurrence-btn').forEach((btn) => {
         btn.addEventListener('click', () => openRecurrenceModal(btn.dataset.taskId));
+      });
+
+      div.querySelectorAll('.inspector-date-row').forEach((row) => {
+        const taskIdVal = row.dataset.taskId;
+        const field = row.dataset.dateField;
+        const input = row.querySelector('input[type="date"]');
+        if (input) {
+          input.addEventListener('change', () => {
+            const v = (input.value || '').trim().substring(0, 10);
+            if (v || field) applyTaskDate(taskIdVal, field, v).then(() => loadTaskDetails(taskIdVal));
+          });
+        }
+        row.querySelectorAll('.inspector-date-dropdown-trigger').forEach((trigger) => {
+          trigger.addEventListener('click', (ev) => openInspectorDateDropdown(ev, row));
+        });
+      });
+
+      const projectsWrap = div.querySelector('.inspector-projects-wrap');
+      if (projectsWrap) {
+        const trigger = projectsWrap.querySelector('.inspector-projects-trigger');
+        if (trigger) {
+          trigger.addEventListener('click', (ev) => {
+            openProjectsDropdown(ev, projectsWrap, {
+              taskId,
+              currentIds: projectIds,
+              anchorEl: trigger,
+              onAfterApply: () => loadTaskDetails(taskId),
+            });
+          });
+        }
+      }
+
+      div.querySelectorAll('.inspector-status-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const newStatus = isTaskCompleted(t) ? 'incomplete' : 'complete';
+          updateTask(taskId, { status: newStatus }).then((updated) => {
+            updateTaskInLists(updated);
+            loadTaskDetails(taskId);
+          }).catch((err) => console.error(err));
+        });
+      });
+      div.querySelectorAll('.inspector-flag-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          updateTask(taskId, { flagged: !flagged }).then((updated) => {
+            updateTaskInLists(updated);
+            loadTaskDetails(taskId);
+          }).catch((err) => console.error(err));
+        });
+      });
+      div.querySelectorAll('.inspector-notes-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const fakeCell = { dataset: { descriptionTaskId: taskId } };
+          openDescriptionModal({ stopPropagation: () => {} }, fakeCell);
+        });
+      });
+      div.querySelectorAll('.inspector-save-btn').forEach((btn) => {
+        btn.addEventListener('click', () => loadTaskDetails(btn.dataset.taskId));
+      });
+      div.querySelectorAll('.inspector-delete-btn').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const id = btn.dataset.taskId;
+          if (!id) return;
+          if (!confirm('Delete this task? This cannot be undone.')) return;
+          try {
+            await api(`/api/external/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' });
+            document.getElementById('inspector-title').textContent = 'Inspector';
+            document.getElementById('inspector-content').innerHTML = '<div class="inspector-content-inner"><p class="placeholder">Select an item to inspect.</p></div>';
+            refreshTaskList();
+            refreshCenterView();
+          } catch (err) {
+            alert(err.message || 'Failed to delete task.');
+          }
+        });
       });
     } catch (e) {
       document.getElementById('inspector-content').innerHTML = `<div class="inspector-content-inner"><p class="placeholder">${e.message || 'Error'}</p></div>`;
@@ -3537,7 +3925,7 @@
     if (!leftPanel) return;
     leftPanel.classList.add('left-panel-edit-mode');
     if (navigatorEditBtn) navigatorEditBtn.classList.add('active');
-    document.querySelectorAll('#nav-section-projects, #nav-section-lists').forEach((section) => {
+    document.querySelectorAll('#nav-section-favorites, #nav-section-projects, #nav-section-lists').forEach((section) => {
       section.classList.remove('collapsed');
       const header = section.querySelector('.nav-section-header');
       if (header) header.setAttribute('aria-expanded', 'true');
@@ -3577,6 +3965,33 @@
       navigatorAddPopover.classList.add('hidden');
       if (navigatorAddBtn) navigatorAddBtn.setAttribute('aria-expanded', 'false');
     }
+  }
+  const navigatorAddTaskBtn = document.getElementById('navigator-add-task-btn');
+  const navigatorSearchInput = document.getElementById('navigator-search-input');
+  const navigatorSearchBtn = document.getElementById('navigator-search-btn');
+  if (navigatorAddTaskBtn) {
+    navigatorAddTaskBtn.addEventListener('click', async () => {
+      const projects = (lastTaskSource && lastTaskSource !== 'inbox' && lastTaskSource !== 'search' && !lastTaskSource.startsWith('list:'))
+        ? [lastTaskSource]
+        : undefined;
+      try {
+        await api('/api/external/tasks', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: 'New task', projects }),
+        });
+        refreshCenterView();
+        refreshTaskList();
+      } catch (e) {
+        alert(e.message || 'Failed to create task.');
+      }
+    });
+  }
+  if (navigatorSearchBtn) navigatorSearchBtn.addEventListener('click', () => runSearch(navigatorSearchInput && navigatorSearchInput.value));
+  if (navigatorSearchInput) {
+    navigatorSearchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') runSearch(navigatorSearchInput.value);
+    });
   }
   if (navigatorAddBtn && navigatorAddPopover) {
     navigatorAddBtn.addEventListener('click', (e) => {
@@ -3702,6 +4117,11 @@
             sort_definition: sd != null ? sd : undefined,
           }),
         });
+        if (created && created.id) {
+          const sourceKey = 'list:' + (duplicateListSource.id || '');
+          const props = getDisplayProperties(sourceKey);
+          saveDisplayProperties('list:' + created.id, props.order, props.visible, props.showFlagged, props.showCompleted, props.showHighlightDue, props.sortBy, props.manualSort, props.manualOrder);
+        }
         closeDuplicateListModal();
         await loadListsFromApi();
         if (created && created.id) openListInCenter(created.id);
@@ -3749,6 +4169,7 @@
   applyTaskListSeparator();
   loadProjects().then(() => {
     loadLists();
+    loadFavorites();
     applyDefaultOpenView();
   });
   setInterval(checkConnection, 30000);
