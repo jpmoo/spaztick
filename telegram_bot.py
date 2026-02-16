@@ -62,11 +62,6 @@ def _load_pending_confirm() -> dict[int, dict]:
     return out
 
 
-def _pending_has_context(pending: dict) -> bool:
-    """True if we have user_message and assistant_response to use history for confirmation."""
-    return bool(pending.get("user_message") and pending.get("assistant_response"))
-
-
 def _save_pending_confirm(pending: dict[int, dict]) -> None:
     """Write pending confirmations to file."""
     data = {str(k): v for k, v in pending.items()}
@@ -215,42 +210,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     chat_id = update.message.chat.id
     USE_HISTORY = False
-    # When history is off: if user says yes/confirm and we have a pending delete, use one-turn history so model can confirm
+    # When history is off: if user says yes/confirm and we have a pending delete, execute via API (no model call)
     if not USE_HISTORY:
         pending = _get_pending_confirm(chat_id)
         if pending and text.lower() in ("yes", "confirm", "y"):
             await update.message.chat.send_action("typing")
-            if _pending_has_context(pending):
-                # Activate history for this one request so the model sees the confirmation and can call tool with confirm
-                confirm_history = [
-                    {"role": "user", "content": pending["user_message"]},
-                    {"role": "assistant", "content": pending["assistant_response"]},
-                ]
-                base_url = config.ollama_base_url
-                model = config.model
-                system_prefix = (config.system_message or "").strip() or ""
-                tz_name = getattr(config, "user_timezone", None) or "UTC"
-                try:
-                    if ZoneInfo is not None:
-                        now_str = datetime.now(ZoneInfo(tz_name)).strftime("%Y-%m-%d %H:%M")
-                    else:
-                        now_str = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
-                    date_line = f"It is {now_str} in the user's time zone {tz_name}."
-                    if config.user_name and (config.user_name or "").strip():
-                        system_prefix = f"You are chatting with {config.user_name.strip()}.\n{date_line}\n\n{system_prefix}".strip()
-                    else:
-                        system_prefix = f"{date_line}\n\n{system_prefix}".strip()
-                except Exception:
-                    system_prefix = (config.system_message or "").strip() or "You are a helpful assistant."
-                loop = asyncio.get_event_loop()
-                response, tool_used, _ = await loop.run_in_executor(
-                    None,
-                    lambda: _run_orchestrator("yes", base_url, model, system_prefix, confirm_history),
-                )
-                _set_pending_confirm(chat_id, None)
-                await update.message.reply_text(response or "(No response)")
-                return
-            # Fallback: no context stored (e.g. old file), use web app API
             web_base = f"http://127.0.0.1:{getattr(config, 'web_ui_port', 8081)}"
             loop = asyncio.get_event_loop()
             ok, msg = await loop.run_in_executor(None, lambda: _execute_pending_confirm_http(web_base, pending))

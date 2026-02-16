@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -143,41 +143,54 @@ class PendingConfirmBody(BaseModel):
     short_id: str | None = None
 
 
-@app.post("/api/execute-pending-confirm")
-def execute_pending_confirm(body: PendingConfirmBody) -> dict[str, bool | str]:
-    """Execute a pending delete (task or project). Used by Telegram bot when user replies 'yes' and history is disabled."""
-    if body.tool == "delete_task":
-        if body.number is None:
-            return {"ok": False, "message": "delete_task requires number."}
+def _execute_pending_confirm_payload(payload: dict) -> tuple[bool, str]:
+    """Run delete from pending payload. Returns (ok, message)."""
+    tool = payload.get("tool")
+    if tool == "delete_task":
+        num = payload.get("number")
+        if num is None:
+            return (False, "delete_task requires number.")
         try:
             from task_service import get_task_by_number, delete_task
-            task = get_task_by_number(body.number)
+            task = get_task_by_number(num)
         except Exception as e:
-            return {"ok": False, "message": str(e)}
+            return (False, str(e))
         if not task:
-            return {"ok": False, "message": f"No task {body.number}."}
+            return (False, f"No task {num}.")
         try:
             delete_task(task["id"])
-            return {"ok": True, "message": f"Task {body.number} deleted."}
+            return (True, f"Task {num} deleted.")
         except Exception as e:
-            return {"ok": False, "message": str(e)}
-    if body.tool == "delete_project":
-        short_id = (body.short_id or "").strip()
+            return (False, str(e))
+    if tool == "delete_project":
+        short_id = (payload.get("short_id") or "").strip()
         if not short_id:
-            return {"ok": False, "message": "delete_project requires short_id."}
+            return (False, "delete_project requires short_id.")
         try:
             from project_service import get_project_by_short_id, delete_project
             project = get_project_by_short_id(short_id)
         except Exception as e:
-            return {"ok": False, "message": str(e)}
+            return (False, str(e))
         if not project:
-            return {"ok": False, "message": f"No project \"{short_id}\"."}
+            return (False, f"No project \"{short_id}\".")
         try:
             delete_project(project["id"])
-            return {"ok": True, "message": f"Project {short_id} deleted. It has been removed from all tasks."}
+            return (True, f"Project {short_id} deleted. It has been removed from all tasks.")
         except Exception as e:
-            return {"ok": False, "message": str(e)}
-    return {"ok": False, "message": f"Unknown tool: {body.tool}. Use delete_task or delete_project."}
+            return (False, str(e))
+    return (False, f"Unknown tool: {tool}. Use delete_task or delete_project.")
+
+
+# Pending confirm per API key for external chat (no history): when user says "yes" we execute
+_external_pending: dict[str, dict] = {}
+
+
+@app.post("/api/execute-pending-confirm")
+def execute_pending_confirm(body: PendingConfirmBody) -> dict[str, bool | str]:
+    """Execute a pending delete (task or project). Used by Telegram bot when user replies 'yes' and history is disabled."""
+    payload = {"tool": body.tool, "number": body.number, "short_id": body.short_id}
+    ok, message = _execute_pending_confirm_payload(payload)
+    return {"ok": ok, "message": message}
 
 
 # --- Tasks API (for web app list / edit / delete) ---
@@ -496,13 +509,22 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/api/external/chat", dependencies=[Depends(_require_api_key)])
-def external_chat(body: ChatRequest):
+def external_chat(request: Request, body: ChatRequest):
     from orchestrator import run_orchestrator
     from datetime import datetime
     try:
         from zoneinfo import ZoneInfo
     except ImportError:
         ZoneInfo = None
+    msg = (body.message or "").strip()
+    api_key = (request.headers.get("X-API-Key") or "").strip()
+    # When client sends "yes"/"confirm"/"y" and we have a pending delete for this API key, execute it (no history in external chat)
+    if msg.lower() in ("yes", "confirm", "y") and api_key:
+        pending = _external_pending.get(api_key)
+        if pending:
+            _external_pending.pop(api_key, None)
+            ok, response_message = _execute_pending_confirm_payload(pending)
+            return {"response": response_message, "tool_used": True}
     c = load_config()
     base_url = c.ollama_base_url
     model = (body.model or c.model or "llama3.2").strip()
@@ -523,7 +545,11 @@ def external_chat(body: ChatRequest):
     else:
         system_prefix = f"{date_line}\n\n{system_prefix}".strip()
     try:
-        response_text, tool_used, _ = run_orchestrator(body.message.strip(), base_url, model, system_prefix, history=[])
+        response_text, tool_used, pending_confirm = run_orchestrator(msg, base_url, model, system_prefix, history=[])
+        if pending_confirm and api_key:
+            _external_pending[api_key] = pending_confirm
+        if tool_used and api_key:
+            _external_pending.pop(api_key, None)
         return {"response": response_text or "", "tool_used": tool_used}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
