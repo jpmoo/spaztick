@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -427,7 +427,13 @@ def external_create_task(body: dict):
 
 
 @app.put("/api/external/tasks/{task_id}", dependencies=[Depends(_require_api_key)])
-def external_update_task(task_id: str, body: dict = Body(...)):
+async def external_update_task(task_id: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}") from e
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Body must be a JSON object")
     from task_service import get_task, get_task_by_number, update_task, remove_task_project, remove_task_tag, add_task_project, add_task_tag
     t = get_task(task_id)
     if t is None and task_id.isdigit():
