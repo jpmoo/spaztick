@@ -1,7 +1,7 @@
 {
-  "name": "spaztick-client",
+  "name": "Spaztick",
   "version": "0.1.0",
-  "description": "Spaztick desktop client — tasks, projects, and chat",
+  "description": "Spaztick desktop client — tasks and projects with an AI assistant",
   "main": "main.js",
   "scripts": {
     "start": "electron .",

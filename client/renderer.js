@@ -289,17 +289,28 @@
     }
   }
 
-  // --- Panel toggles (bottom bar) ---
+  // --- Panel toggles (bottom bar) + sync main-area classes for floating layout (center padding) ---
+  const mainArea = document.querySelector('.main-area');
+  function syncMainAreaPanelClasses() {
+    if (!mainArea) return;
+    mainArea.classList.toggle('left-open', leftPanel && !leftPanel.classList.contains('collapsed'));
+    mainArea.classList.toggle('left-collapsed', leftPanel && leftPanel.classList.contains('collapsed'));
+    mainArea.classList.toggle('right-open', rightPanel && !rightPanel.classList.contains('collapsed'));
+    mainArea.classList.toggle('right-collapsed', rightPanel && rightPanel.classList.contains('collapsed'));
+  }
   function toggleLeftPanel() {
     leftPanel.classList.toggle('collapsed');
+    syncMainAreaPanelClasses();
   }
 
   function toggleRightPanel() {
     rightPanel.classList.toggle('collapsed');
+    syncMainAreaPanelClasses();
   }
 
   toggleLeft.addEventListener('click', toggleLeftPanel);
   toggleRight.addEventListener('click', toggleRightPanel);
+  syncMainAreaPanelClasses();
 
   function getShowDueOverdueCounts() {
     const v = localStorage.getItem(SHOW_DUE_OVERDUE_COUNTS_KEY);
@@ -2352,7 +2363,6 @@
   }
 
   // --- Left panel width resize (drag vertical border) + persist ---
-  const mainArea = document.querySelector('.main-area');
   const leftPanelResizeHandle = document.getElementById('left-panel-resize-handle');
   if (leftPanelResizeHandle && leftPanel && mainArea) {
     leftPanelResizeHandle.addEventListener('mousedown', (e) => {

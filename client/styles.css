@@ -105,6 +105,9 @@ body {
   flex-direction: column;
   height: 100vh;
   width: 100%;
+  position: relative;
+  --float-gap: 12px;
+  --float-radius: 12px;
 }
 
 /* Electron: detached look — rounded corners, margin, shadow from top-left (class on html) */
@@ -128,16 +131,109 @@ html.electron-app body[data-theme="dark"] #app {
   box-shadow: 4px 4px 24px rgba(0, 0, 0, 0.4);
 }
 
+/* Main area: center is full-bleed background; left/right panels float above it */
 .main-area {
   flex: 1;
-  display: flex;
   min-height: 0;
+  position: relative;
   overflow: hidden;
+  --float-gap: 12px;
+  --float-radius: 12px;
 }
 
-/* Bottom bar */
+/* Center panel: full bleed, no rounded corners, acts as background; padding shrinks content area when side panels open */
+#center-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 0;
+  border: none;
+  box-shadow: none;
+  padding-bottom: calc(var(--float-gap) + 48px + var(--float-gap));
+}
+.main-area.left-open #center-panel {
+  padding-left: calc(var(--float-gap) + var(--left-panel-width, var(--panel-max-width)) + var(--float-gap));
+}
+.main-area.right-open #center-panel {
+  padding-right: calc(var(--float-gap) + var(--right-panel-width, var(--panel-max-width)) + var(--float-gap));
+}
+
+/* Left panel: floating, rounded, gap from edges */
+.left-panel {
+  position: absolute;
+  left: var(--float-gap);
+  top: var(--float-gap);
+  bottom: var(--float-gap);
+  width: var(--left-panel-width, var(--panel-max-width));
+  min-width: var(--left-panel-width, var(--panel-max-width));
+  max-width: var(--left-panel-width, var(--panel-max-width));
+  z-index: 2;
+  border-radius: var(--float-radius);
+  box-shadow: var(--shadow-md);
+}
+.left-panel.collapsed {
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  overflow: hidden;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  pointer-events: none;
+}
+
+/* Right panel: floating, rounded, gap from edges */
+.right-panel {
+  position: absolute;
+  right: var(--float-gap);
+  top: var(--float-gap);
+  bottom: var(--float-gap);
+  width: var(--right-panel-width, var(--panel-max-width));
+  min-width: var(--right-panel-width, var(--panel-max-width));
+  max-width: var(--right-panel-width, var(--panel-max-width));
+  z-index: 2;
+  border-radius: var(--float-radius);
+  box-shadow: var(--shadow-md);
+}
+.right-panel.collapsed {
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  overflow: hidden;
+  border: none;
+  box-shadow: none;
+  padding: 0;
+  pointer-events: none;
+}
+
+/* Resize handles: between floating panels and center */
+.resize-handle-vertical {
+  position: absolute;
+  top: var(--float-gap);
+  bottom: var(--float-gap);
+  width: 4px;
+  min-height: 100%;
+  z-index: 3;
+}
+#left-panel-resize-handle {
+  left: calc(var(--float-gap) + var(--left-panel-width, var(--panel-max-width)));
+}
+#right-panel-resize-handle {
+  right: calc(var(--float-gap) + var(--right-panel-width, var(--panel-max-width)));
+}
+.main-area.left-collapsed #left-panel-resize-handle {
+  display: none;
+}
+.main-area.right-collapsed #right-panel-resize-handle {
+  display: none;
+}
+
+/* Bottom bar: floating above center at bottom */
 .bottom-bar {
-  flex-shrink: 0;
+  position: absolute;
+  bottom: var(--float-gap);
+  left: var(--float-gap);
+  right: var(--float-gap);
   height: 48px;
   min-height: 48px;
   display: flex;
@@ -145,8 +241,10 @@ html.electron-app body[data-theme="dark"] #app {
   justify-content: space-between;
   padding: 0 16px;
   background: var(--surface);
-  border-top: 1px solid var(--border);
-  box-shadow: 0 -1px 0 var(--border-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--float-radius);
+  box-shadow: var(--shadow-md);
+  z-index: 5;
 }
 .bar-btn {
   width: 36px;
@@ -226,15 +324,13 @@ body[data-theme="dark"] .header-icon-settings {
   margin-left: 4px;
 }
 
-/* Panels: center uses --surface, side panels use --surface-side */
+/* Panels: base panel layout; center/side rules above (floating layout) */
 .panel {
   border: 1px solid var(--border);
-  border-radius: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   transition: width 0.2s ease, min-width 0.2s ease;
-  box-shadow: var(--shadow-sm);
 }
 .left-panel,
 .right-panel {
@@ -242,31 +338,13 @@ body[data-theme="dark"] .header-icon-settings {
 }
 .center-panel {
   background: var(--surface);
-  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
 }
 
-.left-panel {
-  width: var(--left-panel-width, var(--panel-max-width));
-  min-width: var(--left-panel-width, var(--panel-max-width));
-  max-width: var(--left-panel-width, var(--panel-max-width));
-  z-index: 5;
-}
-.left-panel.collapsed {
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  border-width: 0;
-  overflow: hidden;
-}
 .resize-handle-vertical {
-  width: 4px;
-  min-height: 100%;
-  align-self: stretch;
   cursor: ew-resize;
-  flex-shrink: 0;
 }
 .resize-handle-vertical::after {
   width: 2px;
@@ -274,20 +352,6 @@ body[data-theme="dark"] .header-icon-settings {
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-}
-
-.right-panel {
-  width: var(--right-panel-width, var(--panel-max-width));
-  min-width: var(--right-panel-width, var(--panel-max-width));
-  max-width: var(--right-panel-width, var(--panel-max-width));
-  z-index: 5;
-}
-.right-panel.collapsed {
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  border-width: 0;
-  overflow: hidden;
 }
 
 

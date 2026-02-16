@@ -422,10 +422,15 @@ def _apply_sort(tasks: list[dict[str, Any]], sort_def: dict | None) -> list[dict
                 p = 0 if v is None else (int(v) if isinstance(v, (int, float)) else 0)
                 keys.append((-p if direction == "desc" else p,))
             elif f in ("due_date", "available_date", "created_at", "completed_at"):
-                sval = (v or "9999-99-99")[:10] if v else "9999-99-99"
+                raw = (v or "9999-99-99")[:10] if v else "9999-99-99"
+                parts = raw.split("-") if isinstance(raw, str) and len(raw) >= 10 else ["9999", "99", "99"]
+                y = int(parts[0]) if len(parts) > 0 and parts[0].isdigit() else 9999
+                m = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 99
+                d = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 99
                 if direction == "desc":
-                    sval = (sval or "0000-00-00")[::-1]
-                keys.append((sval,))
+                    keys.append((-y, -m, -d))
+                else:
+                    keys.append((y, m, d))
             else:
                 sval = "" if v is None else str(v)
                 keys.append((sval if direction == "asc" else (1, sval),))
