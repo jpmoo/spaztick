@@ -1,6 +1,7 @@
 """Web UI and API for spaztick configuration."""
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from pathlib import Path
@@ -23,6 +24,28 @@ except Exception:
     pass
 
 app = FastAPI(title="Spaztick Config", version="1.0")
+logger = logging.getLogger("spaztick.api")
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """When config.debug is True, log API request method and path."""
+    try:
+        c = load_config()
+        if getattr(c, "debug", False):
+            qs = request.url.query
+            logger.warning("[API] %s %s%s", request.method, request.url.path, "?" + qs if qs else "")
+    except Exception:
+        pass
+    response = await call_next(request)
+    try:
+        c = load_config()
+        if getattr(c, "debug", False):
+            logger.warning("[API] %s %s -> %s", request.method, request.url.path, response.status_code)
+    except Exception:
+        pass
+    return response
+
 
 # Subprocess handle for Telegram bot (None when not running)
 _telegram_process: subprocess.Popen | None = None
@@ -32,6 +55,7 @@ _telegram_process: subprocess.Popen | None = None
 
 
 class ConfigUpdate(BaseModel):
+    debug: bool = False
     ollama_url: str = "http://localhost"
     ollama_port: int = Field(11434, ge=1, le=65535)
     model: str = "llama3.2"
@@ -55,6 +79,7 @@ class ConfigUpdate(BaseModel):
 def get_config() -> ConfigUpdate:
     c = load_config()
     return ConfigUpdate(
+        debug=getattr(c, "debug", False),
         ollama_url=c.ollama_url,
         ollama_port=c.ollama_port,
         model=c.model,
@@ -75,6 +100,7 @@ def get_config() -> ConfigUpdate:
 @app.put("/api/config")
 def put_config(body: ConfigUpdate) -> dict[str, str]:
     c = load_config()
+    c.debug = getattr(body, "debug", False)
     c.ollama_url = body.ollama_url
     c.ollama_port = body.ollama_port
     c.model = body.model
@@ -434,6 +460,9 @@ async def external_update_task(task_id: str, request: Request):
         raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}") from e
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    if getattr(load_config(), "debug", False):
+        logger.warning("[API] PUT /api/external/tasks/%s body keys: %s, recurrence in body: %s, body: %s",
+                       task_id, list(body.keys()), "recurrence" in body, body)
     from task_service import get_task, get_task_by_number, update_task, remove_task_project, remove_task_tag, add_task_project, add_task_tag
     t = get_task(task_id)
     if t is None and task_id.isdigit():
@@ -470,7 +499,10 @@ async def external_update_task(task_id: str, request: Request):
             if str(tag).strip():
                 add_task_tag(tid, str(tag).strip())
     from task_service import get_task as _get
-    return _get(tid)
+    out = _get(tid)
+    if getattr(load_config(), "debug", False):
+        logger.warning("[API] PUT /api/external/tasks/%s response task recurrence: %s", task_id, out.get("recurrence") if out else None)
+    return out
 
 
 @app.delete("/api/external/tasks/{task_id}", dependencies=[Depends(_require_api_key)])

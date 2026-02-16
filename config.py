@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -10,9 +11,14 @@ from pydantic import BaseModel, Field
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 
 
+def _debug_from_env() -> bool:
+    return os.environ.get("SPAZTICK_DEBUG", "").strip().lower() in ("1", "true", "yes")
+
+
 class AppConfig(BaseModel):
     """Persisted application configuration."""
 
+    debug: bool = Field(default=False, description="Log API requests/responses when True. Or set SPAZTICK_DEBUG=1.")
     ollama_url: str = Field(default="http://localhost", description="Ollama base URL (no path)")
     ollama_port: int = Field(default=11434, ge=1, le=65535)
     model: str = Field(default="llama3.2", description="Ollama model name")
@@ -41,9 +47,15 @@ class AppConfig(BaseModel):
     @classmethod
     def load(cls) -> "AppConfig":
         if not CONFIG_PATH.exists():
-            return cls()
+            c = cls()
+            if _debug_from_env():
+                c.debug = True
+            return c
         raw = json.loads(CONFIG_PATH.read_text())
-        return cls.model_validate(raw)
+        c = cls.model_validate(raw)
+        if _debug_from_env():
+            c.debug = True
+        return c
 
     def save(self) -> None:
         CONFIG_PATH.write_text(json.dumps(self.to_save_dict(), indent=2))
