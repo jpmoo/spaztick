@@ -665,6 +665,9 @@ def complete_recurring_task(task_id: str, advance_recurrence: bool = True) -> di
                                 next_avail_str = next_due_str
                         else:
                             next_avail_str = next_due_str if prev_avail_str else None
+                        # Commit and release lock before create_task(); otherwise create_task's
+                        # own connection blocks on the DB lock and can timeout.
+                        conn.commit()
                         create_task(
                             row["title"],
                             description=row.get("description"),

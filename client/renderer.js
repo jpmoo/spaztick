@@ -2358,7 +2358,6 @@
     ['number', 'Number'],
     ['title', 'Title'],
     ['status', 'Status'],
-    ['description', 'Description'],
     ['notes', 'Notes'],
     ['priority', 'Priority'],
     ['available_date', 'Available date'],
