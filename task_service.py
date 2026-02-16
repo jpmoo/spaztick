@@ -97,6 +97,8 @@ def create_task(
     if eff_priority < PRIORITY_MIN or eff_priority > PRIORITY_MAX:
         raise ValueError(f"priority must be {PRIORITY_MIN}-{PRIORITY_MAX}")
     _validate_available_due(available_date, due_date)
+    if recurrence and not _date_only(due_date):
+        raise ValueError("Recurrence requires a due date.")
     tid = task_id or _new_task_id()
     now = _now_iso()
     rec_json = json.dumps(recurrence) if recurrence else None
@@ -319,6 +321,8 @@ def update_task(
         eff_av = available_date if available_date is not _UNSET else (row["available_date"] if row["available_date"] else None)
         eff_due = due_date if due_date is not _UNSET else (row["due_date"] if row["due_date"] else None)
         _validate_available_due(eff_av, eff_due)
+        if recurrence is not _UNSET and recurrence is not None and not _date_only(eff_due):
+            raise ValueError("Recurrence requires a due date.")
         now = _now_iso()
         # Always touch updated_at; set completed_at when marking complete
         updates: list[str] = ["updated_at = ?"]

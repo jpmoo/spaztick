@@ -575,11 +575,26 @@
     recurrenceModalCleared = false;
   }
 
+  function hasDueDate(task) {
+    const d = (task && task.due_date != null && task.due_date !== '') ? String(task.due_date).trim().substring(0, 10) : '';
+    return /^\d{4}-\d{2}-\d{2}$/.test(d);
+  }
+
   function openRecurrenceModal(taskId) {
     recurrenceModalTaskId = taskId;
     api(`/api/external/tasks/${encodeURIComponent(taskId)}`)
       .then((task) => {
         recurrencePopulateForm(task.recurrence || null);
+        const noDueMsg = document.getElementById('recurrence-no-due-date-msg');
+        const formBody = document.getElementById('recurrence-form-body');
+        const saveBtn = document.getElementById('recurrence-modal-save');
+        const canSetRecurrence = hasDueDate(task);
+        if (noDueMsg) noDueMsg.classList.toggle('hidden', canSetRecurrence);
+        if (formBody) formBody.classList.toggle('hidden', !canSetRecurrence);
+        if (saveBtn) {
+          saveBtn.disabled = !canSetRecurrence;
+          saveBtn.title = canSetRecurrence ? '' : 'Set a due date for this task first';
+        }
         if (recurrenceModalOverlay) {
           recurrenceModalOverlay.classList.remove('hidden');
           recurrenceModalOverlay.setAttribute('aria-hidden', 'false');
@@ -608,7 +623,7 @@
   const recurrenceModalSave = document.getElementById('recurrence-modal-save');
   if (recurrenceModalSave) {
     recurrenceModalSave.addEventListener('click', async () => {
-      if (!recurrenceModalTaskId) return;
+      if (!recurrenceModalTaskId || recurrenceModalSave.disabled) return;
       const rec = recurrenceModalCleared ? null : recurrenceFormToObject();
       try {
         const updated = await updateTask(recurrenceModalTaskId, { recurrence: rec });

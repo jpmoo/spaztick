@@ -1850,6 +1850,20 @@ body[data-theme="cupertino"] .chat-message.model .bubble {
   font-size: 13px;
   cursor: pointer;
 }
+.modal.modal-recurrence .recurrence-no-due-date-msg {
+  margin: 0 0 12px;
+  padding: 12px;
+  background: var(--surface-elevated, #f1f5f9);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 14px;
+}
+.modal.modal-recurrence .recurrence-no-due-date-msg.hidden {
+  display: none;
+}
+.modal.modal-recurrence #recurrence-form-body.hidden {
+  display: none;
+}
 .modal.modal-recurrence .recurrence-end-section {
   margin-top: 16px;
   padding-top: 12px;

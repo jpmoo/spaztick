@@ -316,6 +316,8 @@
         <button type="button" id="recurrence-modal-close" class="modal-close" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body modal-body-scroll">
+        <p id="recurrence-no-due-date-msg" class="recurrence-no-due-date-msg hidden">Set a due date for this task before setting recurrence.</p>
+        <div id="recurrence-form-body">
         <div class="setting-row">
           <span class="setting-label">Recur from</span>
           <div class="recurrence-anchor">
@@ -402,6 +404,7 @@
         </section>
         <div class="setting-row">
           <button type="button" id="recurrence-clear" class="btn-secondary btn-sm">Clear recurrence</button>
+        </div>
         </div>
       </div>
       <div class="modal-footer">
