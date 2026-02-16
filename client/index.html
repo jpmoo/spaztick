@@ -253,7 +253,6 @@
         <div id="description-preview-pane" class="description-pane hidden description-preview-content"></div>
       </div>
       <div class="modal-footer">
-        <button type="button" id="description-modal-cancel" class="btn-secondary">Cancel</button>
         <button type="button" id="description-modal-save" class="btn-primary">Save</button>
       </div>
     </div>
@@ -276,7 +275,6 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" id="new-project-cancel" class="btn-secondary">Cancel</button>
         <button type="button" id="new-project-create" class="btn-primary">Create</button>
       </div>
     </div>
@@ -295,7 +293,6 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" id="new-list-cancel" class="btn-secondary">Cancel</button>
         <button type="button" id="new-list-create" class="btn-primary">Create</button>
       </div>
     </div>
@@ -338,7 +335,6 @@
         </section>
       </div>
       <div class="modal-footer">
-        <button type="button" id="list-settings-cancel" class="btn-secondary">Cancel</button>
         <button type="button" id="list-settings-save" class="btn-primary">Save</button>
       </div>
     </div>
@@ -369,9 +365,10 @@
             <option value="yearly">Yearly</option>
           </select>
         </div>
-        <div class="setting-row">
+        <div class="setting-row recurrence-interval-row">
           <label for="recurrence-interval">Every</label>
-          <input type="number" id="recurrence-interval" min="1" value="1" /> <span id="recurrence-interval-unit">days</span>
+          <input type="number" id="recurrence-interval" min="1" value="1" class="recurrence-interval-input" aria-label="Interval" />
+          <span id="recurrence-interval-unit" class="recurrence-interval-unit">days</span>
         </div>
         <div id="recurrence-weekly-options" class="recurrence-freq-options hidden">
           <div class="setting-label">On days</div>
@@ -427,23 +424,32 @@
         <section class="recurrence-end-section">
           <h3 class="recurrence-section-title">End</h3>
           <div class="recurrence-end-choices">
-            <div class="setting-row recurrence-row-inline">
-              <label class="recurrence-radio-label"><input type="radio" name="recurrence-end" value="never" checked /> Never</label>
+            <div class="setting-row recurrence-end-row">
+              <label class="recurrence-radio-label">
+                <input type="radio" name="recurrence-end" value="never" checked />
+                <span class="recurrence-end-label-text">Never</span>
+              </label>
             </div>
-            <div class="setting-row recurrence-row-inline">
-              <label class="recurrence-radio-label"><input type="radio" name="recurrence-end" value="after_count" /> After</label>
-              <input type="number" id="recurrence-end-after-count" min="1" value="5" /> <span>occurrences</span>
+            <div class="setting-row recurrence-end-row">
+              <label class="recurrence-radio-label">
+                <input type="radio" name="recurrence-end" value="after_count" />
+                <span class="recurrence-end-label-text">After</span>
+              </label>
+              <input type="number" id="recurrence-end-after-count" min="1" value="5" class="recurrence-end-count-input" aria-label="Number of times" />
+              <span class="recurrence-end-suffix">times</span>
             </div>
-            <div class="setting-row recurrence-row-inline">
-              <label class="recurrence-radio-label"><input type="radio" name="recurrence-end" value="end_date" /> Don&apos;t repeat after</label>
-              <input type="date" id="recurrence-end-date" />
+            <div class="setting-row recurrence-end-row">
+              <label class="recurrence-radio-label">
+                <input type="radio" name="recurrence-end" value="end_date" />
+                <span class="recurrence-end-label-text">On</span>
+              </label>
+              <input type="date" id="recurrence-end-date" class="recurrence-end-date-input" aria-label="End date" />
             </div>
           </div>
         </section>
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" id="recurrence-modal-cancel" class="btn-secondary">Cancel</button>
         <button type="button" id="recurrence-clear-and-save" class="btn-secondary">Clear and Save</button>
         <button type="button" id="recurrence-modal-save" class="btn-primary">Save</button>
       </div>
@@ -465,7 +471,6 @@
         <p class="setting-hint example">Example: <span id="custom-format-preview">—</span></p>
       </div>
       <div class="modal-footer">
-        <button type="button" id="custom-format-cancel" class="btn-secondary">Cancel</button>
         <button type="button" id="custom-format-save" class="btn-primary">Save</button>
       </div>
     </div>

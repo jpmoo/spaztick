@@ -380,12 +380,15 @@ def api_update_project(project_id: str, body: dict):
     from project_service import update_project, get_project
     if get_project(project_id) is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    return update_project(
-        project_id,
-        name=body.get("name") if "name" in body else None,
-        description=body.get("description") if "description" in body else None,
-        status=body.get("status") if "status" in body else None,
-    ) or {}
+    try:
+        return update_project(
+            project_id,
+            name=body.get("name") if "name" in body else None,
+            description=body.get("description") if "description" in body else None,
+            status=body.get("status") if "status" in body else None,
+        ) or {}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.delete("/api/projects/{project_id}")
@@ -606,12 +609,15 @@ def external_update_project(project_id: str, body: dict):
     p = get_project(project_id) or get_project_by_short_id(project_id)
     if p is None:
         raise HTTPException(status_code=404, detail="Project not found")
-    return update_project(
-        p["id"],
-        name=body.get("name") if "name" in body else None,
-        description=body.get("description") if "description" in body else None,
-        status=body.get("status") if "status" in body else None,
-    ) or {}
+    try:
+        return update_project(
+            p["id"],
+            name=body.get("name") if "name" in body else None,
+            description=body.get("description") if "description" in body else None,
+            status=body.get("status") if "status" in body else None,
+        ) or {}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.delete("/api/external/projects/{project_id}", dependencies=[Depends(_require_api_key)])

@@ -1017,6 +1017,8 @@ def run_orchestrator(
             )
         try:
             update_project(project["id"], status="archived")
+        except ValueError as e:
+            return (str(e), False, None)
         except Exception as e:
             return (f"Error archiving project: {e}", False, None)
         return (f"Project {short_id} archived. It is now hidden from the project list.", True, None)

@@ -122,7 +122,6 @@
   const customFormatInput = document.getElementById('custom-format-input');
   const customFormatPreview = document.getElementById('custom-format-preview');
   const customFormatClose = document.getElementById('custom-format-close');
-  const customFormatCancel = document.getElementById('custom-format-cancel');
   const customFormatSave = document.getElementById('custom-format-save');
   const descriptionModalOverlay = document.getElementById('description-modal-overlay');
   const descriptionModalClose = document.getElementById('description-modal-close');
@@ -131,7 +130,6 @@
   const descriptionPreviewPane = document.getElementById('description-preview-pane');
   const descriptionTabEdit = document.getElementById('description-tab-edit');
   const descriptionTabPreview = document.getElementById('description-tab-preview');
-  const descriptionModalCancel = document.getElementById('description-modal-cancel');
   const descriptionModalSave = document.getElementById('description-modal-save');
   const connectionIndicator = document.getElementById('connection-indicator');
   const themeBtn = document.getElementById('theme-btn');
@@ -467,18 +465,25 @@
         return;
       }
       const escape = (s) => (s == null ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'));
+      function archivedDateShort(updatedAt) {
+        if (!updatedAt) return '—';
+        const d = new Date(updatedAt);
+        return isNaN(d.getTime()) ? '—' : `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+      }
+      const unarchiveIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill-rule="evenodd" clip-rule="evenodd" d="M11 5.41421V15C11 15.5523 11.4477 16 12 16C12.5523 16 13 15.5523 13 15V5.41421L15.2929 7.70711C15.6834 8.09763 16.3166 8.09763 16.7071 7.70711C17.0976 7.31658 17.0976 6.68342 16.7071 6.29289L12.7071 2.29289C12.3166 1.90237 11.6834 1.90237 11.2929 2.29289L7.29289 6.29289C6.90237 6.68342 6.90237 7.31658 7.29289 7.70711C7.68342 8.09763 8.31658 8.09763 8.70711 7.70711L11 5.41421ZM2 4C1.44772 4 1 4.44772 1 5C1 5.55228 1.44772 6 2 6H3V17C3 18.6569 4.34315 20 6 20H18C19.6569 20 21 18.6569 21 17V6H22C22.5523 6 23 5.55228 23 5C23 4.44772 22.5523 4 22 4H20C19.4477 4 19 4.44772 19 5V17C19 17.5523 18.5523 18 18 18H6C5.44772 18 5 17.5523 5 17V5C5 4.44772 4.55228 4 4 4H2Z" fill="currentColor"/></svg>';
+      const trashIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M18 6L17.1991 18.0129C17.129 19.065 17.0939 19.5911 16.8667 19.99C16.6666 20.3412 16.3648 20.6235 16.0011 20.7998C15.588 21 15.0607 21 14.0062 21H9.99377C8.93927 21 8.41202 21 7.99889 20.7998C7.63517 20.6235 7.33339 20.3412 7.13332 19.99C6.90607 19.5911 6.871 19.065 6.80086 18.0129L6 6M4 6H20M16 6L15.7294 5.18807C15.4671 4.40125 15.3359 4.00784 15.0927 3.71698C14.8779 3.46013 14.6021 3.26132 14.2905 3.13878C13.9376 3 13.523 3 12.6936 3H11.3064C10.477 3 10.0624 3 9.70951 3.13878C9.39792 3.26132 9.12208 3.46013 8.90729 3.71698C8.66405 4.00784 8.53292 4.40125 8.27064 5.18807L8 6M14 10V17M10 10V17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
       archivedProjectsList.innerHTML = projects.map((p) => {
         const name = escape(p.name || p.short_id || '');
         const shortId = escape(p.short_id || '');
-        const updated = p.updated_at ? formatDateTimeForInspector(p.updated_at) : '—';
+        const archivedDate = archivedDateShort(p.updated_at);
         const id = (p.id || '').replace(/"/g, '&quot;');
         return `<div class="archived-project-row" data-project-id="${id}">
           <span class="archived-project-name">${name}</span>
           <span class="archived-project-short">${shortId}</span>
-          <span class="archived-project-updated">${updated}</span>
+          <span class="archived-project-updated">${archivedDate}</span>
           <span class="archived-project-actions">
-            <button type="button" class="btn-secondary btn-sm archived-project-unarchive" data-project-id="${id}">Unarchive</button>
-            <button type="button" class="btn-secondary btn-sm archived-project-delete" data-project-id="${id}">Delete</button>
+            <button type="button" class="archived-project-action-btn archived-project-unarchive" data-project-id="${id}" title="Unarchive">${unarchiveIcon}</button>
+            <button type="button" class="archived-project-action-btn archived-project-delete" data-project-id="${id}" title="Delete">${trashIcon}</button>
           </span>
         </div>`;
       }).join('');
@@ -540,7 +545,6 @@
     customFormatOverlay.addEventListener('click', (e) => { if (e.target === customFormatOverlay) closeCustomDateFormatModal(); });
   }
   if (customFormatClose) customFormatClose.addEventListener('click', closeCustomDateFormatModal);
-  if (customFormatCancel) customFormatCancel.addEventListener('click', closeCustomDateFormatModal);
   if (customFormatSave) {
     customFormatSave.addEventListener('click', () => {
       const pattern = (customFormatInput && customFormatInput.value || '').trim() || 'YYYY-MM-DD';
@@ -559,7 +563,6 @@
     descriptionModalOverlay.addEventListener('click', (e) => { if (e.target === descriptionModalOverlay) closeDescriptionModal(); });
   }
   if (descriptionModalClose) descriptionModalClose.addEventListener('click', closeDescriptionModal);
-  if (descriptionModalCancel) descriptionModalCancel.addEventListener('click', closeDescriptionModal);
   if (descriptionModalSave) {
     descriptionModalSave.addEventListener('click', async () => {
       if (!descriptionModalTaskId) return;
@@ -588,7 +591,12 @@
 
   function recurrenceIntervalUnit() {
     const freq = (document.getElementById('recurrence-freq') && document.getElementById('recurrence-freq').value) || 'daily';
-    return { daily: 'days', weekly: 'weeks', monthly: 'months', yearly: 'years' }[freq] || 'days';
+    const intervalEl = document.getElementById('recurrence-interval');
+    const n = Math.max(1, parseInt(intervalEl && intervalEl.value, 10) || 1);
+    const plural = n !== 1;
+    const units = { daily: ['day', 'days'], weekly: ['week', 'weeks'], monthly: ['month', 'months'], yearly: ['year', 'years'] };
+    const pair = units[freq] || units.daily;
+    return plural ? pair[1] : pair[0];
   }
   function updateRecurrenceFreqOptions() {
     const freq = document.getElementById('recurrence-freq') && document.getElementById('recurrence-freq').value;
@@ -756,8 +764,6 @@
   }
   const recurrenceModalClose = document.getElementById('recurrence-modal-close');
   if (recurrenceModalClose) recurrenceModalClose.addEventListener('click', closeRecurrenceModal);
-  const recurrenceModalCancel = document.getElementById('recurrence-modal-cancel');
-  if (recurrenceModalCancel) recurrenceModalCancel.addEventListener('click', closeRecurrenceModal);
   async function saveRecurrenceModal() {
     if (!recurrenceModalTaskId) return;
     const saveBtn = document.getElementById('recurrence-modal-save');
@@ -790,6 +796,11 @@
   }
   const recurrenceFreqEl = document.getElementById('recurrence-freq');
   if (recurrenceFreqEl) recurrenceFreqEl.addEventListener('change', updateRecurrenceFreqOptions);
+  const recurrenceIntervalEl = document.getElementById('recurrence-interval');
+  if (recurrenceIntervalEl) {
+    recurrenceIntervalEl.addEventListener('input', updateRecurrenceFreqOptions);
+    recurrenceIntervalEl.addEventListener('change', updateRecurrenceFreqOptions);
+  }
   // --- Theme cycle ---
   function getTheme() {
     const t = localStorage.getItem(THEME_KEY) || 'light';
@@ -2871,10 +2882,10 @@
       if (!rightCollapsed) {
         const panelR = rightPanel.getBoundingClientRect();
         const inspectorR = inspectorContent.getBoundingClientRect();
-        const y = inspectorR.bottom - HANDLE_HEIGHT / 2;
+        // Place handle entirely below inspector so it doesn't cover inspector buttons (e.g. Save).
         chatResizeHandleEl.style.left = panelR.left + 'px';
         chatResizeHandleEl.style.width = (panelR.right - panelR.left) + 'px';
-        chatResizeHandleEl.style.top = (y - HANDLE_HEIGHT / 2) + 'px';
+        chatResizeHandleEl.style.top = inspectorR.bottom + 'px';
         chatResizeHandleEl.style.height = HANDLE_HEIGHT + 'px';
       }
     }
@@ -3018,6 +3029,21 @@
 
     positionPanelResizeHandles();
     window.addEventListener('resize', positionPanelResizeHandles);
+    // Defer reposition until after layout has settled (fixes wrong position on first load).
+    requestAnimationFrame(() => {
+      requestAnimationFrame(positionPanelResizeHandles);
+    });
+    window.addEventListener('load', () => requestAnimationFrame(positionPanelResizeHandles));
+    // Delayed fallbacks for slow layout (e.g. Electron window restore, fonts).
+    setTimeout(positionPanelResizeHandles, 50);
+    setTimeout(positionPanelResizeHandles, 200);
+    // Reposition when main area or panels actually get their size (most reliable for first paint).
+    if (mainArea && typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => positionPanelResizeHandles());
+      ro.observe(mainArea);
+      if (leftPanel) ro.observe(leftPanel);
+      if (rightPanel) ro.observe(rightPanel);
+    }
   }
 
   function attachPanelResizeHandles() {
@@ -3032,12 +3058,6 @@
     document.addEventListener('DOMContentLoaded', attachPanelResizeHandles);
   } else {
     attachPanelResizeHandles();
-  }
-  // Defer initial handle position until after layout has been applied (two frames so panel widths are committed).
-  if (mainArea) {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => { positionPanelResizeHandles(); });
-    });
   }
 
   // --- Display settings button & dropdown (or list filter/sort modal when viewing a list) ---
@@ -3405,10 +3425,8 @@
   }
 
   const listSettingsClose = document.getElementById('list-settings-close');
-  const listSettingsCancel = document.getElementById('list-settings-cancel');
   const listSettingsSave = document.getElementById('list-settings-save');
   const listSettingsOverlay = document.getElementById('list-settings-overlay');
-  if (listSettingsCancel) listSettingsCancel.addEventListener('click', closeListSettingsModal);
   if (listSettingsClose) listSettingsClose.addEventListener('click', closeListSettingsModal);
   if (listSettingsOverlay) listSettingsOverlay.addEventListener('click', (e) => { if (e.target === listSettingsOverlay) closeListSettingsModal(); });
   if (listSettingsSave) {
@@ -3488,12 +3506,10 @@
   const newProjectName = document.getElementById('new-project-name');
   const newProjectDescription = document.getElementById('new-project-description');
   const newProjectClose = document.getElementById('new-project-close');
-  const newProjectCancel = document.getElementById('new-project-cancel');
   const newProjectCreate = document.getElementById('new-project-create');
   const newListOverlay = document.getElementById('new-list-overlay');
   const newListName = document.getElementById('new-list-name');
   const newListClose = document.getElementById('new-list-close');
-  const newListCancel = document.getElementById('new-list-cancel');
   const newListCreate = document.getElementById('new-list-create');
 
   function closeAddPopover() {
@@ -3560,7 +3576,6 @@
       }
     });
   }
-  if (newProjectCancel) newProjectCancel.addEventListener('click', closeNewProjectModal);
   if (newProjectClose) newProjectClose.addEventListener('click', closeNewProjectModal);
   if (newProjectOverlay) {
     newProjectOverlay.addEventListener('click', (e) => { if (e.target === newProjectOverlay) closeNewProjectModal(); });
@@ -3591,7 +3606,6 @@
       }
     });
   }
-  if (newListCancel) newListCancel.addEventListener('click', closeNewListModal);
   if (newListClose) newListClose.addEventListener('click', closeNewListModal);
   if (newListOverlay) {
     newListOverlay.addEventListener('click', (e) => { if (e.target === newListOverlay) closeNewListModal(); });

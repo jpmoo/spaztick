@@ -1514,7 +1514,31 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
 .archived-project-actions {
   margin-left: auto;
   display: flex;
-  gap: 8px;
+  gap: 4px;
+  align-items: center;
+}
+.archived-project-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-color, #ccc);
+  border-radius: 4px;
+  background: var(--bg-secondary, #f5f5f5);
+  color: var(--text-primary, #333);
+  cursor: pointer;
+}
+.archived-project-action-btn:hover {
+  background: var(--bg-hover, #e8e8e8);
+}
+.archived-project-action-btn:focus-visible {
+  outline: 2px solid var(--focus-ring, #0a84ff);
+  outline-offset: 2px;
+}
+.archived-project-action-btn svg {
+  flex-shrink: 0;
 }
 .inspector-content .inspector-edit-recurrence {
   margin-left: 8px;
@@ -1899,6 +1923,27 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   gap: 8px;
   flex-wrap: wrap;
 }
+.modal.modal-recurrence .recurrence-interval-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+}
+.modal.modal-recurrence .recurrence-interval-row label {
+  margin: 0;
+  flex-shrink: 0;
+}
+.modal.modal-recurrence .recurrence-interval-input {
+  width: 4em;
+  min-width: 4em;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.modal.modal-recurrence .recurrence-interval-unit {
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
 .modal.modal-recurrence .recurrence-radio-label {
   display: inline-flex;
   align-items: center;
@@ -1909,17 +1954,79 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
 }
 .modal.modal-recurrence .recurrence-radio-label input {
   flex-shrink: 0;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.modal.modal-recurrence .recurrence-radio-label input:focus,
+.modal.modal-recurrence .recurrence-radio-label input:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+.modal.modal-recurrence .recurrence-radio-label:focus-within {
+  outline: none !important;
+  box-shadow: none !important;
 }
 .modal.modal-recurrence .recurrence-monthly-choices .setting-row,
+.modal.modal-recurrence .recurrence-end-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .modal.modal-recurrence .recurrence-end-choices .setting-row {
-  margin-bottom: 8px;
+  margin-bottom: 0;
+}
+.modal.modal-recurrence .recurrence-end-row {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+}
+.modal.modal-recurrence .recurrence-end-row .recurrence-radio-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1.2;
+  margin: 0;
+  cursor: pointer;
+}
+/* Fixed-width label text so "Never", "After", "On" column aligns and inputs start at same position */
+.modal.modal-recurrence .recurrence-end-label-text {
+  display: inline-block;
+  min-width: 3.25em;
+}
+.modal.modal-recurrence .recurrence-end-row .recurrence-radio-label input[type="radio"] {
+  margin: 0;
+  vertical-align: middle;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.modal.modal-recurrence .recurrence-end-row .recurrence-radio-label input[type="radio"]:focus,
+.modal.modal-recurrence .recurrence-end-row .recurrence-radio-label input[type="radio"]:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+.modal.modal-recurrence .recurrence-end-count-input {
+  width: 4em;
+  min-width: 4em;
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+.modal.modal-recurrence .recurrence-end-suffix {
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text);
+}
+.modal.modal-recurrence .recurrence-end-date-input {
+  width: 10.5em;
+  min-width: 10.5em;
+  flex-shrink: 0;
 }
 .modal.modal-recurrence .recurrence-yearly-label {
   font-size: 13px;
   color: var(--text);
-}
-.modal.modal-recurrence .recurrence-end-choices .setting-row:last-child {
-  margin-bottom: 0;
 }
 .modal.modal-recurrence .recurrence-freq-options {
   margin-bottom: 12px;
@@ -1957,6 +2064,7 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   margin-top: 16px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+  font-size: 12px;
 }
 .modal.modal-recurrence .recurrence-section-title {
   margin: 0 0 10px;
@@ -2383,6 +2491,14 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+/* Recurrence modal: no focus ring on radio bubbles (overrides .setting-row input:focus) */
+.modal.modal-recurrence .setting-row input[type="radio"],
+.modal.modal-recurrence .setting-row input[type="radio"]:focus,
+.modal.modal-recurrence .setting-row input[type="radio"]:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+  border: none !important;
 }
 .modal-footer {
   flex-shrink: 0;

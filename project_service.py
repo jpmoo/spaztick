@@ -140,6 +140,22 @@ def get_project_by_short_id(short_id: str) -> dict[str, Any] | None:
         conn.close()
 
 
+def _incomplete_tasks_with_no_other_active_project(conn: sqlite3.Connection, project_id: str) -> list[str]:
+    """Return task ids that are incomplete, in this project, and have no other active project (would be project-less if we archive)."""
+    rows = conn.execute(
+        """SELECT t.id FROM tasks t
+           INNER JOIN task_projects tp ON tp.task_id = t.id AND tp.project_id = ?
+           WHERE t.status = 'incomplete'
+           AND (
+             SELECT COUNT(*) FROM task_projects tp2
+             INNER JOIN projects p ON p.id = tp2.project_id AND p.status = 'active'
+             WHERE tp2.task_id = t.id
+           ) = 1""",
+        (project_id,),
+    ).fetchall()
+    return [r[0] for r in rows]
+
+
 def update_project(
     project_id: str,
     *,
@@ -147,12 +163,20 @@ def update_project(
     description: str | None = None,
     status: str | None = None,
 ) -> dict[str, Any] | None:
-    """Update project. Returns updated project or None if not found."""
+    """Update project. Returns updated project or None if not found. Raises ValueError if archiving would leave incomplete tasks with no project."""
     conn = get_connection()
     try:
         row = conn.execute("SELECT id FROM projects WHERE id = ?", (project_id,)).fetchone()
         if not row:
             return None
+        if status == "archived":
+            blocked = _incomplete_tasks_with_no_other_active_project(conn, project_id)
+            if blocked:
+                n = len(blocked)
+                raise ValueError(
+                    f"Cannot archive: this project has {n} incomplete task(s) that are not in any other project. "
+                    "Move them to another project or complete them first."
+                )
         now = _now_iso()
         updates: list[str] = ["updated_at = ?"]
         params: list[Any] = [now]
