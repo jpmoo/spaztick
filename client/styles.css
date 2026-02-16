@@ -15,9 +15,9 @@
   --panel-min-width: 220px;
   --panel-max-width: 320px;
   --header-height: 48px;
-  --chat-header-height: 32px;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.06);
+  --surface-header: #e9ecef;
 }
 
 /* Themes (cycle via data-theme on body). Side panels use --surface-side (slightly darker than center). */
@@ -25,6 +25,7 @@ body[data-theme="dark"] {
   --bg: #16181c;
   --surface: #212529;
   --surface-side: #1c1e22;
+  --surface-header: #17191d;
   --border: #343a40;
   --border-subtle: #2d3238;
   --text: #e9ecef;
@@ -37,6 +38,7 @@ body[data-theme="blue"] {
   --bg: #e7f0fe;
   --surface: #f0f6ff;
   --surface-side: #e2edfd;
+  --surface-header: #d0e3fc;
   --border: #bfdbfe;
   --border-subtle: #dbeafe;
   --text: #1e3a8a;
@@ -47,6 +49,7 @@ body[data-theme="green"] {
   --bg: #dcfce7;
   --surface: #f0fdf4;
   --surface-side: #dcfce7;
+  --surface-header: #bbf7d0;
   --border: #bbf7d0;
   --border-subtle: #dcfce7;
   --text: #14532d;
@@ -57,11 +60,27 @@ body[data-theme="orange"] {
   --bg: #fff4e6;
   --surface: #fff8f0;
   --surface-side: #ffedd5;
+  --surface-header: #fed7aa;
   --border: #fed7aa;
   --border-subtle: #ffedd5;
   --text: #7c2d12;
   --text-muted: #c2410c;
   --accent: #ea580c;
+}
+
+/* Cupertino (Obsidian Cupertino light) — Apple HIG–style grays and blue */
+body[data-theme="cupertino"] {
+  --bg: #f2f2f7;
+  --surface: #ffffff;
+  --surface-side: #f2f2f7;
+  --surface-header: #e5e5ea;
+  --border: #c6c6c8;
+  --border-subtle: #e5e5ea;
+  --text: #262626;
+  --text-muted: #737373;
+  --accent: #0088ff;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 * {
@@ -86,6 +105,27 @@ body {
   flex-direction: column;
   height: 100vh;
   width: 100%;
+}
+
+/* Electron: detached look — rounded corners, margin, shadow from top-left (class on html) */
+html.electron-app body {
+  background: #dde1e6;
+}
+html.electron-app body[data-theme="dark"] {
+  background: #0d0e10;
+}
+html.electron-app body[data-theme="cupertino"] {
+  background: #e5e5ea;
+}
+html.electron-app #app {
+  margin: 12px;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 4px 4px 24px rgba(0, 0, 0, 0.15);
+  height: calc(100vh - 24px);
+}
+html.electron-app body[data-theme="dark"] #app {
+  box-shadow: 4px 4px 24px rgba(0, 0, 0, 0.4);
 }
 
 .main-area {
@@ -148,6 +188,9 @@ body {
 }
 .bar-icon.gear-icon {
   opacity: 0.85;
+}
+body[data-theme="dark"] .header-icon-settings {
+  filter: invert(1);
 }
 .icon-flip {
   transform: scaleX(-1);
@@ -256,11 +299,11 @@ body {
   align-items: center;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
-  background: var(--surface);
+  background: var(--surface-header);
 }
 .left-panel .panel-header,
 .right-panel .panel-header {
-  background: transparent;
+  background: var(--surface-header);
 }
 .navigator-header {
   gap: 8px;
@@ -1368,11 +1411,14 @@ body {
   display: flex;
   align-items: center;
   flex-shrink: 0;
-  height: var(--chat-header-height);
+  height: var(--header-height);
+  padding: 0 16px;
   gap: 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-header);
 }
 .chat-clear-btn {
-  margin: 0 0 0 10px;
+  margin: 0;
   padding: 6px;
   border: none;
   background: transparent;
@@ -1397,13 +1443,12 @@ body {
 }
 .chat-region h3 {
   margin: 0;
-  padding: 10px 14px 10px 0;
-  font-size: 11px;
+  padding: 0;
+  font-size: 13px;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.02em;
   color: var(--text-muted);
-  line-height: calc(var(--chat-header-height) - 16px);
+  flex: 1;
   flex-shrink: 0;
 }
 .chat-messages-wrap {
@@ -1494,6 +1539,7 @@ body {
   padding: 12px 14px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
+  background: var(--surface-header);
 }
 .chat-input-row input {
   flex: 1;
@@ -1597,6 +1643,18 @@ body {
   max-width: 520px;
   width: 92vw;
 }
+/* List filter & sort modal: ~62.5% width (25% wider than 50%), body scrolls instead of growing */
+.modal.modal-list-settings {
+  max-width: 62.5vw;
+  width: 62.5%;
+  min-width: 320px;
+  max-height: calc(100vh - 48px);
+}
+.modal.modal-list-settings .modal-body.modal-body-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  flex: 1;
+}
 .list-settings-section {
   margin-bottom: 20px;
 }
@@ -1647,7 +1705,7 @@ body {
   color: var(--text);
 }
 .list-settings-filter-row .filter-value-wrap input[type="date"] {
-  max-width: 140px;
+  max-width: 70px;
 }
 .list-settings-filter-row .date-picker-btn,
 .btn-sm {
@@ -1663,6 +1721,11 @@ body {
 .list-settings-filter-row .date-picker-btn:hover,
 .btn-sm:hover {
   background: var(--border-subtle);
+}
+.list-settings-filter-row .list-filter-date-picker.date-picker-disabled-by-text,
+.list-settings-filter-row .date-picker-btn.date-picker-disabled-by-text {
+  opacity: 0.5;
+  pointer-events: none;
 }
 .list-settings-remove {
   padding: 4px 8px;

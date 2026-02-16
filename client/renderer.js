@@ -1,10 +1,14 @@
 (function () {
   'use strict';
 
+  if (typeof window.electronAPI !== 'undefined') {
+    document.documentElement.classList.add('electron-app');
+  }
+
   const API_BASE_KEY = 'spaztick_api_base';
   const API_KEY_KEY = 'spaztick_api_key';
   const THEME_KEY = 'spaztick_theme';
-  const THEMES = ['light', 'dark', 'blue', 'green', 'orange'];
+  const THEMES = ['light', 'dark', 'blue', 'green', 'orange', 'cupertino'];
   const DISPLAY_PROPERTIES_KEY = 'spaztick_display_properties';
   const INSPECTOR_HEIGHT_KEY = 'spaztick_inspector_height';
   const DEFAULT_INSPECTOR_HEIGHT = 220;
@@ -221,6 +225,25 @@
     if (kind === 'medium') return formatDateWithPattern(d, 'MMM D, YYYY');
     if (kind === 'long') return formatDateWithPattern(d, 'MMMM D, YYYY');
     return formatDateWithPattern(d, 'MM/DD/YYYY');
+  }
+
+  /** Created/updated/completed: always m/d/yyyy, h:mm am/pm (12-hour, local time). */
+  function formatDateTimeForInspector(value) {
+    if (value == null || value === '') return null;
+    const s = String(value).trim();
+    const hasTime = s.indexOf('T') !== -1;
+    const d = hasTime ? new Date(s) : parseDateValue(s);
+    if (!d || isNaN(d.getTime())) return s.replace(/</g, '&lt;');
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    const year = d.getFullYear();
+    const datePart = `${month}/${day}/${year}`;
+    if (!hasTime) return datePart;
+    const h = d.getHours();
+    const m = d.getMinutes();
+    const am = h < 12;
+    const h12 = h % 12 || 12;
+    return `${datePart}, ${h12}:${String(m).padStart(2, '0')} ${am ? 'am' : 'pm'}`;
   }
 
   // --- Connection status indicator ---
@@ -772,7 +795,7 @@
   }
 
   const DISPLAY_SETTINGS_ICON = '<svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8L15 8M15 8C15 9.65686 16.3431 11 18 11C19.6569 11 21 9.65685 21 8C21 6.34315 19.6569 5 18 5C16.3431 5 15 6.34315 15 8ZM9 16L21 16M9 16C9 17.6569 7.65685 19 6 19C4.34315 19 3 17.6569 3 16C3 14.3431 4.34315 13 6 13C7.65685 13 9 14.3431 9 16Z"/></svg>';
-  const LIST_SETTINGS_ICON = '<svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
+  const LIST_SETTINGS_ICON = '<img src="assets/settings-04-svgrepo-com.svg" class="header-icon header-icon-settings" alt="" width="20" height="20" />';
   function updateCenterHeaderForSource() {
     const displaySettingsBtn = document.getElementById('display-settings-btn');
     const displayDropdown = document.getElementById('display-settings-dropdown');
@@ -1573,12 +1596,15 @@
       return;
     }
     const src = source != null ? source : 'project';
+    const isListSource = typeof src === 'string' && src.startsWith('list:');
     const { showCompleted, sortBy, manualSort, manualOrder } = getDisplayProperties(src);
     let toShow = showCompleted ? tasks : tasks.filter((t) => !isTaskCompleted(t));
-    if (manualSort && manualOrder && manualOrder.length) {
-      toShow = orderTasksByManual(toShow, manualOrder);
-    } else if (sortBy && sortBy.length) {
-      toShow = orderTasksBySort(toShow, sortBy);
+    if (!isListSource) {
+      if (manualSort && manualOrder && manualOrder.length) {
+        toShow = orderTasksByManual(toShow, manualOrder);
+      } else if (sortBy && sortBy.length) {
+        toShow = orderTasksBySort(toShow, sortBy);
+      }
     }
     displayedTasks = [...toShow];
     if (!toShow.length) {
@@ -1593,7 +1619,7 @@
     toShow.forEach((t) => ul.appendChild(buildTaskRow(t)));
     center.innerHTML = '';
     center.appendChild(ul);
-    if (manualSort) setupTaskListDrag(center, ul, src);
+    if (!isListSource && manualSort) setupTaskListDrag(center, ul, src);
   }
 
   function setupTaskListDrag(center, listEl, source) {
@@ -1789,11 +1815,6 @@
       const listsList = document.getElementById('lists-list');
       if (listsList) {
         loadLists();
-        const listPlaceholder = listsList.querySelector('.nav-item.placeholder');
-        if (listPlaceholder) {
-          const countWrap = listPlaceholder.querySelector('.nav-item-count');
-          if (countWrap) countWrap.outerHTML = countRendererNav(countTasksByBucket([]));
-        }
       }
     } catch (e) {
       projectListCache = [];
@@ -1883,9 +1904,8 @@
     const lists = getLists();
     const showDueOverdueCounts = getShowDueOverdueCounts();
     const countRendererNav = showDueOverdueCounts ? (c) => renderNavCounts(c) : (c) => renderNavCountsSimple(c);
-    const emptyCountHtml = countRendererNav(countTasksByBucket([]));
     if (!lists.length) {
-      listsListEl.innerHTML = `<li class="nav-item placeholder">—${emptyCountHtml}</li>`;
+      listsListEl.innerHTML = `<li class="nav-item placeholder">—</li>`;
       return;
     }
     const minusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>';
@@ -1894,9 +1914,9 @@
       const name = (list.name || '').replace(/</g, '&lt;');
       const label = (list.name || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
       const listIdEsc = (list.id || '').replace(/"/g, '&quot;');
-      /* Lists: delete + reorder only (no archive) */
+      /* Lists: delete + reorder only (no archive); no count display */
       const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete list">${minusSvg}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
-      return `<li class="nav-item" data-type="list" data-list-id="${listIdEsc}" data-label="${label}">${name}${emptyCountHtml}${actions}</li>`;
+      return `<li class="nav-item" data-type="list" data-list-id="${listIdEsc}" data-label="${label}">${name}${actions}</li>`;
     }).join('');
     listsListEl.querySelectorAll('.nav-item').forEach((el) => {
       el.addEventListener('click', onListClick);
@@ -2118,7 +2138,8 @@
     if (s == null) return '';
     return String(s).replace(/</g, '&lt;').replace(/\n/g, '<br>').replace(/"/g, '&quot;');
   }
-  const DATE_INSPECTOR_KEYS = ['due_date', 'available_date', 'created_at', 'updated_at', 'completed_at'];
+  const DATE_INSPECTOR_KEYS = ['due_date', 'available_date'];
+  const DATETIME_INSPECTOR_KEYS = ['created_at', 'updated_at', 'completed_at'];
 
   function formatInspectorValue(key, value) {
     if (value == null || value === '') return null;
@@ -2126,6 +2147,7 @@
     if (Array.isArray(value)) return value.length ? escapeHtml(value.join(', ')) : null;
     if (typeof value === 'object') return escapeHtml(JSON.stringify(value));
     if (key === 'flagged') return value ? 'Yes' : 'No';
+    if (DATETIME_INSPECTOR_KEYS.includes(key)) return formatDateTimeForInspector(value);
     if (DATE_INSPECTOR_KEYS.includes(key)) return formatDate(value);
     return escapeHtml(String(value));
   }
@@ -2466,7 +2488,7 @@
     const fieldOpts = LIST_FILTER_FIELDS.map((x) => `<option value="${x.field}" ${x.field === fieldConfig.field ? 'selected' : ''}>${x.label}</option>`).join('');
     const isDate = fieldConfig.valueType === 'date';
     const valueHtml = isDate
-      ? `<div class="filter-value-wrap"><input type="text" class="list-filter-value" placeholder="e.g. today, today+3" value="${(valueStr || '').replace(/"/g, '&quot;')}" /><input type="date" class="list-filter-date-picker" style="max-width:120px;" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button></div>`
+      ? `<div class="filter-value-wrap"><input type="text" class="list-filter-value" placeholder="e.g. today, today+3" value="${(valueStr || '').replace(/"/g, '&quot;')}" /><input type="date" class="list-filter-date-picker" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button></div>`
       : fieldConfig.valueType === 'status'
         ? `<div class="filter-value-wrap"><select class="list-filter-value"><option value="incomplete" ${valueStr === 'incomplete' ? 'selected' : ''}>Incomplete</option><option value="complete" ${valueStr === 'complete' ? 'selected' : ''}>Complete</option></select></div>`
         : fieldConfig.valueType === 'flagged'
@@ -2558,13 +2580,28 @@
     const sortEl = document.getElementById('list-settings-sort');
     const addSortBtn = document.getElementById('list-settings-add-sort');
     if (!filtersEl || !sortEl) return;
+    function syncDatePickerFromText(row) {
+      const dateInput = row && row.querySelector('.list-filter-date-picker');
+      const textInput = row && row.querySelector('.list-filter-value');
+      const dateBtn = row && row.querySelector('.date-picker-btn');
+      if (!dateInput || !textInput || textInput.tagName !== 'INPUT') return;
+      const hasText = (textInput.value || '').trim() !== '';
+      if (hasText) dateInput.value = '';
+      dateInput.disabled = hasText;
+      if (dateBtn) dateBtn.disabled = hasText;
+      dateInput.classList.toggle('date-picker-disabled-by-text', hasText);
+      if (dateBtn) dateBtn.classList.toggle('date-picker-disabled-by-text', hasText);
+    }
     function bindDatePickerInRow(row) {
       const dateInput = row && row.querySelector('.list-filter-date-picker');
       const textInput = row && row.querySelector('.list-filter-value');
       const dateBtn = row && row.querySelector('.date-picker-btn');
       if (dateInput && textInput) {
-        dateInput.onchange = () => { textInput.value = dateInput.value || ''; };
+        dateInput.onchange = () => { textInput.value = dateInput.value || ''; syncDatePickerFromText(row); };
         if (dateBtn) dateBtn.onclick = () => { dateInput.showPicker ? dateInput.showPicker() : dateInput.focus(); };
+        textInput.oninput = () => syncDatePickerFromText(row);
+        textInput.onchange = () => syncDatePickerFromText(row);
+        syncDatePickerFromText(row);
       }
     }
     filtersEl.querySelectorAll('.list-settings-filter-row').forEach((row) => {
@@ -2581,7 +2618,7 @@
           opSelect.innerHTML = opOpts;
           const isDate = f.valueType === 'date';
           const newValueHtml = isDate
-            ? `<input type="text" class="list-filter-value" placeholder="e.g. today, today+3" /><input type="date" class="list-filter-date-picker" style="max-width:120px;" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button>`
+            ? `<input type="text" class="list-filter-value" placeholder="e.g. today, today+3" /><input type="date" class="list-filter-date-picker" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button>`
             : f.valueType === 'status'
               ? `<select class="list-filter-value"><option value="incomplete">Incomplete</option><option value="complete">Complete</option></select>`
               : f.valueType === 'flagged'

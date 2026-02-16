@@ -573,7 +573,25 @@ def _parse_intent(response_text: str) -> str:
     return "TOOL"
 
 
-def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
+def _friendly_date(iso_date: str | None, tz_name: str) -> str:
+    """Today/yesterday/tomorrow or m/d for chat/Telegram."""
+    try:
+        from date_utils import format_date_friendly
+        return format_date_friendly(iso_date, tz_name)
+    except Exception:
+        return str(iso_date or "")
+
+
+def _format_datetime_info(iso_datetime: str | None, tz_name: str) -> str:
+    """m/d/yyyy, h:mm am/pm for created/updated info."""
+    try:
+        from date_utils import format_datetime_info
+        return format_datetime_info(iso_datetime, tz_name)
+    except Exception:
+        return str(iso_datetime or "")
+
+
+def _format_task_created_for_telegram(task: dict[str, Any], tz_name: str = "UTC") -> str:
     """Format a created task as a user-friendly message for Telegram."""
     title = (task.get("title") or "").strip() or "(no title)"
     status = task.get("status") or "incomplete"
@@ -582,12 +600,12 @@ def _format_task_created_for_telegram(task: dict[str, Any]) -> str:
     prefix = f"Task {num} created: " if num is not None else "Task created: "
     msg = prefix + f"{title} [{status}]"
     if due:
-        msg += f" — due {due}"
+        msg += f" — due {_friendly_date(due, tz_name)}"
     return msg + "."
 
 
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
-    """Format task list: □/■ [★] title (#n) [avail] [🟡/🔴] due [name (short_id)...]. Status box first, then ★ if flagged (no extra space if not), then title. 🟡 due today, 🔴 overdue."""
+    """Format task list: □/■ [★] title (#n) [avail] [🟡/🔴] due [name (short_id)...]. Due/avail as today/yesterday/tomorrow or m/d. 🟡 due today, 🔴 overdue."""
     if not tasks:
         return "No tasks yet."
     try:
@@ -615,15 +633,16 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         friendly_id = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
         part = f"{status_icon}{'★' if flagged else ''} {title} {friendly_id}"
         if t.get("available_date"):
-            part += f" avail {t['available_date']}"
+            part += f" avail {_friendly_date(t['available_date'], tz_name)}"
         if t.get("due_date"):
             due = t["due_date"]
+            due_friendly = _friendly_date(due, tz_name)
             if due < today:
-                part += f" 🔴 due {due}"
+                part += f" 🔴 due {due_friendly}"
             elif due == today:
-                part += f" 🟡 due {due}"
+                part += f" 🟡 due {due_friendly}"
             else:
-                part += f" due {due}"
+                part += f" due {due_friendly}"
         project_parts = []
         if get_project and t.get("projects"):
             for pid in t["projects"]:
@@ -654,8 +673,9 @@ def _format_task_info_text(
     parent_tasks: list[dict[str, Any]],
     subtasks: list[dict[str, Any]],
     project_labels: list[str] | None = None,
+    tz_name: str = "UTC",
 ) -> str:
-    """User-friendly full task description with parents and subtasks. project_labels = [short_id: name] per project."""
+    """User-friendly full task description with parents and subtasks. project_labels = [short_id: name] per project. Dates/times in tz as m/d/yyyy, h:mm am/pm."""
     num = task.get("number")
     label = str(num) if num is not None else task.get("id", "")[:8]
     title = (task.get("title") or "").strip() or "(no title)"
@@ -667,9 +687,9 @@ def _format_task_info_text(
     if task.get("notes"):
         lines.append(f"Notes: {task['notes'].strip()}")
     if task.get("available_date"):
-        lines.append(f"Available: {task['available_date']}")
+        lines.append(f"Available: {_friendly_date(task['available_date'], tz_name)}")
     if task.get("due_date"):
-        lines.append(f"Due: {task['due_date']}")
+        lines.append(f"Due: {_friendly_date(task['due_date'], tz_name)}")
     if project_labels:
         lines.append(f"Projects: {', '.join(project_labels)}")
     elif task.get("projects"):
@@ -689,19 +709,20 @@ def _format_task_info_text(
     else:
         lines.append("Subtasks: (none)")
     if task.get("created_at"):
-        lines.append(f"Created: {task['created_at']}")
+        lines.append(f"Created: {_format_datetime_info(task['created_at'], tz_name)}")
     if task.get("updated_at"):
-        lines.append(f"Updated: {task['updated_at']}")
+        lines.append(f"Updated: {_format_datetime_info(task['updated_at'], tz_name)}")
     if task.get("completed_at"):
-        lines.append(f"Completed: {task['completed_at']}")
+        lines.append(f"Completed: {_format_datetime_info(task['completed_at'], tz_name)}")
     return "\n".join(lines)
 
 
 def _format_project_info_text(
     project: dict[str, Any],
     tasks_with_subtasks: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+    tz_name: str = "UTC",
 ) -> str:
-    """User-friendly full project description with tasks and their subtasks."""
+    """User-friendly full project description with tasks and their subtasks. Created/updated as m/d/yyyy, h:mm am/pm."""
     short_id = project.get("short_id") or project.get("id", "")[:8]
     name = (project.get("name") or "").strip() or "(no name)"
     lines = [
@@ -711,9 +732,9 @@ def _format_project_info_text(
     if project.get("description"):
         lines.append(f"Description: {project['description'].strip()}")
     if project.get("created_at"):
-        lines.append(f"Created: {project['created_at']}")
+        lines.append(f"Created: {_format_datetime_info(project['created_at'], tz_name)}")
     if project.get("updated_at"):
-        lines.append(f"Updated: {project['updated_at']}")
+        lines.append(f"Updated: {_format_datetime_info(project['updated_at'], tz_name)}")
     lines.append("")
     if not tasks_with_subtasks:
         lines.append("Tasks: (none)")
@@ -724,7 +745,7 @@ def _format_project_info_text(
         label = str(num) if num is not None else task.get("id", "")[:8]
         title = (task.get("title") or "").strip() or "(no title)"
         status = task.get("status") or "incomplete"
-        due = f" — due {task['due_date']}" if task.get("due_date") else ""
+        due = f" — due {_friendly_date(task.get('due_date'), tz_name)}" if task.get("due_date") else ""
         lines.append(f"  {label}. {title} [{status}]{due}")
         if subtasks:
             sub_parts = [f"{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in subtasks if t.get("number") is not None]
@@ -843,6 +864,12 @@ def run_orchestrator(
         short_id = (params.get("short_id") or params.get("project_id") or "").strip()
         if not short_id:
             return ("project_info requires short_id (the project's friendly id, e.g. 1off or work).", False, None)
+        tz_name = "UTC"
+        try:
+            from config import load as load_config
+            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+        except Exception:
+            pass
         try:
             from project_service import get_project_by_short_id
             from task_service import list_tasks as svc_list_tasks, get_tasks_that_depend_on
@@ -856,7 +883,7 @@ def run_orchestrator(
             tasks_with_subtasks: list[tuple[dict[str, Any], list[dict[str, Any]]]] = [
                 (t, get_tasks_that_depend_on(t["id"])) for t in tasks
             ]
-            return (_format_project_info_text(project, tasks_with_subtasks), True, None)
+            return (_format_project_info_text(project, tasks_with_subtasks, tz_name), True, None)
         except Exception as e:
             return (f"Error loading project tasks: {e}", False, None)
     if name == "project_list":
@@ -928,6 +955,12 @@ def run_orchestrator(
         num = _parse_task_number(params)
         if num is None:
             return ("task_info requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None)
+        tz_name = "UTC"
+        try:
+            from config import load as load_config
+            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+        except Exception:
+            pass
         try:
             from task_service import get_task_by_number, get_task, get_tasks_that_depend_on
             task = get_task_by_number(num)
@@ -950,7 +983,7 @@ def run_orchestrator(
                     short_id = (p.get("short_id") or "").strip() or p.get("id", "")[:8]
                     name = (p.get("name") or "").strip() or "(no name)"
                     project_labels.append(f"{short_id}: {name}")
-            return (_format_task_info_text(task, parent_tasks, subtasks, project_labels), True, None)
+            return (_format_task_info_text(task, parent_tasks, subtasks, project_labels, tz_name), True, None)
         except Exception as e:
             return (f"Error loading task details: {e}", False, None)
     if name == "task_list":
@@ -1167,4 +1200,4 @@ def run_orchestrator(
     except Exception as e:
         return (f"Error creating task: {e}", False, None)
 
-    return (_format_task_created_for_telegram(task), True, None)
+    return (_format_task_created_for_telegram(task, tz_name), True, None)

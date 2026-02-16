@@ -43,7 +43,7 @@
           </button>
           <div class="nav-section-body" id="nav-section-lists-body">
             <ul class="nav-list" id="lists-list">
-              <li class="nav-item placeholder">—<span class="nav-item-count"><span class="count count-overdue">0</span><span class="count count-due-today">0</span><span class="count count-upcoming">0</span><span class="count count-complete">0</span></span></li>
+              <li class="nav-item placeholder">—</li>
             </ul>
           </div>
         </section>
@@ -71,7 +71,7 @@
         <h2 id="center-title">Tasks</h2>
         <div class="header-actions">
           <button type="button" id="display-settings-btn" class="icon-btn" title="Display settings" aria-label="Display settings" aria-haspopup="true" aria-expanded="false">
-            <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8L15 8M15 8C15 9.65686 16.3431 11 18 11C19.6569 11 21 9.65685 21 8C21 6.34315 19.6569 5 18 5C16.3431 5 15 6.34315 15 8ZM9 16L21 16M9 16C9 17.6569 7.65685 19 6 19C4.34315 19 3 17.6569 3 16C3 14.3431 4.34315 13 6 13C7.65685 13 9 14.3431 9 16Z"/></svg>
+            <img src="assets/settings-04-svgrepo-com.svg" class="header-icon header-icon-settings" alt="" width="20" height="20" />
           </button>
           <div id="display-settings-dropdown" class="display-dropdown hidden" role="menu" aria-label="Task properties">
             <div class="display-dropdown-title">Visible columns</div>
@@ -272,12 +272,12 @@
   </div>
 
   <div id="list-settings-overlay" class="modal-overlay hidden" aria-hidden="true">
-    <div class="modal modal-medium" role="dialog" aria-labelledby="list-settings-title" aria-modal="true">
+    <div class="modal modal-list-settings" role="dialog" aria-labelledby="list-settings-title" aria-modal="true">
       <div class="modal-header">
         <h2 id="list-settings-title">List filter &amp; sort</h2>
         <button type="button" id="list-settings-close" class="modal-close" aria-label="Close">&times;</button>
       </div>
-      <div class="modal-body">
+      <div class="modal-body modal-body-scroll">
         <section class="list-settings-section">
           <h3 class="list-settings-section-title">Filters</h3>
           <p class="setting-hint">Group conditions with AND/OR. Add groups to nest. Dates: type an expression (e.g. today, today+3) or use the date picker.</p>
