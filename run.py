@@ -8,11 +8,20 @@ Or run Telegram bot only: python telegram_bot.py
 from __future__ import annotations
 
 import atexit
+import logging
 import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+# Ensure app loggers (spaztick.api, task_service) emit to the same stream as uvicorn
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr,
+    force=True,
+)
 
 # Project root
 ROOT = Path(__file__).resolve().parent
