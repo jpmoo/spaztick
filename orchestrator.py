@@ -138,7 +138,7 @@ Available tools: task_create, task_list, task_info, task_update, delete_task, pr
 task_create: Only "title" is required. Omit description, priority, dates, projects, tags, flagged if the user did not provide them. New tasks are incomplete and not flagged by default. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Optional "flagged": true to create a flagged task.
 Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (e.g. flagged, due_date).
 
-task_list: "List tasks", "list my tasks", "show tasks", "gimme tasks in X available tomorrow", etc. must be answered with the task_list JSON only—never with generic task suggestions or "here are some tasks to consider". Any request that asks for tasks (optionally in a project, available/due on a date) is a task_list call. User can filter and sort.
+task_list: "List tasks", "list my tasks", "show tasks", "gimme tasks in X available tomorrow", etc. must be answered with the task_list JSON only. Any request that asks for tasks (optionally in a project, available/due on a date) is a task_list call. For project filter use short_id only (e.g. 1off), never full project name. User can filter and sort.
 Never include completed tasks unless the user explicitly asks for them (e.g. "completed", "done", "finished") or asks for "all" tasks. When no status is given, always use status "incomplete". Do not send status "complete" unless the user clearly asked for completed/done tasks or "all tasks".
 Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag or tags, project or short_id, due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false), priority (number 0-3, or label: "high"/"medium high"/"medium low"/"low", or color: "red"/"orange"/"yellow"/"green"; 3=high=red, 2=medium high=orange, 1=medium low=yellow, 0=low=green).
 Overdue semantics: A task due today is NOT overdue unless the user says "overdue tomorrow" or asks on a later date. Use overdue (not due_by) when the user asks for "overdue" or "overdue tasks". overdue: true or overdue: "today" → tasks due yesterday or earlier; overdue: "tomorrow" → tasks due today or earlier.
@@ -161,20 +161,20 @@ Output format: {"name": "project_create", "parameters": {"title": "..."}} and ad
 
 project_list: "List projects", "list my projects", "show projects" must be answered with project_list JSON only. Output: {"name": "project_list", "parameters": {}}
 
-project_info: User identifies the project by its friendly id (short_id, e.g. "1off" or "work"). Returns full project details and a list of all tasks in the project, each with their subtasks (tasks that depend on them).
+project_info: User identifies the project by short_id only (e.g. "1off", "work"). Returns full project details and tasks. In this chat we never use full project names—only short_id.
 Output format: {"name": "project_info", "parameters": {"short_id": "1off"}}.
 
-delete_project: User identifies the project by its friendly id (short_id, e.g. "1off" or "work"). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete. Deleting a project removes it from all tasks that use it; some tasks may end up with no project assignments.
-Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}. Use "short_id" (the project's friendly id from project_list).
+delete_project: User identifies the project by short_id only (e.g. "1off", "work"). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true. In this chat we never use full project names—only short_id.
+Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}.
 
-list_view: Show tasks from a saved list. The list's saved query and sort/filter settings are applied. Use when the user asks to view or show a saved list by name, short_id, or id (e.g. "show my Inbox list", "view list work", "tasks in list ml1").
-Parameters: list_id (the list's id or short_id, from list_lists or the app) or name (list name to look up). Prefer list_id/short_id if known.
-Output format: {"name": "list_view", "parameters": {"list_id": "work"}} or {"name": "list_view", "parameters": {"name": "Inbox"}}.
+list_view: Show tasks from a saved list. Use when the user says "view list X", "show tasks on list X", "list tasks on list X". X is always the list's short_id (e.g. "test", "work").
+Parameters: list_id (the list's short_id). In this chat we never refer to lists by full name—only by short_id.
+Output format: {"name": "list_view", "parameters": {"list_id": "test"}}.
 
-list_lists: List all saved lists with their names and short names (short_id). Use when the user asks to list saved lists, show lists, or see list names/short names (e.g. "list lists", "show my lists", "what lists do I have").
+list_lists: List all saved lists with their short_ids. Use when the user asks to list saved lists, show lists, or see list short names (e.g. "list lists", "show my lists").
 Output format: {"name": "list_lists", "parameters": {}}.
 
-When the user asks about a task or project by number/short_id (e.g. "tell me about 1", "about task #1", "what about project 1off"), output the task_info or project_info JSON—do not answer with general knowledge or ask what they mean. In this chat, "1" in a task context means task 1.
+In this chat we refer to: tasks by number only (e.g. 1, 2); projects by short_id only (e.g. 1off, work); lists by short_id only (e.g. test, inbox). Never use full display names for projects or lists. When the user asks about a task or project by number/short_id (e.g. "about 1", "about project 1off", "view list test"), output the corresponding tool JSON—do not answer with general knowledge.
 
 Important for task_create: Do NOT use generic phrases as the task title. If the user only says "new task", "create a task", "add a task", or similar without giving an actual title, respond in plain language asking once for the task title (conversational reply, no JSON). Only call task_create when they have given a real title (e.g. "Buy milk").
 Same for project_create: only call when they have given a real project name. Otherwise reply conversationally.
@@ -469,7 +469,7 @@ def _parse_tool_call(response_text: str) -> tuple[str, dict[str, Any]] | None:
 
 
 def _extract_list_identifier_from_message(user_message: str) -> str | None:
-    """Extract a list name or short_id from phrases like 'view test list', 'view list test', 'show me my tasks on list test'. Returns the identifier (e.g. 'test') or None."""
+    """Extract a list short_id from phrases like 'view test list', 'view list test', 'show me my tasks on list test'. Returns the short_id (e.g. 'test') or None."""
     if not user_message or not isinstance(user_message, str):
         return None
     msg = user_message.strip()
@@ -982,29 +982,21 @@ def run_orchestrator(
             return (f"Error listing tasks: {e}", False, None)
         return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None)
     if name == "list_view":
-        list_id = (params.get("list_id") or "").strip()
-        list_name = (params.get("name") or "").strip()
-        if not list_id and not list_name:
-            # Try to extract list identifier from user message (e.g. "View test list", "show me my tasks on list test")
+        list_id = (params.get("list_id") or params.get("name") or "").strip()
+        if not list_id:
+            # Try to extract list short_id from user message (e.g. "View test list", "show tasks on list test")
             extracted = _extract_list_identifier_from_message(user_message)
             if extracted:
                 list_id = extracted
             else:
-                return ("list_view requires list_id or name (the saved list's id or name).", False, None)
+                return ("list_view requires list_id (the list's short_id). Use list_lists to see short_ids.", False, None)
         try:
-            from list_service import get_list, list_lists, run_list
+            from list_service import get_list, run_list
         except Exception as e:
             return (f"Error loading list service: {e}", False, None)
-        if not list_id and list_name:
-            for lst in list_lists():
-                if (lst.get("name") or "").strip().lower() == list_name.lower():
-                    list_id = lst.get("id")
-                    break
-            if not list_id:
-                return (f"No saved list named \"{list_name}\". List saved lists to see names and ids.", False, None)
         lst = get_list(list_id)
         if not lst:
-            return (f"List \"{list_id}\" not found.", False, None)
+            return (f"List \"{list_id}\" not found. Use list_lists to see short_ids.", False, None)
         tz_name = "UTC"
         try:
             from config import load as load_config

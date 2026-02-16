@@ -1921,9 +1921,12 @@
     lastTaskSource = 'list:' + (id || '');
     document.getElementById('center-title').textContent = name;
     document.getElementById('inspector-title').textContent = 'List';
-    document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+    document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
     updateCenterHeaderForSource();
-    if (id) loadListTasks(id);
+    if (id) {
+      loadListTasks(id);
+      loadListDetails(id);
+    }
   }
   async function onProjectArchive(ev) {
     const li = ev.target.closest('.nav-item[data-type="project"]');
@@ -2071,15 +2074,23 @@
     lastTaskSource = 'list:' + listId;
     document.getElementById('center-title').textContent = list.name || 'List';
     document.getElementById('inspector-title').textContent = 'List';
-    document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+    document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
     updateCenterHeaderForSource();
     loadListTasks(listId);
+    loadListDetails(listId);
   }
 
   const PROJECT_INSPECTOR_KEYS = [
     ['name', 'Name'],
     ['short_id', 'Short ID'],
     ['status', 'Status'],
+    ['description', 'Description'],
+    ['created_at', 'Created'],
+    ['updated_at', 'Updated'],
+  ];
+  const LIST_INSPECTOR_KEYS = [
+    ['name', 'Name'],
+    ['short_id', 'Short ID'],
     ['description', 'Description'],
     ['created_at', 'Created'],
     ['updated_at', 'Updated'],
@@ -2140,6 +2151,30 @@
     } catch (e) {
       document.getElementById('inspector-title').textContent = 'Inspector';
       document.getElementById('inspector-content').innerHTML = `<p class="placeholder">${e.message || 'Error loading project.'}</p>`;
+    }
+  }
+
+  async function loadListDetails(listId) {
+    try {
+      const lst = await api(`/api/external/lists/${encodeURIComponent(listId)}`);
+      const div = document.getElementById('inspector-content');
+      const titleEl = document.getElementById('inspector-title');
+      titleEl.textContent = (lst.name || '(no name)').trim();
+      let html = '';
+      LIST_INSPECTOR_KEYS.forEach(([key, label]) => {
+        if (!(key in lst)) return;
+        const val = formatInspectorValue(key, lst[key]);
+        if (val === null && key !== 'description') return;
+        if (key === 'description') {
+          html += `<p><strong>${label}</strong></p><p class="inspector-block">${val || '—'}</p>`;
+        } else {
+          html += `<p><strong>${label}:</strong> ${val !== null ? val : '—'}</p>`;
+        }
+      });
+      div.innerHTML = html || '<p class="placeholder">No details.</p>';
+    } catch (e) {
+      document.getElementById('inspector-title').textContent = 'Inspector';
+      document.getElementById('inspector-content').innerHTML = `<p class="placeholder">${e.message || 'Error loading list.'}</p>`;
     }
   }
 
