@@ -165,17 +165,20 @@ def api_update_task(task_id: str, body: dict):
     t = get_task(task_id)
     if t is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    update_task(
-        task_id,
-        title=body.get("title"),
-        description=body.get("description"),
-        notes=body.get("notes"),
-        status=body.get("status"),
-        priority=body.get("priority") if body.get("priority") is not None else None,
-        available_date=body.get("available_date") or None,
-        due_date=body.get("due_date") or None,
-        flagged=body.get("flagged") if "flagged" in body else None,
-    )
+    try:
+        update_task(
+            task_id,
+            title=body.get("title"),
+            description=body.get("description"),
+            notes=body.get("notes"),
+            status=body.get("status"),
+            priority=body.get("priority") if body.get("priority") is not None else None,
+            available_date=body.get("available_date") or None,
+            due_date=body.get("due_date") or None,
+            flagged=body.get("flagged") if "flagged" in body else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if "projects" in body:
         for pid in t.get("projects") or []:
             remove_task_project(task_id, pid)
@@ -341,17 +344,20 @@ def external_update_task(task_id: str, body: dict):
     if t is None:
         raise HTTPException(status_code=404, detail="Task not found")
     tid = t["id"]
-    update_task(
-        tid,
-        title=body.get("title"),
-        description=body.get("description"),
-        notes=body.get("notes"),
-        status=body.get("status"),
-        priority=body.get("priority") if body.get("priority") is not None else None,
-        available_date=body.get("available_date") or None,
-        due_date=body.get("due_date") or None,
-        flagged=body.get("flagged") if "flagged" in body else None,
-    )
+    try:
+        update_task(
+            tid,
+            title=body.get("title"),
+            description=body.get("description"),
+            notes=body.get("notes"),
+            status=body.get("status"),
+            priority=body.get("priority") if body.get("priority") is not None else None,
+            available_date=body.get("available_date") or None,
+            due_date=body.get("due_date") or None,
+            flagged=body.get("flagged") if "flagged" in body else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if "projects" in body:
         for pid in (t.get("projects") or []):
             remove_task_project(tid, pid)
@@ -994,6 +1000,12 @@ HTML_PAGE = """<!DOCTYPE html>
       const id = $('task_id').value;
       const projects = Array.from($('task_projects_container').querySelectorAll('input[data-project-id]:checked')).map(cb => cb.getAttribute('data-project-id'));
       const tags = $('task_tags').value.split(',').map(s => s.trim()).filter(Boolean);
+      const av = ($('task_available_date').value || '').trim().substring(0, 10);
+      const due = ($('task_due_date').value || '').trim().substring(0, 10);
+      if (av && due && /^\\d{4}-\\d{2}-\\d{2}$/.test(av) && /^\\d{4}-\\d{2}-\\d{2}$/.test(due) && av > due) {
+        alert('Available date cannot be after due date. Due date cannot be before available date.');
+        return;
+      }
       const body = {
         title: $('task_title').value.trim(),
         description: $('task_description').value.trim() || null,
@@ -1007,11 +1019,16 @@ HTML_PAGE = """<!DOCTYPE html>
         tags
       };
       try {
-        await fetch('/api/tasks/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const res = await fetch('/api/tasks/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(data.detail || data.message || res.statusText || 'Save failed');
+          return;
+        }
         $('task_modal').classList.remove('open');
         loadTasks();
       } catch (e) {
-        alert('Save failed: ' + e.message);
+        alert('Save failed: ' + (e.message || e));
       }
     };
 

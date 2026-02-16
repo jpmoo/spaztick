@@ -25,6 +25,22 @@ STATUSES = frozenset({"incomplete", "complete"})
 PRIORITY_MIN, PRIORITY_MAX = 0, 3
 
 
+def _date_only(s: str | None) -> str | None:
+    """Normalize to YYYY-MM-DD for comparison, or None if empty/invalid."""
+    if not s or not isinstance(s, str):
+        return None
+    part = s.strip()[:10]
+    return part if len(part) == 10 and part[4] == "-" and part[7] == "-" else None
+
+
+def _validate_available_due(available_date: str | None, due_date: str | None) -> None:
+    """Raise ValueError if both dates are set and available_date is after due_date."""
+    av = _date_only(available_date)
+    du = _date_only(due_date)
+    if av and du and av > du:
+        raise ValueError("Available date cannot be after due date. Due date cannot be before available date.")
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -73,6 +89,7 @@ def create_task(
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if priority is not None and (priority < PRIORITY_MIN or priority > PRIORITY_MAX):
         raise ValueError(f"priority must be {PRIORITY_MIN}-{PRIORITY_MAX}")
+    _validate_available_due(available_date, due_date)
     tid = task_id or _new_task_id()
     now = _now_iso()
     rec_json = json.dumps(recurrence) if recurrence else None
@@ -281,6 +298,10 @@ def update_task(
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if not row:
             return None
+        # Effective dates: new value if updating, else current
+        eff_av = available_date if available_date is not None else (row["available_date"] if row["available_date"] else None)
+        eff_due = due_date if due_date is not None else (row["due_date"] if row["due_date"] else None)
+        _validate_available_due(eff_av, eff_due)
         now = _now_iso()
         # Always touch updated_at; set completed_at when marking complete
         updates: list[str] = ["updated_at = ?"]

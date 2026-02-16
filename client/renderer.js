@@ -4,8 +4,16 @@
   const API_BASE_KEY = 'spaztick_api_base';
   const API_KEY_KEY = 'spaztick_api_key';
   const THEME_KEY = 'spaztick_theme';
-  const THEMES = ['light', 'dark', 'gray', 'blue', 'green', 'orange'];
+  const THEMES = ['light', 'dark', 'blue', 'green', 'orange'];
   const DISPLAY_PROPERTIES_KEY = 'spaztick_display_properties';
+  const INSPECTOR_HEIGHT_KEY = 'spaztick_inspector_height';
+  const DEFAULT_INSPECTOR_HEIGHT = 220;
+  const LEFT_PANEL_WIDTH_KEY = 'spaztick_left_panel_width';
+  const MIN_LEFT_PANEL_WIDTH = 180;
+  const MAX_LEFT_PANEL_WIDTH = 480;
+  const DEFAULT_LEFT_PANEL_WIDTH = 320;
+  const DATE_FORMAT_KEY = 'spaztick_date_format';
+  const DATE_FORMAT_CUSTOM_KEY = 'spaztick_date_format_custom';
 
   const TASK_PROPERTY_KEYS = ['number', 'due_date', 'available_date', 'priority', 'description', 'projects', 'tags'];
   const TASK_PROPERTY_LABELS = {
@@ -57,12 +65,20 @@
   const settingsSave = document.getElementById('settings-save');
   const settingsApiBase = document.getElementById('settings-api-base');
   const settingsApiKey = document.getElementById('settings-api-key');
+  const settingsDateFormat = document.getElementById('settings-date-format');
+  const customFormatOverlay = document.getElementById('custom-date-format-overlay');
+  const customFormatInput = document.getElementById('custom-format-input');
+  const customFormatPreview = document.getElementById('custom-format-preview');
+  const customFormatClose = document.getElementById('custom-format-close');
+  const customFormatCancel = document.getElementById('custom-format-cancel');
+  const customFormatSave = document.getElementById('custom-format-save');
   const connectionIndicator = document.getElementById('connection-indicator');
   const themeBtn = document.getElementById('theme-btn');
   const inboxItem = document.getElementById('inbox-item');
 
   let lastTasks = [];
   let lastTaskSource = null;
+  let displayedTasks = [];
 
   function getApiBase() {
     return localStorage.getItem(API_BASE_KEY) || 'http://localhost:8081';
@@ -75,6 +91,67 @@
   function setApiConfig(base, key) {
     if (base != null) localStorage.setItem(API_BASE_KEY, base);
     if (key != null) localStorage.setItem(API_KEY_KEY, key);
+  }
+
+  // --- Date format (settings + task/inspector display) ---
+  function getDateFormat() {
+    const v = localStorage.getItem(DATE_FORMAT_KEY);
+    return (v === 'short' || v === 'short-eu' || v === 'short-iso' || v === 'medium' || v === 'long' || v === 'custom') ? v : 'short';
+  }
+  function getDateFormatCustom() {
+    return localStorage.getItem(DATE_FORMAT_CUSTOM_KEY) || 'YYYY-MM-DD';
+  }
+  function setDateFormat(kind, customPattern) {
+    if (kind != null) localStorage.setItem(DATE_FORMAT_KEY, kind);
+    if (customPattern !== undefined) localStorage.setItem(DATE_FORMAT_CUSTOM_KEY, customPattern);
+  }
+
+  function parseDateValue(str) {
+    if (str == null || typeof str !== 'string') return null;
+    const s = str.trim();
+    const datePart = s.substring(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return null;
+    // Parse as local date to avoid timezone shift (new Date('YYYY-MM-DD') is UTC midnight)
+    const [y, m, day] = datePart.split('-').map(Number);
+    const d = new Date(y, m - 1, day);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  const MONTH_NAMES_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const MONTH_NAMES_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+  function formatDateWithPattern(d, pattern) {
+    const y = d.getFullYear();
+    const m = d.getMonth();
+    const month = m + 1;
+    const day = d.getDate();
+    let out = pattern
+      .replace('YYYY', String(y))
+      .replace('YY', String(y).slice(-2))
+      .replace('MMMM', MONTH_NAMES_FULL[m])
+      .replace('MMM', MONTH_NAMES_SHORT[m])
+      .replace('MM', String(month).padStart(2, '0'))
+      .replace('M', String(month))
+      .replace('DD', String(day).padStart(2, '0'))
+      .replace('D', String(day));
+    return out;
+  }
+
+  function formatDate(dateStr) {
+    const d = parseDateValue(dateStr);
+    if (!d) return dateStr != null && dateStr !== '' ? String(dateStr).replace(/</g, '&lt;') : '';
+    const kind = getDateFormat();
+    let pattern;
+    if (kind === 'custom') {
+      pattern = getDateFormatCustom() || 'YYYY-MM-DD';
+      return formatDateWithPattern(d, pattern);
+    }
+    if (kind === 'short') return formatDateWithPattern(d, 'MM/DD/YYYY');
+    if (kind === 'short-eu') return formatDateWithPattern(d, 'DD/MM/YYYY');
+    if (kind === 'short-iso') return formatDateWithPattern(d, 'YYYY-MM-DD');
+    if (kind === 'medium') return formatDateWithPattern(d, 'MMM D, YYYY');
+    if (kind === 'long') return formatDateWithPattern(d, 'MMMM D, YYYY');
+    return formatDateWithPattern(d, 'MM/DD/YYYY');
   }
 
   // --- Connection status indicator ---
@@ -136,6 +213,7 @@
   function openSettings() {
     settingsApiBase.value = getApiBase();
     settingsApiKey.value = getApiKey();
+    if (settingsDateFormat) settingsDateFormat.value = getDateFormat();
     settingsOverlay.classList.remove('hidden');
     settingsOverlay.setAttribute('aria-hidden', 'false');
   }
@@ -149,20 +227,80 @@
     const base = settingsApiBase.value.trim() || 'http://localhost:8081';
     const key = settingsApiKey.value.trim();
     setApiConfig(base, key);
+    if (settingsDateFormat) setDateFormat(settingsDateFormat.value);
     closeSettings();
     checkConnection();
     loadProjects();
   }
 
+  function openCustomDateFormatModal() {
+    if (customFormatInput) customFormatInput.value = getDateFormatCustom();
+    updateCustomFormatPreview();
+    if (customFormatOverlay) {
+      customFormatOverlay.classList.remove('hidden');
+      customFormatOverlay.setAttribute('aria-hidden', 'false');
+      if (customFormatInput) setTimeout(() => customFormatInput.focus(), 50);
+    }
+  }
+  function closeCustomDateFormatModal() {
+    if (customFormatOverlay) {
+      customFormatOverlay.classList.add('hidden');
+      customFormatOverlay.setAttribute('aria-hidden', 'true');
+    }
+  }
+  function updateCustomFormatPreview() {
+    if (!customFormatPreview || !customFormatInput) return;
+    const pattern = (customFormatInput.value || '').trim() || 'YYYY-MM-DD';
+    const d = new Date(2025, 0, 15); // Jan 15, 2025
+    try {
+      customFormatPreview.textContent = formatDateWithPattern(d, pattern);
+    } catch (_) {
+      customFormatPreview.textContent = '—';
+    }
+  }
+
   settingsBtn.addEventListener('click', openSettings);
   settingsClose.addEventListener('click', closeSettings);
   settingsSave.addEventListener('click', saveSettings);
+  if (settingsDateFormat) {
+    settingsDateFormat.addEventListener('mousedown', (e) => {
+      if (settingsDateFormat.value === 'custom') {
+        e.preventDefault();
+        openCustomDateFormatModal();
+      }
+    });
+    settingsDateFormat.addEventListener('change', () => {
+      if (settingsDateFormat.value === 'custom') openCustomDateFormatModal();
+    });
+  }
   settingsOverlay.addEventListener('click', (e) => {
     if (e.target === settingsOverlay) closeSettings();
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !settingsOverlay.classList.contains('hidden')) closeSettings();
+    if (e.key === 'Escape') {
+      if (customFormatOverlay && !customFormatOverlay.classList.contains('hidden')) closeCustomDateFormatModal();
+      else if (!settingsOverlay.classList.contains('hidden')) closeSettings();
+    }
   });
+
+  if (customFormatOverlay) {
+    customFormatOverlay.addEventListener('click', (e) => { if (e.target === customFormatOverlay) closeCustomDateFormatModal(); });
+  }
+  if (customFormatClose) customFormatClose.addEventListener('click', closeCustomDateFormatModal);
+  if (customFormatCancel) customFormatCancel.addEventListener('click', closeCustomDateFormatModal);
+  if (customFormatSave) {
+    customFormatSave.addEventListener('click', () => {
+      const pattern = (customFormatInput && customFormatInput.value || '').trim() || 'YYYY-MM-DD';
+      setDateFormat('custom', pattern);
+      closeCustomDateFormatModal();
+      if (settingsDateFormat) settingsDateFormat.value = 'custom';
+      refreshTaskList();
+    });
+  }
+  if (customFormatInput) {
+    customFormatInput.addEventListener('input', updateCustomFormatPreview);
+    customFormatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') customFormatSave && customFormatSave.click(); });
+  }
 
   // --- Theme cycle ---
   function getTheme() {
@@ -191,41 +329,97 @@
     const res = await fetch(`${base}${path}`, { ...options, headers });
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(res.status === 401 ? 'Invalid API key' : res.status === 403 ? 'External API disabled' : text || res.statusText);
+      let msg = text || res.statusText;
+      if (res.status === 401) msg = 'Invalid API key';
+      else if (res.status === 403) msg = 'External API disabled';
+      else if (text && text.startsWith('{')) {
+        try {
+          const j = JSON.parse(text);
+          if (j.detail) msg = typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail);
+        } catch (_) {}
+      }
+      throw new Error(msg);
     }
     const contentType = res.headers.get('content-type');
     if (contentType && contentType.includes('application/json')) return res.json();
     return res.text();
   }
 
-  // --- Display settings (task properties & order) ---
-  function getDisplayProperties() {
+  async function updateTask(taskId, body) {
+    return api(`/api/external/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  // --- Display settings (task properties & order) by context: inbox, project, list:<id> ---
+  function displayKey(source) {
+    if (source === 'inbox') return 'inbox';
+    if (typeof source === 'string' && source.startsWith('list:')) return source;
+    return 'project';
+  }
+
+  function getDisplayProperties(source) {
+    const key = displayKey(source != null ? source : 'project');
     try {
       const raw = localStorage.getItem(DISPLAY_PROPERTIES_KEY);
       if (raw) {
-        const o = JSON.parse(raw);
-        if (Array.isArray(o.order) && Array.isArray(o.visible)) {
+        const all = JSON.parse(raw);
+        const o = (all[key] || all) && (typeof all[key] === 'object' ? all[key] : all);
+        if (o && (Array.isArray(o.order) && Array.isArray(o.visible))) {
           const visible = new Set(o.visible.filter((k) => TASK_PROPERTY_KEYS.includes(k)));
           const order = o.order.filter((k) => TASK_PROPERTY_KEYS.includes(k));
-          return { order, visible };
+          const showFlagged = o.showFlagged !== false;
+          const showCompleted = o.showCompleted !== false;
+          return { order, visible, showFlagged, showCompleted };
         }
       }
     } catch (_) {}
     const order = ['number', 'due_date', 'priority'];
-    return { order, visible: new Set(order) };
+    return { order, visible: new Set(order), showFlagged: true, showCompleted: true };
   }
 
-  function saveDisplayProperties(order, visible) {
-    localStorage.setItem(DISPLAY_PROPERTIES_KEY, JSON.stringify({
-      order,
-      visible: Array.from(visible),
-    }));
+  function saveDisplayProperties(source, order, visible, showFlagged, showCompleted) {
+    const key = displayKey(source != null ? source : 'project');
+    let all = {};
+    try {
+      const raw = localStorage.getItem(DISPLAY_PROPERTIES_KEY);
+      if (raw) all = JSON.parse(raw) || {};
+    } catch (_) {}
+    const current = getDisplayProperties(source);
+    all[key] = {
+      order: order || current.order,
+      visible: visible != null ? Array.from(visible) : Array.from(current.visible),
+      showFlagged: showFlagged !== undefined ? showFlagged : current.showFlagged,
+      showCompleted: showCompleted !== undefined ? showCompleted : current.showCompleted,
+    };
+    localStorage.setItem(DISPLAY_PROPERTIES_KEY, JSON.stringify(all));
   }
 
   function renderDisplayDropdown() {
     const listEl = document.getElementById('display-properties-list');
+    const flaggedCb = document.getElementById('display-show-flagged');
+    const completedCb = document.getElementById('display-show-completed');
     if (!listEl) return;
-    const { order, visible } = getDisplayProperties();
+    const source = lastTaskSource != null ? lastTaskSource : 'project';
+    const { order, visible, showFlagged, showCompleted } = getDisplayProperties(source);
+    if (flaggedCb) {
+      flaggedCb.checked = showFlagged;
+      flaggedCb.onchange = () => {
+        const { order: o, visible: v, showCompleted: sc } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, flaggedCb.checked, sc);
+        refreshTaskList();
+      };
+    }
+    if (completedCb) {
+      completedCb.checked = showCompleted;
+      completedCb.onchange = () => {
+        const { order: o, visible: v, showFlagged: sf } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, completedCb.checked);
+        refreshTaskList();
+      };
+    }
     const allOrdered = [...order];
     TASK_PROPERTY_KEYS.forEach((k) => { if (!allOrdered.includes(k)) allOrdered.push(k); });
     listEl.innerHTML = allOrdered.map((key) => {
@@ -240,18 +434,20 @@
     listEl.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
       cb.addEventListener('change', (e) => {
         const key = e.target.id.replace('disp-', '');
-        const { order: o, visible: v } = getDisplayProperties();
+        const { order: o, visible: v } = getDisplayProperties(source);
         if (e.target.checked) v.add(key);
         else v.delete(key);
         if (!o.includes(key)) o.push(key);
-        saveDisplayProperties(o, v);
+        const { showFlagged: sf, showCompleted: sc } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, sc);
         refreshTaskList();
       });
     });
-    setupDisplayListDrag(listEl);
+    setupDisplayListDrag(listEl, source);
   }
 
-  function setupDisplayListDrag(listEl) {
+  function setupDisplayListDrag(listEl, source) {
+    const ctx = source != null ? source : 'project';
     let dragged = null;
     listEl.querySelectorAll('li').forEach((li) => {
       const handle = li.querySelector('.drag-handle');
@@ -279,8 +475,8 @@
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           const order = Array.from(listEl.querySelectorAll('li')).map((el) => el.dataset.key);
-          const { visible } = getDisplayProperties();
-          saveDisplayProperties(order, visible);
+          const { visible, showFlagged: sf, showCompleted: sc } = getDisplayProperties(ctx);
+          saveDisplayProperties(ctx, order, visible, sf, sc);
           refreshTaskList();
         };
         document.addEventListener('mousemove', onMove);
@@ -293,80 +489,574 @@
     if (lastTasks.length && lastTaskSource) renderTaskList(lastTasks, lastTaskSource);
   }
 
+  function redrawDisplayedTasks() {
+    if (!displayedTasks.length || !lastTaskSource) return;
+    const center = document.getElementById('center-content');
+    if (!center) return;
+    const selectedRow = center.querySelector('.task-row.selected');
+    const selectedId = selectedRow && selectedRow.dataset.id;
+    const ul = document.createElement('ul');
+    ul.className = 'task-list';
+    ul.style.listStyle = 'none';
+    ul.style.padding = '0';
+    ul.style.margin = '0';
+    displayedTasks.forEach((t) => ul.appendChild(buildTaskRow(t)));
+    center.innerHTML = '';
+    center.appendChild(ul);
+    if (selectedId) {
+      const row = center.querySelector(`.task-row[data-id="${selectedId}"]`);
+      if (row) {
+        row.classList.add('selected');
+        loadTaskDetails(selectedId);
+      }
+    }
+  }
+
+  function updateTaskInLists(updatedTask) {
+    if (!updatedTask || updatedTask.id == null) return;
+    const id = String(updatedTask.id);
+    const idxLast = (lastTasks || []).findIndex((t) => String(t.id) === id);
+    if (idxLast >= 0) lastTasks[idxLast] = updatedTask;
+    const idxDisp = (displayedTasks || []).findIndex((t) => String(t.id) === id);
+    if (idxDisp >= 0) displayedTasks[idxDisp] = updatedTask;
+    redrawDisplayedTasks();
+  }
+
+  function refreshCenterView() {
+    if (lastTaskSource === 'inbox') loadInboxTasks();
+    else if (lastTaskSource && lastTaskSource.startsWith('list:')) return; // lists: future
+    else if (lastTaskSource) loadProjectTasks(lastTaskSource);
+  }
+
   function projectIdToShortName(projectId) {
     const p = projectListCache.find((x) => x.id === projectId || String(x.id) === String(projectId));
     return p ? (p.short_id || p.name || projectId) : projectId;
   }
 
+  function isTaskCompleted(t) {
+    const s = (t.status || '').toLowerCase();
+    return s === 'complete' || s === 'completed' || s === 'done' || s === 'finished';
+  }
+
+  function dateAddDays(dateStr, deltaDays) {
+    const d = parseDateValue(dateStr);
+    if (!d) return null;
+    d.setDate(d.getDate() + deltaDays);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  async function updateTaskFlag(taskId, ev) {
+    ev.stopPropagation();
+    if (!taskId) return;
+    const row = ev.currentTarget.closest('.task-row');
+    const cell = ev.currentTarget.closest('.flagged-cell');
+    const isFlagged = cell && cell.dataset.flagged === '1';
+    try {
+      const updated = await updateTask(taskId, { flagged: !isFlagged });
+      updateTaskInLists(updated);
+      const inspectorTitle = document.getElementById('inspector-title');
+      if (inspectorTitle && inspectorTitle.textContent.startsWith('Task') && row && row.classList.contains('selected')) {
+        loadTaskDetails(taskId);
+      }
+    } catch (e) {
+      console.error('Failed to update flag:', e);
+    }
+  }
+
+  async function updateTaskStatus(taskId, ev) {
+    ev.stopPropagation();
+    if (!taskId) return;
+    const row = ev.currentTarget.closest('.task-row');
+    const wasComplete = row && row.dataset.statusComplete === '1';
+    const newStatus = wasComplete ? 'incomplete' : 'complete';
+    try {
+      const updated = await updateTask(taskId, { status: newStatus });
+      updateTaskInLists(updated);
+      const inspectorTitle = document.getElementById('inspector-title');
+      if (inspectorTitle && inspectorTitle.textContent.startsWith('Task') && row && row.classList.contains('selected')) {
+        loadTaskDetails(taskId);
+      }
+    } catch (e) {
+      console.error('Failed to update status:', e);
+    }
+  }
+
+  let dateDropdownEl = null;
+  function closeDateDropdown() {
+    if (dateDropdownEl && dateDropdownEl.parentNode) dateDropdownEl.parentNode.removeChild(dateDropdownEl);
+    dateDropdownEl = null;
+    document.removeEventListener('click', dateDropdownOutside);
+  }
+  function dateDropdownOutside(ev) {
+    if (!dateDropdownEl) return;
+    if (dateDropdownEl.contains(ev.target)) return;
+    if (dateDropdownEl.contains(document.activeElement)) return;
+    closeDateDropdown();
+  }
+
+  function getTaskById(taskId) {
+    const id = String(taskId);
+    return (displayedTasks || []).find((t) => String(t.id) === id) || (lastTasks || []).find((t) => String(t.id) === id);
+  }
+
+  function validateDateRange(field, newDateStr, task) {
+    if (!newDateStr || !task) return null;
+    const d = newDateStr.trim().substring(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+    if (field === 'due_date') {
+      const av = (task.available_date || '').toString().trim().substring(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(av) && d < av) return 'Due date cannot be before available date.';
+    } else {
+      const due = (task.due_date || '').toString().trim().substring(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(due) && d > due) return 'Available date cannot be after due date.';
+    }
+    return null;
+  }
+
+  async function applyTaskDate(taskId, field, newDateStr) {
+    if (!taskId || !field) return;
+    const task = getTaskById(taskId);
+    if (newDateStr && newDateStr.trim()) {
+      const err = validateDateRange(field, newDateStr, task);
+      if (err) {
+        alert(err);
+        return;
+      }
+    }
+    try {
+      const body = field === 'due_date'
+        ? { due_date: (newDateStr && newDateStr.trim()) || null }
+        : { available_date: (newDateStr && newDateStr.trim()) || null };
+      const updated = await updateTask(taskId, body);
+      updateTaskInLists(updated);
+      const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
+      if (row && row.classList.contains('selected')) loadTaskDetails(taskId);
+    } catch (e) {
+      console.error('Failed to update date:', e);
+      alert(e.message || 'Failed to update date.');
+    }
+  }
+
+  function openDateDropdown(ev, cell) {
+    ev.stopPropagation();
+    closeDateDropdown();
+    const row = cell.closest('.task-row');
+    const taskId = row && row.dataset.id;
+    const field = cell.dataset.dateField;
+    let currentVal = (cell.dataset.dateValue || '').trim().substring(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(currentVal)) {
+      const t = new Date();
+      currentVal = `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+    }
+    if (!taskId || !field) return;
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'task-date-dropdown';
+    dropdown.setAttribute('role', 'menu');
+
+    const choices = [
+      { label: '+1 day', fn: () => dateAddDays(currentVal, 1) },
+      { label: '-1 day', fn: () => dateAddDays(currentVal, -1) },
+      { label: '+1 week', fn: () => dateAddDays(currentVal, 7) },
+      { label: '-1 week', fn: () => dateAddDays(currentVal, -7) },
+    ];
+    choices.forEach(({ label, fn }) => {
+      const newDate = fn();
+      if (!newDate) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'task-date-dropdown-item';
+      btn.textContent = label;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        applyTaskDate(taskId, field, newDate);
+        closeDateDropdown();
+      });
+      dropdown.appendChild(btn);
+    });
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.className = 'task-date-dropdown-item';
+    clearBtn.textContent = 'Clear';
+    clearBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applyTaskDate(taskId, field, '');
+      closeDateDropdown();
+    });
+    dropdown.appendChild(clearBtn);
+
+    const pickerWrap = document.createElement('div');
+    pickerWrap.className = 'task-date-dropdown-picker-wrap';
+    const pickerLabel = document.createElement('label');
+    pickerLabel.textContent = 'Pick date: ';
+    const picker = document.createElement('input');
+    picker.type = 'date';
+    const existingDate = (cell.dataset.dateValue || '').trim().substring(0, 10);
+    picker.value = /^\d{4}-\d{2}-\d{2}$/.test(existingDate) ? existingDate : '';
+    picker.className = 'task-date-picker-input';
+    picker.addEventListener('change', (e) => {
+      const v = e.target.value;
+      if (v) {
+        applyTaskDate(taskId, field, v);
+        closeDateDropdown();
+      }
+    });
+    pickerWrap.addEventListener('click', (e) => e.stopPropagation());
+    pickerLabel.appendChild(picker);
+    pickerWrap.appendChild(pickerLabel);
+    dropdown.appendChild(pickerWrap);
+
+    document.body.appendChild(dropdown);
+    dateDropdownEl = dropdown;
+
+    const cellRect = cell.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.left = `${cellRect.left}px`;
+    dropdown.style.top = `${cellRect.bottom + 4}px`;
+    dropdown.style.minWidth = `${Math.max(cellRect.width, 160)}px`;
+
+    requestAnimationFrame(() => document.addEventListener('click', dateDropdownOutside));
+  }
+
+  let projectsDropdownEl = null;
+  function closeProjectsDropdown() {
+    if (projectsDropdownEl && projectsDropdownEl.parentNode) projectsDropdownEl.parentNode.removeChild(projectsDropdownEl);
+    projectsDropdownEl = null;
+    document.removeEventListener('click', projectsDropdownOutside);
+  }
+  function projectsDropdownOutside(ev) {
+    if (projectsDropdownEl && !projectsDropdownEl.contains(ev.target) && !ev.target.closest('.projects-cell')) closeProjectsDropdown();
+  }
+
+  async function applyTaskProjects(taskId, projectIds) {
+    if (!taskId) return;
+    try {
+      const updated = await updateTask(taskId, { projects: projectIds });
+      updateTaskInLists(updated);
+      const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
+      if (row && row.classList.contains('selected')) loadTaskDetails(taskId);
+    } catch (e) {
+      console.error('Failed to update task projects:', e);
+    }
+  }
+
+  function openProjectsDropdown(ev, cell) {
+    ev.stopPropagation();
+    closeProjectsDropdown();
+    const row = cell.closest('.task-row');
+    const taskId = row && row.dataset.id;
+    let currentIds = [];
+    try {
+      currentIds = JSON.parse(cell.dataset.projectsJson || '[]');
+    } catch (_) {}
+    if (!taskId) return;
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'task-projects-dropdown';
+
+    const currentSection = document.createElement('div');
+    currentSection.className = 'task-projects-section';
+    const currentTitle = document.createElement('div');
+    currentTitle.className = 'task-projects-section-title';
+    currentTitle.textContent = 'Current projects';
+    currentSection.appendChild(currentTitle);
+    const currentList = document.createElement('div');
+    currentList.className = 'task-projects-current-list';
+    currentIds.forEach((pid) => {
+      const p = projectListCache.find((x) => String(x.id) === String(pid));
+      const label = p ? (p.short_id || p.name || pid) : pid;
+      const item = document.createElement('div');
+      item.className = 'task-projects-current-item';
+      item.innerHTML = `<span class="task-projects-current-label">${String(label).replace(/</g, '&lt;')}</span> <button type="button" class="task-projects-remove" aria-label="Remove">×</button>`;
+      const removeBtn = item.querySelector('button');
+      removeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const next = currentIds.filter((id) => String(id) !== String(pid));
+        applyTaskProjects(taskId, next);
+        closeProjectsDropdown();
+      });
+      currentList.appendChild(item);
+    });
+    if (currentIds.length === 0) currentList.innerHTML = '<span class="task-projects-empty">None</span>';
+    currentSection.appendChild(currentList);
+    dropdown.appendChild(currentSection);
+
+    const searchSection = document.createElement('div');
+    searchSection.className = 'task-projects-section task-projects-search-section';
+    const searchTitle = document.createElement('div');
+    searchTitle.className = 'task-projects-section-title';
+    searchTitle.textContent = 'Add project';
+    searchSection.appendChild(searchTitle);
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Search or create project…';
+    searchInput.className = 'task-projects-search-input';
+    searchSection.appendChild(searchInput);
+    const resultsDiv = document.createElement('div');
+    resultsDiv.className = 'task-projects-results';
+    searchSection.appendChild(resultsDiv);
+
+    function renderSearchResults() {
+      const q = (searchInput.value || '').trim().toLowerCase();
+      resultsDiv.innerHTML = '';
+      if (!q) return;
+      const attachedSet = new Set(currentIds.map((id) => String(id)));
+      const matches = projectListCache.filter((p) => {
+        if (attachedSet.has(String(p.id))) return false;
+        const name = (p.name || '').toLowerCase();
+        const short = (p.short_id || '').toLowerCase();
+        return name.includes(q) || short.includes(q);
+      });
+      if (matches.length) {
+        matches.forEach((p) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'task-projects-result-item';
+          btn.textContent = (p.short_id ? p.short_id + ': ' : '') + (p.name || p.id);
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const next = [...currentIds, p.id];
+            applyTaskProjects(taskId, next);
+            closeProjectsDropdown();
+          });
+          resultsDiv.appendChild(btn);
+        });
+      } else {
+        const createBtn = document.createElement('button');
+        createBtn.type = 'button';
+        createBtn.className = 'task-projects-result-item task-projects-create';
+        createBtn.textContent = `Create project "${q}"`;
+        createBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          try {
+            const created = await api('/api/external/projects', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: searchInput.value.trim() }),
+            });
+            const next = [...currentIds, created.id];
+            await applyTaskProjects(taskId, next);
+            loadProjects();
+            closeProjectsDropdown();
+          } catch (err) {
+            console.error('Failed to create project:', err);
+          }
+        });
+        resultsDiv.appendChild(createBtn);
+      }
+    }
+    searchInput.addEventListener('input', renderSearchResults);
+    searchInput.addEventListener('focus', renderSearchResults);
+
+    dropdown.appendChild(searchSection);
+
+    document.body.appendChild(dropdown);
+    projectsDropdownEl = dropdown;
+
+    const cellRect = cell.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.left = `${cellRect.left}px`;
+    dropdown.style.top = `${cellRect.bottom + 4}px`;
+    dropdown.style.minWidth = `${Math.max(cellRect.width, 240)}px`;
+    dropdown.style.maxHeight = '320px';
+    dropdown.style.overflowY = 'auto';
+
+    requestAnimationFrame(() => {
+      document.addEventListener('click', projectsDropdownOutside);
+      searchInput.focus();
+    });
+  }
+
   function buildTaskRow(t) {
-    const { order, visible } = getDisplayProperties();
+    const source = lastTaskSource != null ? lastTaskSource : 'project';
+    const { order, visible, showFlagged } = getDisplayProperties(source);
     const row = document.createElement('div');
     row.className = 'task-row';
     row.dataset.type = 'task';
     row.dataset.id = t.id || '';
     row.dataset.number = t.number != null ? String(t.number) : '';
+    row.dataset.statusComplete = isTaskCompleted(t) ? '1' : '0';
     row.addEventListener('click', onTaskClick);
-    const statusComplete = (t.status || '').toLowerCase() === 'complete' || (t.status || '').toLowerCase() === 'completed' || (t.status || '').toLowerCase() === 'done' || (t.status || '').toLowerCase() === 'finished';
+    const statusComplete = isTaskCompleted(t);
     const circleOpenSvg = '<svg class="status-icon" viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 16q0 3.264 1.28 6.208t3.392 5.12 5.12 3.424 6.208 1.248 6.208-1.248 5.12-3.424 3.392-5.12 1.28-6.208-1.28-6.208-3.392-5.12-5.088-3.392-6.24-1.28q-3.264 0-6.208 1.28t-5.12 3.392-3.392 5.12-1.28 6.208zM4 16q0-3.264 1.6-6.016t4.384-4.352 6.016-1.632 6.016 1.632 4.384 4.352 1.6 6.016-1.6 6.048-4.384 4.352-6.016 1.6-6.016-1.6-4.384-4.352-1.6-6.048z"/></svg>';
     const circleTickSvg = '<svg class="status-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 8c0 4.418 3.59 8 8 8 4.418 0 8-3.59 8-8 0-4.418-3.59-8-8-8-4.418 0-8 3.59-8 8zm2 0c0-3.307 2.686-6 6-6 3.307 0 6 2.686 6 6 0 3.307-2.686 6-6 6-3.307 0-6-2.686-6-6zm9.778-1.672l-1.414-1.414L6.828 8.45 5.414 7.036 4 8.45l2.828 2.828 3.182-3.182 1.768-1.768z" fill-rule="evenodd"/></svg>';
     const folderOpenSvg = '<svg class="project-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>';
 
-    function addCell(key, html) {
+    function addCell(key, html, opts) {
       if (!html) return;
       const cell = document.createElement('div');
       cell.className = 'task-cell ' + key + '-cell';
       cell.innerHTML = html;
+      if (opts && opts.dateField) {
+        cell.dataset.dateField = opts.dateField;
+        cell.dataset.dateValue = opts.dateValue || '';
+      }
+      if (opts && opts.projectsTaskId != null) {
+        cell.dataset.projectsTaskId = opts.projectsTaskId;
+        cell.dataset.projectsJson = opts.projectsJson != null ? opts.projectsJson : '[]';
+      }
+      if (opts && opts.titleTaskId != null) {
+        cell.dataset.titleTaskId = opts.titleTaskId;
+      }
+      if (opts && opts.flaggedTaskId != null) {
+        cell.dataset.flaggedTaskId = opts.flaggedTaskId;
+        cell.dataset.flagged = opts.flaggedValue ? '1' : '0';
+      }
       row.appendChild(cell);
     }
 
     addCell('status', statusComplete ? circleTickSvg : circleOpenSvg);
-    addCell('title', `<span class="cell-value">${(t.title || '(no title)').trim().replace(/</g, '&lt;')}</span>`);
+    if (showFlagged) {
+      const flagged = t.flagged === true || t.flagged === 1;
+      addCell('flagged', `<span class="flagged-icon ${flagged ? '' : 'empty'}" title="${flagged ? 'Flagged (click to unflag)' : 'Click to flag'}">★</span>`, { flaggedTaskId: t.id, flaggedValue: flagged });
+    }
+    addCell('title', `<span class="cell-value">${(t.title || '(no title)').trim().replace(/</g, '&lt;')}</span>`, { titleTaskId: t.id });
 
     order.forEach((key) => {
       if (!visible.has(key)) return;
       let html = '';
       if (key === 'number') {
-        html = t.number != null ? `<span class="cell-value">#${t.number}</span>` : '';
+        if (t.number == null) return;
+        html = `<span class="cell-value">#${t.number}</span>`;
       } else if (key === 'available_date') {
-        if (t.available_date) {
-          const escaped = String(t.available_date).replace(/</g, '&lt;');
-          const calEventSvg = '<svg class="date-icon calendar-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M11.75 16C11.8881 16 12 15.8881 12 15.75V12.25C12 12.1119 11.8881 12 8.25 12V15.75C8 15.8881 8.11193 16 8.25 16H11.75Z"/></svg>';
-          html = calEventSvg + `<span class="cell-value">${escaped}</span>`;
-        }
+        if (!t.available_date) return;
+        const dateVal = (t.available_date || '').toString().trim().substring(0, 10);
+        const calEventSvg = '<svg class="date-icon calendar-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M11.75 16C11.8881 16 12 15.8881 12 15.75V12.25C12 12.1119 11.8881 12 8.25 12V15.75C8 15.8881 8.11193 16 8.25 16H11.75Z"/></svg>';
+        html = calEventSvg + `<span class="cell-value">${formatDate(t.available_date)}</span>`;
+        addCell(key, html, { dateField: 'available_date', dateValue: dateVal });
+        return;
       } else if (key === 'due_date') {
-        if (t.due_date) {
-          const escaped = String(t.due_date).replace(/</g, '&lt;');
-          const today = isToday(t.due_date);
-          const overdue = isOverdue(t.due_date);
-          const stateClass = overdue ? 'due-overdue' : (today ? 'due-today' : '');
-          const calCheckSvg = '<svg class="date-icon calendar-check-icon ' + stateClass + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M15 12L11 16L9 14"/></svg>';
-          html = calCheckSvg + `<span class="cell-value ${stateClass}">${escaped}</span>`;
-        }
+        if (!t.due_date) return;
+        const dateVal = (t.due_date || '').toString().trim().substring(0, 10);
+        const today = isToday(t.due_date);
+        const overdue = isOverdue(t.due_date);
+        const stateClass = overdue ? 'due-overdue' : (today ? 'due-today' : '');
+        const calCheckSvg = '<svg class="date-icon calendar-check-icon ' + stateClass + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M15 12L11 16L9 14"/></svg>';
+        html = calCheckSvg + `<span class="cell-value ${stateClass}">${formatDate(t.due_date)}</span>`;
+        addCell(key, html, { dateField: 'due_date', dateValue: dateVal });
+        return;
       } else if (key === 'priority') {
-        html = t.priority != null ? `<span class="cell-value">${t.priority}</span>` : '';
+        if (t.priority == null) return;
+        html = `<span class="cell-value">${t.priority}</span>`;
       } else if (key === 'description') {
         const d = (t.description || '').trim();
-        html = d ? `<span class="cell-value" title="${d.replace(/"/g, '&quot;').substring(0, 200)}">${d.substring(0, 50).replace(/</g, '&lt;')}${d.length > 50 ? '…' : ''}</span>` : '';
+        if (!d) return;
+        html = `<span class="cell-value" title="${d.replace(/"/g, '&quot;').substring(0, 200)}">${d.substring(0, 50).replace(/</g, '&lt;')}${d.length > 50 ? '…' : ''}</span>`;
       } else if (key === 'projects') {
-        const p = (t.projects || []);
-        if (p.length) {
-          const names = p.map((id) => projectIdToShortName(id)).map((s) => String(s).replace(/</g, '&lt;'));
-          html = folderOpenSvg + '<span class="cell-value">' + names.join(', ') + '</span>';
-        }
+        const p = (t.projects || []).map((id) => String(id));
+        if (!p.length) return;
+        const names = p.map((id) => projectIdToShortName(id)).map((s) => String(s).replace(/</g, '&lt;')).join(', ');
+        html = folderOpenSvg + '<span class="cell-value">' + names + '</span>';
+        addCell(key, html, { projectsTaskId: t.id, projectsJson: JSON.stringify(p) });
+        return;
       } else if (key === 'tags') {
         const tg = (t.tags || []);
-        html = tg.length ? `<span class="cell-value">${tg.join(', ').replace(/</g, '&lt;')}</span>` : '';
+        if (!tg.length) return;
+        html = `<span class="cell-value">${tg.join(', ').replace(/</g, '&lt;')}</span>`;
       }
       addCell(key, html);
     });
+
+    const statusCell = row.querySelector('.status-cell');
+    if (statusCell) {
+      statusCell.classList.add('task-cell-clickable');
+      statusCell.addEventListener('click', (ev) => updateTaskStatus(t.id, ev));
+    }
+    const flaggedCell = row.querySelector('.flagged-cell');
+    if (flaggedCell && flaggedCell.dataset.flaggedTaskId) {
+      flaggedCell.classList.add('task-cell-clickable');
+      flaggedCell.addEventListener('click', (ev) => updateTaskFlag(t.id, ev));
+    }
+    row.querySelectorAll('[data-date-field]').forEach((cell) => {
+      cell.classList.add('task-cell-clickable');
+      cell.addEventListener('click', (ev) => openDateDropdown(ev, cell));
+    });
+    const projectsCell = row.querySelector('.projects-cell');
+    if (projectsCell && projectsCell.dataset.projectsTaskId) {
+      projectsCell.classList.add('task-cell-clickable');
+      projectsCell.addEventListener('click', (ev) => openProjectsDropdown(ev, projectsCell));
+    }
+    const titleCell = row.querySelector('.title-cell');
+    if (titleCell && titleCell.dataset.titleTaskId) {
+      titleCell.addEventListener('dblclick', (ev) => {
+        ev.stopPropagation();
+        startTitleEdit(titleCell);
+      });
+    }
+
     return row;
   }
 
+  function startTitleEdit(titleCell) {
+    const row = titleCell.closest('.task-row');
+    const taskId = row && row.dataset.id;
+    if (!taskId) return;
+    const span = titleCell.querySelector('.cell-value');
+    const currentTitle = (span && span.textContent || '').trim() || '';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'task-title-edit-input';
+    input.value = currentTitle;
+    input.setAttribute('aria-label', 'Edit task title');
+    titleCell.innerHTML = '';
+    titleCell.appendChild(input);
+    input.focus();
+    input.select();
+
+    function saveAndClose() {
+      const newTitle = (input.value || '').trim();
+      const displayTitle = newTitle || '(no title)';
+      titleCell.innerHTML = `<span class="cell-value">${displayTitle.replace(/</g, '&lt;')}</span>`;
+      if (newTitle !== currentTitle) {
+        updateTask(taskId, { title: newTitle }).then((updated) => {
+          if (updated) updateTaskInLists(updated);
+          const inspectorTitle = document.getElementById('inspector-title');
+          if (row.classList.contains('selected') && inspectorTitle && inspectorTitle.textContent.startsWith('Task')) {
+            loadTaskDetails(taskId);
+          }
+        }).catch((e) => console.error('Failed to update title:', e));
+      }
+    }
+
+    function cancel() {
+      titleCell.innerHTML = `<span class="cell-value">${(currentTitle || '(no title)').replace(/</g, '&lt;')}</span>`;
+    }
+
+    let cancelled = false;
+    input.addEventListener('blur', () => {
+      if (!cancelled) saveAndClose();
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        input.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelled = true;
+        cancel();
+        input.blur();
+      }
+    });
+  }
+
   function renderTaskList(tasks, source) {
-    lastTasks = tasks;
+    lastTasks = tasks || [];
     lastTaskSource = source;
     const center = document.getElementById('center-content');
     if (!tasks || !tasks.length) {
+      displayedTasks = [];
+      center.innerHTML = '<p class="placeholder">No tasks.</p>';
+      return;
+    }
+    const src = source != null ? source : 'project';
+    const { showCompleted } = getDisplayProperties(src);
+    const toShow = showCompleted ? tasks : tasks.filter((t) => !isTaskCompleted(t));
+    displayedTasks = [...toShow];
+    if (!toShow.length) {
       center.innerHTML = '<p class="placeholder">No tasks.</p>';
       return;
     }
@@ -375,7 +1065,7 @@
     ul.style.listStyle = 'none';
     ul.style.padding = '0';
     ul.style.margin = '0';
-    tasks.forEach((t) => ul.appendChild(buildTaskRow(t)));
+    toShow.forEach((t) => ul.appendChild(buildTaskRow(t)));
     center.innerHTML = '';
     center.appendChild(ul);
   }
@@ -437,6 +1127,11 @@
         projectsList.innerHTML = '<li class="nav-item placeholder">No projects</li>';
         return;
       }
+      projectListCache.sort((a, b) => {
+        const nameA = (a.name || a.short_id || '').toString().toLowerCase();
+        const nameB = (b.name || b.short_id || '').toString().toLowerCase();
+        return nameA.localeCompare(nameB, undefined, { numeric: true });
+      });
       projectsList.innerHTML = projectListCache.map((p) => {
         const name = (p.name || p.short_id || 'Project').replace(/</g, '&lt;');
         const shortId = (p.short_id || '').replace(/</g, '&lt;');
@@ -502,12 +1197,15 @@
     if (s == null) return '';
     return String(s).replace(/</g, '&lt;').replace(/\n/g, '<br>').replace(/"/g, '&quot;');
   }
+  const DATE_INSPECTOR_KEYS = ['due_date', 'available_date', 'created_at', 'updated_at', 'completed_at'];
+
   function formatInspectorValue(key, value) {
     if (value == null || value === '') return null;
     if (key === 'description' || key === 'notes') return escapeHtml(value);
     if (Array.isArray(value)) return value.length ? escapeHtml(value.join(', ')) : null;
     if (typeof value === 'object') return escapeHtml(JSON.stringify(value));
     if (key === 'flagged') return value ? 'Yes' : 'No';
+    if (DATE_INSPECTOR_KEYS.includes(key)) return formatDate(value);
     return escapeHtml(String(value));
   }
 
@@ -655,10 +1353,65 @@
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
+        const h = inspectorContent.getBoundingClientRect().height;
+        if (typeof h === 'number' && h >= MIN_INSPECTOR) {
+          try { localStorage.setItem(INSPECTOR_HEIGHT_KEY, String(Math.round(h))); } catch (_) {}
+        }
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
     });
+  }
+
+  // Restore persisted inspector/chat height on load
+  if (rightPanel) {
+    try {
+      const saved = localStorage.getItem(INSPECTOR_HEIGHT_KEY);
+      if (saved != null && saved !== '') {
+        const px = parseInt(saved, 10);
+        if (Number.isFinite(px) && px >= 80) {
+          rightPanel.style.setProperty('--inspector-height', `${px}px`);
+        }
+      }
+    } catch (_) {}
+  }
+
+  // --- Left panel width resize (drag vertical border) + persist ---
+  const mainArea = document.querySelector('.main-area');
+  const leftPanelResizeHandle = document.getElementById('left-panel-resize-handle');
+  if (leftPanelResizeHandle && leftPanel && mainArea) {
+    leftPanelResizeHandle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = leftPanel.getBoundingClientRect().width;
+      const onMove = (e2) => {
+        const dx = e2.clientX - startX;
+        let newW = Math.round(startWidth + dx);
+        newW = Math.max(MIN_LEFT_PANEL_WIDTH, Math.min(MAX_LEFT_PANEL_WIDTH, newW));
+        mainArea.style.setProperty('--left-panel-width', `${newW}px`);
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        const w = leftPanel.getBoundingClientRect().width;
+        if (Number.isFinite(w) && w >= MIN_LEFT_PANEL_WIDTH) {
+          try { localStorage.setItem(LEFT_PANEL_WIDTH_KEY, String(Math.round(w))); } catch (_) {}
+        }
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+  if (mainArea) {
+    try {
+      const saved = localStorage.getItem(LEFT_PANEL_WIDTH_KEY);
+      if (saved != null && saved !== '') {
+        const px = parseInt(saved, 10);
+        if (Number.isFinite(px) && px >= MIN_LEFT_PANEL_WIDTH && px <= MAX_LEFT_PANEL_WIDTH) {
+          mainArea.style.setProperty('--left-panel-width', `${px}px`);
+        }
+      }
+    } catch (_) {}
   }
 
   // --- Display settings button & dropdown ---
@@ -679,6 +1432,9 @@
     });
     displayDropdown.addEventListener('click', (e) => e.stopPropagation());
   }
+
+  const centerRefreshBtn = document.getElementById('center-refresh-btn');
+  if (centerRefreshBtn) centerRefreshBtn.addEventListener('click', refreshCenterView);
 
   // --- Init ---
   if (inboxItem) inboxItem.addEventListener('click', onInboxClick);
