@@ -195,6 +195,19 @@ def execute_pending_confirm(body: PendingConfirmBody) -> dict[str, bool | str]:
 
 # --- Tasks API (for web app list / edit / delete) ---
 
+@app.post("/api/tasks/normalize-priorities")
+def api_normalize_task_priorities():
+    """Set priority to 0 for all tasks with null priority. Returns count updated."""
+    from task_service import normalize_task_priorities
+    try:
+        n = normalize_task_priorities()
+        return {"updated": n}
+    except Exception as e:
+        logger = __import__("logging").getLogger("web_app")
+        logger.exception("api_normalize_task_priorities failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/tasks")
 def api_list_tasks():
     try:
@@ -357,6 +370,17 @@ def external_list_tasks(
             limit=min(limit, 1000),
         )
         return [dict(t) for t in tasks]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/external/tasks/normalize-priorities", dependencies=[Depends(_require_api_key)])
+def external_normalize_task_priorities():
+    """Set priority to 0 for all tasks with null priority. Returns count updated. Call from Electron app on load."""
+    from task_service import normalize_task_priorities
+    try:
+        n = normalize_task_priorities()
+        return {"updated": n}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

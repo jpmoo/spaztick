@@ -727,6 +727,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  overflow: visible;
 }
 .task-date-dropdown-item {
   display: block;
@@ -742,20 +743,49 @@ body {
 .task-date-dropdown-item:hover {
   background: var(--bg);
 }
-.task-date-dropdown-section-title {
-  padding: 6px 14px 4px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-muted);
-  border-top: 1px solid var(--border-subtle);
-  margin-top: 4px;
+.task-date-dropdown-submenu-trigger-wrap {
+  position: relative;
+  overflow: visible;
 }
-.task-date-dropdown-section-title:first-child {
-  border-top: none;
-  margin-top: 0;
-  padding-top: 0;
+.task-date-dropdown-submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.task-date-dropdown-submenu-trigger::after {
+  content: '\203A';
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-left: 8px;
+}
+/* Submenu opens to the right of the trigger */
+.task-date-dropdown-submenu {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  margin-left: 4px;
+  min-width: 140px;
+  z-index: 1001;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: visibility 0.15s, opacity 0.15s;
+}
+.task-date-dropdown-submenu.visible {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
+.task-date-dropdown-submenu .task-date-dropdown-item {
+  padding: 8px 14px;
 }
 .task-date-dropdown-picker-wrap {
   padding: 8px 14px;

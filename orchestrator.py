@@ -140,16 +140,16 @@ Output format: {"name": "task_create", "parameters": {"title": "..."}} and add a
 
 task_list: "List tasks", "list my tasks", "show tasks", "gimme tasks in X available tomorrow", etc. must be answered with the task_list JSON only—never with generic task suggestions or "here are some tasks to consider". Any request that asks for tasks (optionally in a project, available/due on a date) is a task_list call. User can filter and sort.
 Never include completed tasks unless the user explicitly asks for them (e.g. "completed", "done", "finished") or asks for "all" tasks. When no status is given, always use status "incomplete". Do not send status "complete" unless the user clearly asked for completed/done tasks or "all tasks".
-Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag or tags, project or short_id, due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false), priority (0-3: filter by exact priority; 3 = highest/top priority, 0 = low).
+Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag or tags, project or short_id, due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false), priority (number 0-3, or label: "high"/"medium high"/"medium low"/"low", or color: "red"/"orange"/"yellow"/"green"; 3=high=red, 2=medium high=orange, 1=medium low=yellow, 0=low=green).
 Overdue semantics: A task due today is NOT overdue unless the user says "overdue tomorrow" or asks on a later date. Use overdue (not due_by) when the user asks for "overdue" or "overdue tasks". overdue: true or overdue: "today" → tasks due yesterday or earlier; overdue: "tomorrow" → tasks due today or earlier.
 Dates: "today", "tomorrow", "yesterday", "now" (use "today")—app resolves them.
 Examples: "list overdue tasks" -> {"name": "task_list", "parameters": {"overdue": true, "status": "incomplete"}}. "overdue tomorrow" -> {"name": "task_list", "parameters": {"overdue": "tomorrow", "status": "incomplete"}}. "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "gimme tasks in 1off available tomorrow" -> {"name": "task_list", "parameters": {"short_id": "1off", "available_by": "tomorrow", "status": "incomplete"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}.
-Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id, due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged, priority (0-3). "Top priority" or "highest priority" -> priority 3. "Show me priority 2" -> priority 2.
+Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id, due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged, priority. Priority: use 0-3, or "high"/"medium high"/"medium low"/"low", or "red"/"orange"/"yellow"/"green". E.g. "high priority tasks" -> priority "high" or 3; "red priority" -> 3; "priority 2" -> 2.
 
 task_info: User identifies the task by its friendly id (number). "Tell me about 1", "about task 1", "task #1", "task 1", or just "1" after discussing tasks/projects always means task_info with that number. Never answer with general knowledge about the number—always call task_info.
 Output format: {"name": "task_info", "parameters": {"number": 1}} (use the number the user said).
 
-task_update: Change one task by number. You can update any attribute: status, flagged, due_date, available_date, title, description, notes, priority, projects (list—replaces task's projects), remove_projects (list—remove these projects from the task; use for "remove task N from project X"), tags (list—replaces task's tags). Required: number. Optional: status, flagged, due_date, available_date, title, description, notes, priority (0-3), projects (array), remove_projects (array), tags (array). Dates: natural language. Use remove_projects when the user says to remove the task from a project; do not use projects for that.
+task_update: Change one task by number. You can update any attribute: status, flagged, due_date, available_date, title, description, notes, priority, projects (list—replaces task's projects), remove_projects (list—remove these projects from the task; use for "remove task N from project X"), tags (list—replaces task's tags). Required: number. Optional: status, flagged, due_date, available_date, title, description, notes, priority (0-3 or label "high"/"medium high"/"medium low"/"low" or color "red"/"orange"/"yellow"/"green"), projects (array), remove_projects (array), tags (array). Dates: natural language. Use remove_projects when the user says to remove the task from a project; do not use projects for that.
 Examples: "mark task 1 complete" -> {"name": "task_update", "parameters": {"number": 1, "status": "complete"}}. "remove task 1 from 1off" or "take task 1 off project 1off" -> {"name": "task_update", "parameters": {"number": 1, "remove_projects": ["1off"]}}. "add task 1 to 1off" -> {"name": "task_update", "parameters": {"number": 1, "projects": ["1off"]}} (or add to existing: send projects with current + new). "task 1 due tomorrow" -> {"name": "task_update", "parameters": {"number": 1, "due_date": "tomorrow"}}. "task 2 tags work urgent" -> {"name": "task_update", "parameters": {"number": 2, "tags": ["work", "urgent"]}}.
 Output format: {"name": "task_update", "parameters": {"number": N, ...}} with only the fields being changed.
 
@@ -176,7 +176,7 @@ Same for project_create: only call when they have given a real project name. Oth
 TOOL_ORCHESTRATOR_PROMPT = TOOL_ORCHESTRATOR_INTRO + AVAILABLE_TOOLS_SECTION
 
 
-# task_create schema: required title; optional description, notes, priority (0-3), projects[], tags[], available_date, due_date, flagged (default false). Status is always incomplete on create.
+# task_create schema: required title; optional description, notes, priority (0-3 or label high/medium high/medium low/low or color red/orange/yellow/green), projects[], tags[], available_date, due_date, flagged (default false). Status is always incomplete on create.
 TASK_CREATE_STATUS = frozenset({"incomplete"})
 
 # project_create: required title (project name); optional description. Status defaults to active (open).
@@ -197,6 +197,41 @@ def _parse_task_number(params: dict[str, Any]) -> int | None:
         return int(s)
     except ValueError:
         return None
+
+
+def _parse_priority(value: Any) -> int | None:
+    """Parse priority from number (0-3), label (high, medium high, medium low, low), or color (red, orange, yellow, green). Returns 0-3 or None."""
+    if value is None:
+        return None
+    if isinstance(value, int) and 0 <= value <= 3:
+        return value
+    s = str(value).strip().lower()
+    if not s:
+        return None
+    try:
+        n = int(s)
+        return n if 0 <= n <= 3 else None
+    except ValueError:
+        pass
+    # Labels: 3=high, 2=medium high, 1=medium low, 0=low
+    if s in ("high", "highest", "top"):
+        return 3
+    if s in ("medium high", "medium-high", "med high", "mediumhigh"):
+        return 2
+    if s in ("medium low", "medium-low", "med low", "mediumlow"):
+        return 1
+    if s in ("low", "lowest"):
+        return 0
+    # Colors: red=3, orange=2, yellow=1, green=0
+    if s == "red":
+        return 3
+    if s == "orange":
+        return 2
+    if s == "yellow":
+        return 1
+    if s == "green":
+        return 0
+    return None
 
 
 def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> dict[str, Any]:
@@ -260,14 +295,9 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
         elif f is False or (isinstance(f, str) and str(f).strip().lower() in ("false", "0", "no")) or f == 0:
             out["flagged"] = False
     if "priority" in params and params["priority"] is not None:
-        try:
-            p = params["priority"]
-            if isinstance(p, str) and p.strip() != "":
-                p = int(p.strip())
-            if isinstance(p, int) and 0 <= p <= 3:
-                out["priority"] = p
-        except (ValueError, TypeError):
-            pass
+        p = _parse_priority(params["priority"])
+        if p is not None:
+            out["priority"] = p
     return out
 
 
@@ -302,13 +332,9 @@ def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
     else:
         out["status"] = "incomplete"
     if "priority" in params and params["priority"] is not None and str(params["priority"]).strip() != "":
-        try:
-            p = int(params["priority"])
-        except (TypeError, ValueError):
-            pass  # omit invalid priority; only title is required
-        else:
-            if 0 <= p <= 3:
-                out["priority"] = p
+        p = _parse_priority(params["priority"])
+        if p is not None:
+            out["priority"] = p
     if "projects" in params and params["projects"] is not None:
         if not isinstance(params["projects"], list):
             raise ValueError("projects must be an array")
@@ -382,12 +408,9 @@ def _validate_task_update(params: dict[str, Any], tz_name: str = "UTC") -> dict[
             if val is not None or key in ("due_date", "available_date"):
                 out[key] = val if val else None
     if "priority" in params and params["priority"] is not None and str(params["priority"]).strip() != "":
-        try:
-            p = int(params["priority"])
-            if 0 <= p <= 3:
-                out["priority"] = p
-        except (TypeError, ValueError):
-            pass
+        p = _parse_priority(params["priority"])
+        if p is not None:
+            out["priority"] = p
     if "projects" in params and params["projects"] is not None:
         if not isinstance(params["projects"], list):
             raise ValueError("projects must be an array of project short_ids or ids")

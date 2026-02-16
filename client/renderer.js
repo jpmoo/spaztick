@@ -37,6 +37,7 @@
     status: 'Status',
   };
   let projectListCache = [];
+  let normalizedPrioritiesThisSession = false;
 
   function parseDateOnly(str) {
     if (!str || typeof str !== 'string') return null;
@@ -835,11 +836,10 @@
     dropdown.className = 'task-priority-dropdown';
     dropdown.setAttribute('role', 'menu');
     const options = [
-      { value: 3, label: '3', cls: 'priority-3' },
-      { value: 2, label: '2', cls: 'priority-2' },
-      { value: 1, label: '1', cls: 'priority-1' },
-      { value: 0, label: '0', cls: 'priority-0' },
-      { value: null, label: 'No priority', cls: 'priority-empty' },
+      { value: 3, label: '3 – High', cls: 'priority-3' },
+      { value: 2, label: '2 – Medium high', cls: 'priority-2' },
+      { value: 1, label: '1 – Medium low', cls: 'priority-1' },
+      { value: 0, label: '0 – Low', cls: 'priority-0' },
     ];
     options.forEach(({ value, label, cls }) => {
       const btn = document.createElement('button');
@@ -859,7 +859,7 @@
     dropdown.style.position = 'fixed';
     dropdown.style.left = `${cellRect.left}px`;
     dropdown.style.top = `${cellRect.bottom + 4}px`;
-    dropdown.style.minWidth = `${Math.max(cellRect.width, 140)}px`;
+    dropdown.style.minWidth = `${Math.max(cellRect.width, 180)}px`;
     requestAnimationFrame(() => document.addEventListener('click', priorityDropdownOutside));
   }
 
@@ -952,13 +952,53 @@
     addDateButton('Today', todayDateStr());
     addDateButton('Tomorrow', dateAddDays(todayDateStr(), 1));
 
-    const weekdaysTitle = document.createElement('div');
-    weekdaysTitle.className = 'task-date-dropdown-section-title';
-    weekdaysTitle.textContent = 'Days of the Week';
-    dropdown.appendChild(weekdaysTitle);
+    const weekdaysWrap = document.createElement('div');
+    weekdaysWrap.className = 'task-date-dropdown-submenu-trigger-wrap';
+    const weekdaysTrigger = document.createElement('button');
+    weekdaysTrigger.type = 'button';
+    weekdaysTrigger.className = 'task-date-dropdown-item task-date-dropdown-submenu-trigger';
+    weekdaysTrigger.textContent = 'Days of the Week';
+    weekdaysTrigger.setAttribute('aria-haspopup', 'true');
+    weekdaysTrigger.setAttribute('aria-expanded', 'false');
+    const weekdaysSubmenu = document.createElement('div');
+    weekdaysSubmenu.className = 'task-date-dropdown-submenu';
+    weekdaysSubmenu.setAttribute('role', 'menu');
     WEEKDAY_NAMES.forEach((name, i) => {
-      addDateButton(name, nextWeekdayDate(i));
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'task-date-dropdown-item';
+      btn.textContent = name;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        applyTaskDate(taskId, field, nextWeekdayDate(i));
+        closeDateDropdown();
+      });
+      weekdaysSubmenu.appendChild(btn);
     });
+    weekdaysWrap.appendChild(weekdaysTrigger);
+    weekdaysWrap.appendChild(weekdaysSubmenu);
+    function showWeekdaysSubmenu() {
+      weekdaysSubmenu.classList.add('visible');
+      weekdaysTrigger.setAttribute('aria-expanded', 'true');
+    }
+    function hideWeekdaysSubmenu() {
+      weekdaysSubmenu.classList.remove('visible');
+      weekdaysTrigger.setAttribute('aria-expanded', 'false');
+    }
+    function toggleWeekdaysSubmenu(e) {
+      e.stopPropagation();
+      if (weekdaysSubmenu.classList.contains('visible')) hideWeekdaysSubmenu();
+      else showWeekdaysSubmenu();
+    }
+    weekdaysTrigger.addEventListener('click', toggleWeekdaysSubmenu);
+    weekdaysWrap.addEventListener('mouseenter', showWeekdaysSubmenu);
+    weekdaysWrap.addEventListener('mouseleave', (e) => {
+      if (!weekdaysSubmenu.contains(e.relatedTarget)) hideWeekdaysSubmenu();
+    });
+    weekdaysSubmenu.addEventListener('mouseleave', (e) => {
+      if (!weekdaysWrap.contains(e.relatedTarget)) hideWeekdaysSubmenu();
+    });
+    dropdown.appendChild(weekdaysWrap);
 
     const choices = [
       { label: '+1 day', fn: () => dateAddDays(currentVal, 1) },
@@ -1552,6 +1592,12 @@
     if (!key) {
       projectsList.innerHTML = '<li class="nav-item placeholder">Set API key in Settings</li>';
       return;
+    }
+    if (!normalizedPrioritiesThisSession) {
+      try {
+        await api('/api/external/tasks/normalize-priorities', { method: 'POST' });
+        normalizedPrioritiesThisSession = true;
+      } catch (_) {}
     }
     try {
       const list = await api('/api/external/projects');

@@ -63,6 +63,9 @@ def _task_row_to_dict(row: Any) -> dict[str, Any]:
                 d[key] = json.loads(d[key])
             except (TypeError, json.JSONDecodeError):
                 pass
+    # All tasks expose at least priority 0; never return null to clients
+    if d.get("priority") is None:
+        d["priority"] = 0
     return d
 
 
@@ -87,10 +90,11 @@ def create_task(
     task_id: str | None = None,
     flagged: bool = False,
 ) -> dict[str, Any]:
-    """Create a single task. All mutations go through Task Service. Uses ULID for id."""
+    """Create a single task. All mutations go through Task Service. Uses ULID for id. Priority defaults to 0."""
     if status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
-    if priority is not None and (priority < PRIORITY_MIN or priority > PRIORITY_MAX):
+    eff_priority = priority if priority is not None else 0
+    if eff_priority < PRIORITY_MIN or eff_priority > PRIORITY_MAX:
         raise ValueError(f"priority must be {PRIORITY_MIN}-{PRIORITY_MAX}")
     _validate_available_due(available_date, due_date)
     tid = task_id or _new_task_id()
@@ -109,7 +113,7 @@ def create_task(
                     created_at, updated_at, completed_at, flagged
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    tid, next_num, title, description or None, notes or None, status, priority,
+                    tid, next_num, title, description or None, notes or None, status, eff_priority,
                     available_date, due_date, rec_json, recurrence_parent_id,
                     now, now, None, flag_val,
                 ),
@@ -122,7 +126,7 @@ def create_task(
                     created_at, updated_at, completed_at, flagged
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    tid, title, description or None, notes or None, status, priority,
+                    tid, title, description or None, notes or None, status, eff_priority,
                     available_date, due_date, rec_json, recurrence_parent_id,
                     now, now, None, flag_val,
                 ),
@@ -296,7 +300,7 @@ def update_task(
     due_date: str | None = _UNSET,
     flagged: bool | None = None,
 ) -> dict[str, Any] | None:
-    """Update task fields. Only provided fields are changed. Pass _UNSET to leave priority unchanged, None to clear priority. Pass None for available_date/due_date to clear."""
+    """Update task fields. Only provided fields are changed. Pass _UNSET to leave priority unchanged; None is stored as 0. Pass None for available_date/due_date to clear."""
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if priority is not _UNSET and priority is not None and (priority < PRIORITY_MIN or priority > PRIORITY_MAX):
@@ -325,7 +329,8 @@ def update_task(
             if status == "complete":
                 updates.append("completed_at = ?"); params.append(now)
         if priority is not _UNSET:
-            updates.append("priority = ?"); params.append(priority)
+            # Never write null: treat None as 0
+            updates.append("priority = ?"); params.append(0 if priority is None else priority)
         if available_date is not _UNSET:
             updates.append("available_date = ?"); params.append(available_date)
         if due_date is not _UNSET:
@@ -337,6 +342,18 @@ def update_task(
         _record_history(conn, task_id, "updated", {"updated_at": now})
         conn.commit()
         return get_task(task_id)
+    finally:
+        conn.close()
+
+
+def normalize_task_priorities() -> int:
+    """Set priority to 0 for all tasks where priority IS NULL. Returns number of rows updated."""
+    conn = get_connection()
+    try:
+        cur = conn.execute("UPDATE tasks SET priority = 0 WHERE priority IS NULL")
+        n = cur.rowcount
+        conn.commit()
+        return n
     finally:
         conn.close()
 
@@ -486,7 +503,7 @@ def complete_recurring_task(task_id: str, advance_recurrence: bool = True) -> di
                     description=row.get("description"),
                     notes=row.get("notes"),
                     status="incomplete",
-                    priority=row.get("priority"),
+                    priority=row["priority"] if row.get("priority") is not None else 0,
                     available_date=avail,
                     due_date=due,
                     recurrence=rec,
