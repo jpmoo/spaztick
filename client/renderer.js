@@ -2555,6 +2555,7 @@
     currentListSettingsListId = listId;
     const overlay = document.getElementById('list-settings-overlay');
     const filtersEl = document.getElementById('list-settings-filters');
+    const columnsEl = document.getElementById('list-settings-columns');
     const sortEl = document.getElementById('list-settings-sort');
     if (!overlay || !filtersEl || !sortEl) return;
     (async () => {
@@ -2579,6 +2580,20 @@
         filtersEl.innerHTML = renderFilterGroup({ type: 'group', operator: 'AND', children: [] }, true);
         sortEl.innerHTML = listSettingsSortToRow({});
       }
+      const source = 'list:' + listId;
+      const { order, visible } = getDisplayProperties(source);
+      const allOrdered = [...order];
+      TASK_PROPERTY_KEYS.forEach((k) => { if (!allOrdered.includes(k)) allOrdered.push(k); });
+      if (columnsEl) {
+        columnsEl.innerHTML = allOrdered.map((key) => {
+          const label = TASK_PROPERTY_LABELS[key] || key;
+          const checked = visible.has(key);
+          return `<li class="list-settings-column-row">
+            <input type="checkbox" id="list-col-${key}" ${checked ? 'checked' : ''}>
+            <label for="list-col-${key}">${label}</label>
+          </li>`;
+        }).join('');
+      }
       setupListSettingsModalHandlers();
       overlay.classList.remove('hidden');
       overlay.setAttribute('aria-hidden', 'false');
@@ -2587,9 +2602,26 @@
 
   function setupListSettingsModalHandlers() {
     const filtersEl = document.getElementById('list-settings-filters');
+    const columnsEl = document.getElementById('list-settings-columns');
     const sortEl = document.getElementById('list-settings-sort');
     const addSortBtn = document.getElementById('list-settings-add-sort');
     if (!filtersEl || !sortEl) return;
+    const listId = currentListSettingsListId;
+    const listSource = listId ? 'list:' + listId : null;
+    if (columnsEl && listSource) {
+      columnsEl.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+        cb.addEventListener('change', (e) => {
+          const key = e.target.id.replace('list-col-', '');
+          const { order: o, visible: v } = getDisplayProperties(listSource);
+          if (e.target.checked) v.add(key);
+          else v.delete(key);
+          if (!o.includes(key)) o.push(key);
+          const { showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, sf, sc, sh);
+          if (lastTaskSource === listSource) refreshTaskList();
+        });
+      });
+    }
     function syncDatePickerFromText(row) {
       const dateInput = row && row.querySelector('.list-filter-date-picker');
       const textInput = row && row.querySelector('.list-filter-value');

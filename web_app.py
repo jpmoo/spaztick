@@ -346,6 +346,7 @@ def _require_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) ->
 def external_list_tasks(
     status: str | None = None,
     project_id: str | None = None,
+    inbox: bool = False,
     tag: str | None = None,
     due_by: str | None = None,
     available_by: str | None = None,
@@ -355,11 +356,15 @@ def external_list_tasks(
     priority: int | None = None,
     limit: int = 500,
 ):
+    """List tasks. Use project_id for a project's short_id or id. Use inbox=true (or project_id=inbox) for tasks with no project."""
     from task_service import list_tasks
+    use_inbox = inbox or (project_id and str(project_id).strip().lower() == "inbox")
+    pid = None if use_inbox else project_id
     try:
         tasks = list_tasks(
             status=status,
-            project_id=project_id,
+            project_id=pid,
+            inbox=use_inbox,
             tag=tag,
             due_by=due_by,
             available_by=available_by,

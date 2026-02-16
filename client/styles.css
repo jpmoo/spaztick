@@ -185,27 +185,28 @@ body {
   pointer-events: none;
 }
 
-/* Resize handles: small strip centered vertically on panel edge; hit area for dragging */
+/* Vertical handles: fixed-height strip centered vertically; border cuts through center; full strip is hit area */
 .resize-handle-vertical {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  height: 44px;
-  width: 8px;
+  height: 100px;
+  width: 6px;
   z-index: 3;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-/* Left panel: handle on main-area, centered on left panel's right face */
+/* Left panel: handle in main-area, centered on panel's right edge */
 #left-panel-resize-handle {
-  left: calc(var(--float-gap) + var(--left-panel-width, var(--panel-max-width)) - 4px);
+  left: calc(var(--float-gap) + var(--left-panel-width, var(--panel-max-width)) - 3px);
 }
-/* Right panel: handle inside panel, on its left edge, vertically centered */
+/* Right panel: handle inside panel on its left edge, same vertical center */
 #right-panel #right-panel-resize-handle {
   left: 0;
   top: 50%;
   transform: translateY(-50%);
+  right: auto;
 }
 .main-area.left-collapsed #left-panel-resize-handle {
   display: none;
@@ -332,20 +333,20 @@ body[data-theme="dark"] .header-icon-settings {
 .resize-handle-vertical {
   cursor: ew-resize;
 }
-/* Vertical handle grip: 3 dots centered, bulging from edge */
+/* Vertical handle grip: 3 small dots centered (panel border cuts through) */
 .resize-handle-vertical::after {
   content: '';
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: var(--text-muted);
   box-shadow:
-    0 10px 0 var(--text-muted),
-    0 20px 0 var(--text-muted);
+    0 6px 0 var(--text-muted),
+    0 12px 0 var(--text-muted);
   opacity: 0.6;
   transition: opacity 0.15s ease;
 }
@@ -367,6 +368,10 @@ body[data-theme="dark"] .header-icon-settings {
 .left-panel .panel-header,
 .right-panel .panel-header {
   background: var(--surface-header);
+}
+.right-panel .panel-header {
+  padding-top: 0;
+  margin-top: 0;
 }
 /* Center panel: no title band — same surface as content, no border; 20px buffer above title/buttons */
 #center-panel .panel-header {
@@ -1418,7 +1423,8 @@ body[data-theme="dark"] .header-icon-settings {
 }
 .resize-handle {
   flex-shrink: 0;
-  height: 8px;
+  height: 6px;
+  margin: 0;
   cursor: ns-resize;
   position: relative;
   display: flex;
@@ -1453,15 +1459,15 @@ body[data-theme="dark"] .header-icon-settings {
   background: transparent;
 }
 .resize-handle.resize-handle-horizontal::after {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: var(--text-muted);
   opacity: 0.6;
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.08),
-    10px 0 0 var(--text-muted),
-    20px 0 0 var(--text-muted);
+    8px 0 0 var(--text-muted),
+    16px 0 0 var(--text-muted);
 }
 .resize-handle.resize-handle-horizontal:hover::after {
   opacity: 0.95;
@@ -1470,47 +1476,42 @@ body[data-theme="dark"] .resize-handle.resize-handle-horizontal::after,
 body[data-theme="cupertino"] .resize-handle.resize-handle-horizontal::after {
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.12),
-    10px 0 0 var(--text-muted),
-    20px 0 0 var(--text-muted);
+    8px 0 0 var(--text-muted),
+    16px 0 0 var(--text-muted);
 }
 
-/* Left/right panel: vertical resize handle (dots on panel edge); width/position in .resize-handle-vertical and #left/right-panel-resize-handle */
+/* Left/right panel: vertical resize handle (small dots, border through middle) */
 .resize-handle.resize-handle-vertical {
-  width: 8px;
+  width: 6px;
   min-height: 0;
   cursor: ew-resize;
 }
-/* Dots grip: overrides earlier .resize-handle-vertical::after with bulging dots */
 .resize-handle.resize-handle-vertical::after {
   content: '';
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: var(--text-muted);
-  box-shadow:
-    0 10px 0 var(--text-muted),
-    0 20px 0 var(--text-muted);
   opacity: 0.6;
   box-shadow:
     0 0 0 1px rgba(0, 0, 0, 0.08),
-    0 10px 0 var(--text-muted),
-    0 20px 0 var(--text-muted);
+    0 6px 0 var(--text-muted),
+    0 12px 0 var(--text-muted);
   transition: opacity 0.15s ease;
 }
 .resize-handle.resize-handle-vertical:hover::after {
   opacity: 0.95;
 }
-/* Subtle bulge: light shadow so dots read as raised (dark themes: use lighter ring) */
 body[data-theme="dark"] .resize-handle.resize-handle-vertical::after,
 body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.12),
-    0 10px 0 var(--text-muted),
-    0 20px 0 var(--text-muted);
+    0 6px 0 var(--text-muted),
+    0 12px 0 var(--text-muted);
 }
 
 .chat-region {
@@ -1519,6 +1520,8 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding-top: 0;
+  margin-top: 0;
 }
 .chat-header-row {
   display: flex;
@@ -1526,6 +1529,7 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   flex-shrink: 0;
   height: var(--header-height);
   padding: 0 16px;
+  margin: 0;
   gap: 6px;
   border-bottom: 1px solid var(--border);
   background: var(--surface-header);
@@ -1607,6 +1611,11 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   color: var(--text);
   border: 1px solid var(--border-subtle);
   border-bottom-left-radius: 5px;
+}
+/* Cupertino: chat responses a slightly bluer shade of the region background */
+body[data-theme="cupertino"] .chat-message.model .bubble {
+  background: #e8ecf2;
+  border-color: #d8dce6;
 }
 .chat-message .text {
   white-space: pre-wrap;
@@ -1783,6 +1792,26 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
 .list-settings-filters,
 .list-settings-sort {
   margin-bottom: 10px;
+}
+.list-settings-columns {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+.list-settings-columns .list-settings-column-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.list-settings-columns .list-settings-column-row input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+.list-settings-columns .list-settings-column-row label {
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
 }
 .list-settings-filter-row,
 .list-settings-sort-row {

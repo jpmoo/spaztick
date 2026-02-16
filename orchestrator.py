@@ -138,13 +138,13 @@ Available tools: task_create, task_list, task_info, task_update, delete_task, pr
 task_create: Only "title" is required. Omit description, priority, dates, projects, tags, flagged if the user did not provide them. New tasks are incomplete and not flagged by default. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Optional "flagged": true to create a flagged task.
 Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (e.g. flagged, due_date).
 
-task_list: "List tasks", "list my tasks", "show tasks", "gimme tasks in X available tomorrow", etc. must be answered with the task_list JSON only. Any request that asks for tasks (optionally in a project, available/due on a date) is a task_list call. For project filter use short_id only (e.g. 1off), never full project name. User can filter and sort.
+task_list: "List tasks", "list my tasks", "show tasks", "gimme tasks in X available tomorrow", etc. must be answered with the task_list JSON only. Any request that asks for tasks (optionally in a project, available/due on a date) is a task_list call. For project filter use short_id only (e.g. 1off), never full project name. Use project/short_id "inbox" when the user asks for inbox tasks—inbox means tasks that have no project (unassigned). User can filter and sort.
 Never include completed tasks unless the user explicitly asks for them (e.g. "completed", "done", "finished") or asks for "all" tasks. When no status is given, always use status "incomplete". Do not send status "complete" unless the user clearly asked for completed/done tasks or "all tasks".
-Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag or tags, project or short_id, due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false), priority (number 0-3, or label: "high"/"medium high"/"medium low"/"low", or color: "red"/"orange"/"yellow"/"green"; 3=high=red, 2=medium high=orange, 1=medium low=yellow, 0=low=green).
+Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag or tags, project or short_id (use "inbox" for tasks with no project), due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false), priority (number 0-3, or label: "high"/"medium high"/"medium low"/"low", or color: "red"/"orange"/"yellow"/"green"; 3=high=red, 2=medium high=orange, 1=medium low=yellow, 0=low=green).
 Overdue semantics: A task due today is NOT overdue unless the user says "overdue tomorrow" or asks on a later date. Use overdue (not due_by) when the user asks for "overdue" or "overdue tasks". overdue: true or overdue: "today" → tasks due yesterday or earlier; overdue: "tomorrow" → tasks due today or earlier.
 Dates: "today", "tomorrow", "yesterday", "now" (use "today")—app resolves them.
-Examples: "list overdue tasks" -> {"name": "task_list", "parameters": {"overdue": true, "status": "incomplete"}}. "overdue tomorrow" -> {"name": "task_list", "parameters": {"overdue": "tomorrow", "status": "incomplete"}}. "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "gimme tasks in 1off available tomorrow" -> {"name": "task_list", "parameters": {"short_id": "1off", "available_by": "tomorrow", "status": "incomplete"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}.
-Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id, due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged, priority. Priority: use 0-3, or "high"/"medium high"/"medium low"/"low", or "red"/"orange"/"yellow"/"green". E.g. "high priority tasks" -> priority "high" or 3; "red priority" -> 3; "priority 2" -> 2.
+Examples: "list overdue tasks" -> {"name": "task_list", "parameters": {"overdue": true, "status": "incomplete"}}. "list inbox tasks" or "tasks in inbox" -> {"name": "task_list", "parameters": {"short_id": "inbox", "status": "incomplete"}}. "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "gimme tasks in 1off available tomorrow" -> {"name": "task_list", "parameters": {"short_id": "1off", "available_by": "tomorrow", "status": "incomplete"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}.
+Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id (or "inbox"), due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged, priority. Priority: use 0-3, or "high"/"medium high"/"medium low"/"low", or "red"/"orange"/"yellow"/"green". E.g. "high priority tasks" -> priority "high" or 3; "red priority" -> 3; "priority 2" -> 2.
 
 task_info: User identifies the task by its friendly id (number). "Tell me about 1", "about task 1", "task #1", "task 1", or just "1" after discussing tasks/projects always means task_info with that number. Never answer with general knowledge about the number—always call task_info.
 Output format: {"name": "task_info", "parameters": {"number": 1}} (use the number the user said).
@@ -261,13 +261,17 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
         out["tag"] = str(tag).strip()
     project = params.get("project") or params.get("short_id")
     if project and str(project).strip():
-        try:
-            from project_service import get_project_by_short_id
-            p = get_project_by_short_id(str(project).strip())
-            if p:
-                out["project_id"] = p["id"]
-        except Exception:
-            pass
+        raw = str(project).strip()
+        if raw.lower() == "inbox":
+            out["inbox"] = True
+        else:
+            try:
+                from project_service import get_project_by_short_id
+                p = get_project_by_short_id(raw)
+                if p:
+                    out["project_id"] = p["id"]
+            except Exception:
+                pass
     # Overdue: tasks due before reference date → due_by = (reference - 1 day). "overdue" or "overdue today" → due_by yesterday; "overdue tomorrow" → due_by today.
     if "overdue" in params and params.get("overdue") is not None:
         ref = params.get("overdue")
@@ -1003,6 +1007,7 @@ def run_orchestrator(
                 limit=500,
                 status=validated.get("status"),
                 project_id=validated.get("project_id"),
+                inbox=validated.get("inbox") or False,
                 tag=validated.get("tag"),
                 due_by=validated.get("due_by"),
                 available_by=validated.get("available_by"),

@@ -203,6 +203,7 @@ def get_tasks_that_depend_on(task_id: str) -> list[dict[str, Any]]:
 def list_tasks(
     status: str | None = None,
     project_id: str | None = None,
+    inbox: bool = False,
     tag: str | None = None,
     due_by: str | None = None,
     available_by: str | None = None,
@@ -220,6 +221,7 @@ def list_tasks(
     title_contains: substring match on title (case-insensitive).
     sort_by: due_date, available_date, created_at, completed_at, title (default created_at DESC).
     priority: 0-3 to filter by exact priority (3 = highest).
+    inbox: if True, only tasks that have no project (inbox = unassigned). Ignored if project_id is set.
     """
     conn = get_connection()
     try:
@@ -228,7 +230,9 @@ def list_tasks(
         if status:
             sql += " AND status = ?"
             params.append(status)
-        if project_id:
+        if inbox and not project_id:
+            sql += " AND id NOT IN (SELECT task_id FROM task_projects)"
+        elif project_id:
             sql += " AND id IN (SELECT task_id FROM task_projects WHERE project_id = ?)"
             params.append(project_id)
         if tag:
