@@ -1140,7 +1140,7 @@ def run_orchestrator(
         validated = resolve_task_dates(validated, tz_name)
         num = validated.pop("number")
         try:
-            from task_service import get_task_by_number, update_task, remove_task_project, add_task_project, remove_task_tag, add_task_tag
+            from task_service import get_task_by_number, update_task, complete_recurring_task, remove_task_project, add_task_project, remove_task_tag, add_task_tag
             task = get_task_by_number(num)
         except Exception as e:
             return (f"Error looking up task: {e}", False, None)
@@ -1154,6 +1154,13 @@ def run_orchestrator(
         has_tags = "tags" in validated
         if not kwargs and not has_projects and not has_remove_projects and not has_tags:
             return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", False, None)
+        # When marking a recurring task complete, create next instance and mark current complete
+        if kwargs.get("status") == "complete" and task.get("recurrence"):
+            try:
+                complete_recurring_task(task_id)
+            except Exception as e:
+                return (f"Error completing recurring task: {e}", False, None)
+            kwargs = {k: v for k, v in kwargs.items() if k != "status"}
         if kwargs:
             try:
                 updated = update_task(task_id, **kwargs)

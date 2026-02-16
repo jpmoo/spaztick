@@ -257,26 +257,34 @@ def api_get_task(task_id: str):
 
 @app.put("/api/tasks/{task_id}")
 def api_update_task(task_id: str, body: dict):
-    from task_service import get_task, update_task, remove_task_project, remove_task_tag, add_task_project, add_task_tag
+    from task_service import get_task, update_task, complete_recurring_task, remove_task_project, remove_task_tag, add_task_project, add_task_tag
     t = get_task(task_id)
     if t is None:
         raise HTTPException(status_code=404, detail="Task not found")
-    try:
-        from task_service import _UNSET
-        update_task(
-            task_id,
-            title=body.get("title"),
-            description=body.get("description"),
-            notes=body.get("notes"),
-            status=body.get("status"),
-            priority=body["priority"] if "priority" in body else _UNSET,
-            available_date=(body.get("available_date") or None) if "available_date" in body else _UNSET,
-            due_date=(body.get("due_date") or None) if "due_date" in body else _UNSET,
-            flagged=body.get("flagged") if "flagged" in body else None,
-            recurrence=body["recurrence"] if "recurrence" in body else _UNSET,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    status_val = (body.get("status") or "").strip() or None
+    use_recurring_complete = status_val == "complete" and t.get("recurrence")
+    if use_recurring_complete:
+        try:
+            complete_recurring_task(task_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
+        try:
+            from task_service import _UNSET
+            update_task(
+                task_id,
+                title=body.get("title"),
+                description=body.get("description"),
+                notes=body.get("notes"),
+                status=body.get("status"),
+                priority=body["priority"] if "priority" in body else _UNSET,
+                available_date=(body.get("available_date") or None) if "available_date" in body else _UNSET,
+                due_date=(body.get("due_date") or None) if "due_date" in body else _UNSET,
+                flagged=body.get("flagged") if "flagged" in body else None,
+                recurrence=body["recurrence"] if "recurrence" in body else _UNSET,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if "projects" in body:
         for pid in t.get("projects") or []:
             remove_task_project(task_id, pid)
@@ -466,29 +474,37 @@ async def external_update_task(task_id: str, request: Request):
     if getattr(load_config(), "debug", False):
         logger.warning("[API] PUT /api/external/tasks/%s body keys: %s, recurrence in body: %s, body: %s",
                        task_id, list(body.keys()), "recurrence" in body, body)
-    from task_service import get_task, get_task_by_number, update_task, remove_task_project, remove_task_tag, add_task_project, add_task_tag
+    from task_service import get_task, get_task_by_number, update_task, complete_recurring_task, remove_task_project, remove_task_tag, add_task_project, add_task_tag
     t = get_task(task_id)
     if t is None and task_id.isdigit():
         t = get_task_by_number(int(task_id))
     if t is None:
         raise HTTPException(status_code=404, detail="Task not found")
     tid = t["id"]
-    try:
-        from task_service import _UNSET
-        update_task(
-            tid,
-            title=body.get("title"),
-            description=body.get("description"),
-            notes=body.get("notes"),
-            status=body.get("status"),
-            priority=body["priority"] if "priority" in body else _UNSET,
-            available_date=(body["available_date"] or None) if "available_date" in body else _UNSET,
-            due_date=(body["due_date"] or None) if "due_date" in body else _UNSET,
-            flagged=body.get("flagged") if "flagged" in body else None,
-            recurrence=body["recurrence"] if "recurrence" in body else _UNSET,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    status_val = (body.get("status") or "").strip() or None
+    use_recurring_complete = status_val == "complete" and t.get("recurrence")
+    if use_recurring_complete:
+        try:
+            complete_recurring_task(tid)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    else:
+        try:
+            from task_service import _UNSET
+            update_task(
+                tid,
+                title=body.get("title"),
+                description=body.get("description"),
+                notes=body.get("notes"),
+                status=body.get("status"),
+                priority=body["priority"] if "priority" in body else _UNSET,
+                available_date=(body["available_date"] or None) if "available_date" in body else _UNSET,
+                due_date=(body["due_date"] or None) if "due_date" in body else _UNSET,
+                flagged=body.get("flagged") if "flagged" in body else None,
+                recurrence=body["recurrence"] if "recurrence" in body else _UNSET,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     if "projects" in body:
         for pid in (t.get("projects") or []):
             remove_task_project(tid, pid)

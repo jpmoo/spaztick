@@ -8,7 +8,7 @@ import json
 import logging
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 try:
@@ -464,11 +464,138 @@ def remove_task_dependency(task_id: str, depends_on_task_id: str) -> None:
         conn.close()
 
 
+def _recurrence_weekday_to_python(day: int | str) -> int:
+    """Spec: 0=Sun..6=Sat. Python: Mon=0, Tue=1, ..., Sun=6. Returns Python weekday."""
+    if isinstance(day, str):
+        codes = {"su": 6, "mo": 0, "tu": 1, "we": 2, "th": 3, "fr": 4, "sa": 5}
+        return codes.get(day.lower()[:2], 0)
+    return (day - 1) % 7 if 0 <= day <= 6 else 0
+
+
+def _recurrence_next_occurrence(rec: dict[str, Any], reference: date) -> date | None:
+    """
+    Compute the next occurrence date strictly after the reference date per recurrence rule.
+    Returns None if no next occurrence can be determined (invalid rule or unsupported).
+    """
+    freq = (rec.get("freq") or "daily").lower()
+    interval = max(1, int(rec.get("interval") or 1))
+
+    if freq == "daily":
+        return reference + timedelta(days=interval)
+
+    if freq == "weekly":
+        by_weekday = rec.get("by_weekday")
+        if not by_weekday or not isinstance(by_weekday, list):
+            return reference + timedelta(days=7 * interval)
+        weekdays_py = [_recurrence_weekday_to_python(d) for d in by_weekday]
+        # Epoch: Monday of reference week (Python Monday=0)
+        epoch = reference - timedelta(days=reference.weekday())
+        # Next occurrence: smallest d > reference with d.weekday() in weekdays_py and (d - epoch).days // 7 % interval == 0
+        for k in range(1, 7 * interval + 8):
+            d = reference + timedelta(days=k)
+            if d.weekday() not in weekdays_py:
+                continue
+            if ((d - epoch).days // 7) % interval == 0:
+                return d
+        return reference + timedelta(days=7 * interval)
+
+    if freq == "monthly":
+        rule = rec.get("monthly_rule")
+        if rule == "day_of_month":
+            day_num = rec.get("monthly_day")
+            if day_num is None or not 1 <= day_num <= 31:
+                return reference + timedelta(days=28)
+            # Next month(s) until we get a valid day on or after reference
+            y, m = reference.year, reference.month
+            for _ in range(0, 25):
+                try:
+                    cand = date(y, m, min(day_num, _month_max_day(y, m)))
+                except ValueError:
+                    cand = date(y, m, _month_max_day(y, m))
+                if cand > reference:
+                    return cand
+                m += 1
+                if m > 12:
+                    m = 1
+                    y += 1
+            return None
+        if rule == "weekday_of_month":
+            week_ord = rec.get("monthly_week")
+            wday_spec = rec.get("monthly_weekday")
+            if week_ord is None or wday_spec is None:
+                return reference + timedelta(days=28)
+            wday_py = _recurrence_weekday_to_python(wday_spec)
+            y, m = reference.year, reference.month
+            for _ in range(0, 25):
+                cand = _nth_weekday_in_month(y, m, week_ord, wday_py)
+                if cand and cand > reference:
+                    return cand
+                m += 1
+                if m > 12:
+                    m = 1
+                    y += 1
+            return None
+        return reference + timedelta(days=28)
+
+    if freq == "yearly":
+        ym = rec.get("yearly_month")
+        yd = rec.get("yearly_day")
+        if ym is None or not 1 <= ym <= 12:
+            return reference + timedelta(days=365)
+        if yd is None or not 1 <= yd <= 31:
+            yd = 1
+        y = reference.year
+        for _ in range(0, 5):
+            try:
+                cand = date(y, ym, min(yd, _month_max_day(y, ym)))
+            except ValueError:
+                cand = date(y, ym, _month_max_day(y, ym))
+            if cand > reference:
+                return cand
+            y += interval
+        return None
+
+    return reference + timedelta(days=interval)
+
+
+def _month_max_day(year: int, month: int) -> int:
+    if month in (4, 6, 9, 11):
+        return 30
+    if month == 2:
+        return 29 if (year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)) else 28
+    return 31
+
+
+def _nth_weekday_in_month(year: int, month: int, n: int, weekday_py: int) -> date | None:
+    """n: 1=First, 2=Second, 3=Third, 4=Fourth, 5=Last. weekday_py: Python Mon=0..Sun=6."""
+    try:
+        first = date(year, month, 1)
+    except ValueError:
+        return None
+    # weekday of 1st
+    shift = (weekday_py - first.weekday()) % 7
+    if shift:
+        first_occ = first + timedelta(days=shift)
+    else:
+        first_occ = first
+    if n == 5:
+        # Last: last occurrence of this weekday in the month
+        last_day = date(year, month, _month_max_day(year, month))
+        back = (last_day.weekday() - weekday_py) % 7
+        return last_day - timedelta(days=back)
+    # 1..4: first_occ + (n-1)*7
+    if 1 <= n <= 4:
+        cand = first_occ + timedelta(days=(n - 1) * 7)
+        if cand.month == month:
+            return cand
+    return None
+
+
 def complete_recurring_task(task_id: str, advance_recurrence: bool = True) -> dict[str, Any] | None:
     """
     Mark task done and optionally create the next instance (recurrence model).
     When completed: current instance gets done + completed_at; new instance is created
-    with advanced available_date/due_date and same recurrence_parent_id.
+    with advanced available_date/due_date and same recurrence_parent_id, per RECURRENCE_SPEC.
     """
     conn = get_connection()
     try:
@@ -486,46 +613,70 @@ def complete_recurring_task(task_id: str, advance_recurrence: bool = True) -> di
         _record_history(conn, task_id, "completed", {"completed_at": now})
         recurrence = row.get("recurrence")
         recurrence_parent_id = row.get("recurrence_parent_id") or task_id
-        next_task = None
         if advance_recurrence and recurrence:
             try:
                 rec = json.loads(recurrence) if isinstance(recurrence, str) else recurrence
             except (TypeError, json.JSONDecodeError):
                 rec = None
             if rec:
-                # Advance dates (simplified: caller or future logic can implement rule-based advance)
-                from datetime import datetime as dt
-                avail = row.get("available_date")
-                due = row.get("due_date")
-                # Placeholder: add 1 day; real impl would use recurrence rule (daily/weekly/monthly)
-                if avail:
+                anchor = (rec.get("anchor") or "scheduled").lower()
+                ref_str = None
+                if anchor == "completed":
+                    ref_str = _date_only(now) or now[:10]
+                else:
+                    ref_str = _date_only(row.get("due_date") or "") or _date_only(row.get("available_date") or "")
+                if ref_str:
                     try:
-                        d = dt.fromisoformat(avail.replace("Z", "+00:00"))
-                        # Simple +1 day for demo
-                        from datetime import timedelta
-                        d = d + timedelta(days=1)
-                        avail = d.strftime("%Y-%m-%d")
-                    except Exception:
-                        pass
-                if due:
-                    try:
-                        d = dt.fromisoformat(due.replace("Z", "+00:00"))
-                        from datetime import timedelta
-                        d = d + timedelta(days=1)
-                        due = d.strftime("%Y-%m-%d")
-                    except Exception:
-                        pass
-                next_task = create_task(
-                    row["title"],
-                    description=row.get("description"),
-                    notes=row.get("notes"),
-                    status="incomplete",
-                    priority=row["priority"] if row.get("priority") is not None else 0,
-                    available_date=avail,
-                    due_date=due,
-                    recurrence=rec,
-                    recurrence_parent_id=recurrence_parent_id,
-                )
+                        ref_date = date.fromisoformat(ref_str)
+                    except ValueError:
+                        ref_date = date.today()
+                    # End condition: after_count — count existing instances in chain (including this one)
+                    end_condition = rec.get("end_condition") or "never"
+                    skip_from_count = False
+                    if end_condition == "after_count":
+                        count = conn.execute(
+                            "SELECT COUNT(*) FROM tasks WHERE recurrence_parent_id = ?",
+                            (recurrence_parent_id,),
+                        ).fetchone()[0]
+                        if count >= int(rec.get("end_after_count") or 0):
+                            skip_from_count = True
+                    next_due_date = _recurrence_next_occurrence(rec, ref_date) if not skip_from_count else None
+                    if next_due_date and end_condition == "end_date":
+                        end_d = _date_only(rec.get("end_date") or "")
+                        if end_d and next_due_date.isoformat() > end_d:
+                            next_due_date = None
+                    if next_due_date:
+                        prev_due_str = _date_only(row.get("due_date") or "")
+                        prev_avail_str = _date_only(row.get("available_date") or "")
+                        next_due_str = next_due_date.isoformat()
+                        delta_days = 0
+                        if prev_due_str:
+                            try:
+                                prev_due = date.fromisoformat(prev_due_str)
+                                delta_days = (next_due_date - prev_due).days
+                            except ValueError:
+                                pass
+                        if prev_avail_str and delta_days != 0:
+                            try:
+                                prev_avail = date.fromisoformat(prev_avail_str)
+                                new_avail = prev_avail + timedelta(days=delta_days)
+                                next_avail_str = new_avail.isoformat()
+                            except ValueError:
+                                next_avail_str = next_due_str
+                        else:
+                            next_avail_str = next_due_str if prev_avail_str else None
+                        create_task(
+                            row["title"],
+                            description=row.get("description"),
+                            notes=row.get("notes"),
+                            status="incomplete",
+                            priority=row["priority"] if row.get("priority") is not None else 0,
+                            available_date=next_avail_str,
+                            due_date=next_due_str,
+                            recurrence=rec,
+                            recurrence_parent_id=recurrence_parent_id,
+                        )
+                    # else: no next (past end_date or count exhausted); only mark complete
         conn.commit()
         return get_task(task_id)
     finally:
