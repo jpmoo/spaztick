@@ -605,7 +605,7 @@ def _format_task_created_for_telegram(task: dict[str, Any], tz_name: str = "UTC"
 
 
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
-    """Format task list: □/■ [★] title (#n) [avail] [🟡/🔴] due [name (short_id)...]. Due/avail as today/yesterday/tomorrow or m/d. 🟡 due today, 🔴 overdue."""
+    """Format task list for external API/Telegram: status (□/■) flag (★ if set) title (number) in {short_ids or inbox} [🟡/🔴] due_date."""
     if not tasks:
         return "No tasks yet."
     try:
@@ -628,31 +628,34 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         flagged = t.get("flagged") in (1, True, "1")
         status = t.get("status") or "incomplete"
         status_icon = "■" if status == "complete" else "□"
+        flag_str = "★" if flagged else ""
         title = (t.get("title") or "").strip() or "(no title)"
         num = t.get("number")
-        friendly_id = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
-        part = f"{status_icon}{'★' if flagged else ''} {title} {friendly_id}"
-        if t.get("available_date"):
-            part += f" avail {_friendly_date(t['available_date'], tz_name)}"
+        num_str = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
+        # in {short_id, short_id} or inbox
+        if get_project and t.get("projects"):
+            short_ids = []
+            for pid in t["projects"]:
+                p = get_project(pid)
+                if p:
+                    short_id = (p.get("short_id") or "").strip() or (p.get("id") or "")[:8]
+                    if short_id:
+                        short_ids.append(short_id)
+            in_projects = ", ".join(short_ids) if short_ids else "inbox"
+        else:
+            in_projects = "inbox"
+        # no circle / yellow (due today) / red (overdue) + due_date
+        due_part = ""
         if t.get("due_date"):
             due = t["due_date"]
             due_friendly = _friendly_date(due, tz_name)
             if due < today:
-                part += f" 🔴 due {due_friendly}"
+                due_part = f" 🔴 {due_friendly}"
             elif due == today:
-                part += f" 🟡 due {due_friendly}"
+                due_part = f" 🟡 {due_friendly}"
             else:
-                part += f" due {due_friendly}"
-        project_parts = []
-        if get_project and t.get("projects"):
-            for pid in t["projects"]:
-                p = get_project(pid)
-                if p:
-                    name = (p.get("name") or "").strip() or "(no name)"
-                    short_id = (p.get("short_id") or "").strip() or p.get("id", "")[:8]
-                    project_parts.append(f"{name} ({short_id})")
-        if project_parts:
-            part += " " + " ".join(project_parts)
+                due_part = f" {due_friendly}"
+        part = f"{status_icon}{' ' + flag_str if flag_str else ''} {title} {num_str} in {in_projects}{due_part}"
         lines.append(part)
     if total > max_show:
         lines.append(f"... and {total - max_show} more.")

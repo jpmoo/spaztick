@@ -185,20 +185,27 @@ body {
   pointer-events: none;
 }
 
-/* Resize handles: between floating panels and center; end above bottom bar */
+/* Resize handles: small strip centered vertically on panel edge; hit area for dragging */
 .resize-handle-vertical {
   position: absolute;
-  top: var(--float-gap);
-  bottom: calc(var(--float-gap) + 48px + var(--float-gap));
-  width: 4px;
-  min-height: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 44px;
+  width: 8px;
   z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
+/* Left panel: handle on main-area, centered on left panel's right face */
 #left-panel-resize-handle {
-  left: calc(var(--float-gap) + var(--left-panel-width, var(--panel-max-width)));
+  left: calc(var(--float-gap) + var(--left-panel-width, var(--panel-max-width)) - 4px);
 }
-#right-panel-resize-handle {
-  right: calc(var(--float-gap) + var(--right-panel-width, var(--panel-max-width)));
+/* Right panel: handle inside panel, on its left edge, vertically centered */
+#right-panel #right-panel-resize-handle {
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 .main-area.left-collapsed #left-panel-resize-handle {
   display: none;
@@ -325,12 +332,25 @@ body[data-theme="dark"] .header-icon-settings {
 .resize-handle-vertical {
   cursor: ew-resize;
 }
+/* Vertical handle grip: 3 dots centered, bulging from edge */
 .resize-handle-vertical::after {
-  width: 2px;
-  height: 28px;
+  content: '';
+  position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  box-shadow:
+    0 10px 0 var(--text-muted),
+    0 20px 0 var(--text-muted);
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+.resize-handle-vertical:hover::after {
+  opacity: 0.95;
 }
 
 
@@ -348,11 +368,11 @@ body[data-theme="dark"] .header-icon-settings {
 .right-panel .panel-header {
   background: var(--surface-header);
 }
-/* Center panel: no title band — same surface as content, no border; 10px buffer above title/buttons */
+/* Center panel: no title band — same surface as content, no border; 20px buffer above title/buttons */
 #center-panel .panel-header {
   background: var(--surface);
   border-bottom: none;
-  padding-top: 10px;
+  padding-top: 20px;
 }
 .navigator-header {
   gap: 8px;
@@ -1398,15 +1418,17 @@ body[data-theme="dark"] .header-icon-settings {
 }
 .resize-handle {
   flex-shrink: 0;
-  height: 6px;
+  height: 8px;
   cursor: ns-resize;
-  background: var(--border-subtle);
   position: relative;
-  transition: background 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: opacity 0.15s ease;
 }
 .resize-handle:hover,
 .resize-handle:active {
-  background: var(--accent);
+  background: transparent;
 }
 .resize-handle::after {
   content: '';
@@ -1425,28 +1447,70 @@ body[data-theme="dark"] .header-icon-settings {
   opacity: 0.9;
 }
 
-/* Left/right panel: vertical resize handle (vertical line + ew-resize cursor); height from top/bottom in .resize-handle-vertical */
+/* Chat (horizontal) resize: 3 dots in a row, same style as vertical panel handles */
+.resize-handle.resize-handle-horizontal {
+  cursor: ns-resize;
+  background: transparent;
+}
+.resize-handle.resize-handle-horizontal::after {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.6;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    10px 0 0 var(--text-muted),
+    20px 0 0 var(--text-muted);
+}
+.resize-handle.resize-handle-horizontal:hover::after {
+  opacity: 0.95;
+}
+body[data-theme="dark"] .resize-handle.resize-handle-horizontal::after,
+body[data-theme="cupertino"] .resize-handle.resize-handle-horizontal::after {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    10px 0 0 var(--text-muted),
+    20px 0 0 var(--text-muted);
+}
+
+/* Left/right panel: vertical resize handle (dots on panel edge); width/position in .resize-handle-vertical and #left/right-panel-resize-handle */
 .resize-handle.resize-handle-vertical {
-  width: 4px;
-  height: auto;
+  width: 8px;
   min-height: 0;
   cursor: ew-resize;
 }
+/* Dots grip: overrides earlier .resize-handle-vertical::after with bulging dots */
 .resize-handle.resize-handle-vertical::after {
   content: '';
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 2px;
-  height: 28px;
-  border-radius: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   background: var(--text-muted);
-  opacity: 0.5;
+  box-shadow:
+    0 10px 0 var(--text-muted),
+    0 20px 0 var(--text-muted);
+  opacity: 0.6;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.08),
+    0 10px 0 var(--text-muted),
+    0 20px 0 var(--text-muted);
   transition: opacity 0.15s ease;
 }
 .resize-handle.resize-handle-vertical:hover::after {
-  opacity: 0.9;
+  opacity: 0.95;
+}
+/* Subtle bulge: light shadow so dots read as raised (dark themes: use lighter ring) */
+body[data-theme="dark"] .resize-handle.resize-handle-vertical::after,
+body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 10px 0 var(--text-muted),
+    0 20px 0 var(--text-muted);
 }
 
 .chat-region {
