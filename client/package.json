@@ -8,11 +8,14 @@
     "build": "electron-builder"
   },
   "devDependencies": {
-    "electron": "^28.0.0"
+    "electron": "^28.0.0",
+    "electron-builder": "^26.7.0"
   },
   "build": {
     "appId": "com.spaztick.client",
     "productName": "Spaztick",
-    "directories": { "output": "dist" }
+    "directories": {
+      "output": "dist"
+    }
   }
 }
