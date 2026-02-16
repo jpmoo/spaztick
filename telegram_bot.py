@@ -52,7 +52,7 @@ def _load_pending_confirm() -> dict[int, dict]:
         raw = _PENDING_CONFIRM_PATH.read_text()
         data = json.loads(raw) if raw.strip() else {}
         for k, v in (data or {}).items():
-            if isinstance(v, dict) and v.get("tool") in ("delete_task", "delete_project"):
+            if isinstance(v, dict) and v.get("tool") in ("delete_task", "delete_project", "project_archive", "project_unarchive"):
                 try:
                     out[int(k)] = v
                 except (TypeError, ValueError):

@@ -204,7 +204,39 @@ def _execute_pending_confirm_payload(payload: dict) -> tuple[bool, str]:
             return (True, f"Project {short_id} deleted. It has been removed from all tasks.")
         except Exception as e:
             return (False, str(e))
-    return (False, f"Unknown tool: {tool}. Use delete_task or delete_project.")
+    if tool == "project_archive":
+        short_id = (payload.get("short_id") or "").strip()
+        if not short_id:
+            return (False, "project_archive requires short_id.")
+        try:
+            from project_service import get_project_by_short_id, update_project
+            project = get_project_by_short_id(short_id)
+        except Exception as e:
+            return (False, str(e))
+        if not project:
+            return (False, f"No project \"{short_id}\".")
+        try:
+            update_project(project["id"], status="archived")
+            return (True, f"Project {short_id} archived. It is now hidden from the project list.")
+        except Exception as e:
+            return (False, str(e))
+    if tool == "project_unarchive":
+        short_id = (payload.get("short_id") or "").strip()
+        if not short_id:
+            return (False, "project_unarchive requires short_id.")
+        try:
+            from project_service import get_project_by_short_id, update_project
+            project = get_project_by_short_id(short_id)
+        except Exception as e:
+            return (False, str(e))
+        if not project:
+            return (False, f"No project \"{short_id}\".")
+        try:
+            update_project(project["id"], status="active")
+            return (True, f"Project {short_id} unarchived. It is back in the project list.")
+        except Exception as e:
+            return (False, str(e))
+    return (False, f"Unknown tool: {tool}. Use delete_task, delete_project, project_archive, or project_unarchive.")
 
 
 # Pending confirm per API key for external chat (no history): when user says "yes" we execute

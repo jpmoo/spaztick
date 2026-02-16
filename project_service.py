@@ -104,7 +104,10 @@ def list_projects(status: str | None = None) -> list[dict[str, Any]]:
                 raise ValueError(f"status must be one of {sorted(PROJECT_STATUSES)}")
             sql += " AND status = ?"
             params.append(status)
-        sql += " ORDER BY name"
+        if status == "archived":
+            sql += " ORDER BY updated_at DESC"
+        else:
+            sql += " ORDER BY name"
         rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
     finally:

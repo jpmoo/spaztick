@@ -174,10 +174,27 @@
           </div>
         </section>
         <section class="settings-section">
+          <h3>When opening the app</h3>
+          <div class="setting-row">
+            <label for="settings-default-open-view">Show</label>
+            <select id="settings-default-open-view">
+              <option value="inbox">Inbox</option>
+            </select>
+          </div>
+        </section>
+        <section class="settings-section">
           <h3>Display</h3>
           <div class="setting-row setting-row-checkbox">
             <input type="checkbox" id="settings-show-due-overdue-counts" />
             <label for="settings-show-due-overdue-counts">Show # of due and overdue tasks in lefthand panel</label>
+          </div>
+          <div class="setting-row">
+            <label for="settings-task-list-separator">In task lists, separate tasks</label>
+            <select id="settings-task-list-separator">
+              <option value="none">Nothing</option>
+              <option value="dotted">Dotted line</option>
+              <option value="shading">Alternating shading</option>
+            </select>
           </div>
           <div class="setting-row">
             <label for="settings-date-format">Date format</label>
@@ -194,9 +211,27 @@
             </div>
           </div>
         </section>
+        <section class="settings-section">
+          <h3>Archived projects</h3>
+          <div class="setting-row">
+            <button type="button" id="settings-view-archived-projects" class="btn-secondary">View archived projects</button>
+          </div>
+        </section>
       </div>
       <div class="modal-footer">
         <button type="button" id="settings-save" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="archived-projects-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-small" role="dialog" aria-labelledby="archived-projects-title">
+      <div class="modal-header">
+        <h2 id="archived-projects-title">Archived projects</h2>
+        <button type="button" id="archived-projects-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="archived-projects-list" class="archived-projects-list"></div>
       </div>
     </div>
   </div>
@@ -319,11 +354,11 @@
         <p id="recurrence-no-due-date-msg" class="recurrence-no-due-date-msg hidden">Set a due date for this task before setting recurrence.</p>
         <div id="recurrence-form-body">
         <div class="setting-row">
-          <span class="setting-label">Recur from</span>
-          <div class="recurrence-anchor">
-            <label><input type="radio" name="recurrence-anchor" value="scheduled" /> Scheduled date</label>
-            <label><input type="radio" name="recurrence-anchor" value="completed" /> Completed date</label>
-          </div>
+          <label for="recurrence-anchor">Complete from</label>
+          <select id="recurrence-anchor">
+            <option value="scheduled">Scheduled date</option>
+            <option value="completed">Completed date</option>
+          </select>
         </div>
         <div class="setting-row">
           <label for="recurrence-freq">Frequency</label>
@@ -351,64 +386,65 @@
           </div>
         </div>
         <div id="recurrence-monthly-options" class="recurrence-freq-options hidden">
-          <div class="setting-row">
-            <label><input type="radio" name="recurrence-monthly-rule" value="day_of_month" /> On day</label>
-            <input type="number" id="recurrence-monthly-day" min="1" max="31" value="1" />
-          </div>
-          <div class="setting-row">
-            <label><input type="radio" name="recurrence-monthly-rule" value="weekday_of_month" /> On</label>
-            <select id="recurrence-monthly-week">
-              <option value="1">First</option>
-              <option value="2">Second</option>
-              <option value="3">Third</option>
-              <option value="4">Fourth</option>
-              <option value="5">Last</option>
-            </select>
-            <select id="recurrence-monthly-weekday">
-              <option value="0">Sunday</option>
-              <option value="1">Monday</option>
-              <option value="2">Tuesday</option>
-              <option value="3">Wednesday</option>
-              <option value="4">Thursday</option>
-              <option value="5">Friday</option>
-              <option value="6">Saturday</option>
-            </select>
+          <div class="recurrence-monthly-choices">
+            <div class="setting-row recurrence-row-inline">
+              <label class="recurrence-radio-label"><input type="radio" name="recurrence-monthly-rule" value="day_of_month" /> On specific date</label>
+              <input type="number" id="recurrence-monthly-day" min="1" max="31" value="1" />
+            </div>
+            <div class="setting-row recurrence-row-inline">
+              <label class="recurrence-radio-label"><input type="radio" name="recurrence-monthly-rule" value="weekday_of_month" /> On</label>
+              <select id="recurrence-monthly-week">
+                <option value="1">First</option>
+                <option value="2">Second</option>
+                <option value="3">Third</option>
+                <option value="4">Fourth</option>
+                <option value="5">Last</option>
+              </select>
+              <select id="recurrence-monthly-weekday">
+                <option value="0">Sunday</option>
+                <option value="1">Monday</option>
+                <option value="2">Tuesday</option>
+                <option value="3">Wednesday</option>
+                <option value="4">Thursday</option>
+                <option value="5">Friday</option>
+                <option value="6">Saturday</option>
+              </select>
+            </div>
           </div>
         </div>
         <div id="recurrence-yearly-options" class="recurrence-freq-options hidden">
-          <div class="setting-row">
-            <label for="recurrence-yearly-month">Month</label>
+          <div class="setting-row recurrence-row-inline">
+            <span class="recurrence-yearly-label">Occur again on</span>
             <select id="recurrence-yearly-month">
               <option value="1">January</option><option value="2">February</option><option value="3">March</option>
               <option value="4">April</option><option value="5">May</option><option value="6">June</option>
               <option value="7">July</option><option value="8">August</option><option value="9">September</option>
               <option value="10">October</option><option value="11">November</option><option value="12">December</option>
             </select>
-            <label for="recurrence-yearly-day">Day</label>
             <input type="number" id="recurrence-yearly-day" min="1" max="31" value="1" />
           </div>
         </div>
         <section class="recurrence-end-section">
           <h3 class="recurrence-section-title">End</h3>
-          <div class="setting-row">
-            <label><input type="radio" name="recurrence-end" value="never" checked /> Never</label>
-          </div>
-          <div class="setting-row">
-            <label><input type="radio" name="recurrence-end" value="after_count" /> After</label>
-            <input type="number" id="recurrence-end-after-count" min="1" value="5" /> occurrences
-          </div>
-          <div class="setting-row">
-            <label><input type="radio" name="recurrence-end" value="end_date" /> Don&apos;t repeat after</label>
-            <input type="date" id="recurrence-end-date" />
+          <div class="recurrence-end-choices">
+            <div class="setting-row recurrence-row-inline">
+              <label class="recurrence-radio-label"><input type="radio" name="recurrence-end" value="never" checked /> Never</label>
+            </div>
+            <div class="setting-row recurrence-row-inline">
+              <label class="recurrence-radio-label"><input type="radio" name="recurrence-end" value="after_count" /> After</label>
+              <input type="number" id="recurrence-end-after-count" min="1" value="5" /> <span>occurrences</span>
+            </div>
+            <div class="setting-row recurrence-row-inline">
+              <label class="recurrence-radio-label"><input type="radio" name="recurrence-end" value="end_date" /> Don&apos;t repeat after</label>
+              <input type="date" id="recurrence-end-date" />
+            </div>
           </div>
         </section>
-        <div class="setting-row">
-          <button type="button" id="recurrence-clear" class="btn-secondary btn-sm">Clear recurrence</button>
-        </div>
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" id="recurrence-modal-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="recurrence-clear-and-save" class="btn-secondary">Clear and Save</button>
         <button type="button" id="recurrence-modal-save" class="btn-primary">Save</button>
       </div>
     </div>

@@ -133,7 +133,7 @@ Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume th
 
 # Available tools section (unchanged from original)
 AVAILABLE_TOOLS_SECTION = """
-Available tools: task_create, task_list, task_info, task_update, delete_task, project_create, project_list, project_info, delete_project, list_view, list_lists.
+Available tools: task_create, task_list, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists.
 
 task_create: Only "title" is required. Omit description, priority, dates, projects, tags, flagged if the user did not provide them. New tasks are incomplete and not flagged by default. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Optional "flagged": true to create a flagged task.
 Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (e.g. flagged, due_date).
@@ -159,10 +159,19 @@ Output format: {"name": "delete_task", "parameters": {"number": 1}} or {"name": 
 project_create: Only "title" is required (the project name). Omit description if the user did not provide it. New projects default to open (active) status; do not send status for create.
 Output format: {"name": "project_create", "parameters": {"title": "..."}} and add optional "description" if the user gave it.
 
-project_list: "List projects", "list my projects", "show projects" must be answered with project_list JSON only. Output: {"name": "project_list", "parameters": {}}
+project_list: "List projects", "list my projects", "show projects" must be answered with project_list JSON only. Returns only active (non-archived) projects. Output: {"name": "project_list", "parameters": {}}
 
 project_info: User identifies the project by short_id only (e.g. "1off", "work"). Returns full project details and tasks. In this chat we never use full project names—only short_id.
 Output format: {"name": "project_info", "parameters": {"short_id": "1off"}}.
+
+project_archived: "List archived projects", "show archived projects" must be answered with project_archived JSON only. Returns projects that have been archived, by archive date (newest first).
+Output format: {"name": "project_archived", "parameters": {}}.
+
+project_archive: Archive a project by short_id (e.g. "1off", "work"). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true.
+Output format: {"name": "project_archive", "parameters": {"short_id": "1off"}} or {"name": "project_archive", "parameters": {"short_id": "1off", "confirm": true}}.
+
+project_unarchive: Unarchive a project by short_id. First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true.
+Output format: {"name": "project_unarchive", "parameters": {"short_id": "1off"}} or {"name": "project_unarchive", "parameters": {"short_id": "1off", "confirm": true}}.
 
 delete_project: User identifies the project by short_id only (e.g. "1off", "work"). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true. In this chat we never use full project names—only short_id.
 Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}.
@@ -518,6 +527,11 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
         return ("project_list", {})
     if re.match(r"^projects\s*$", msg) or re.match(r"^my projects\s*$", msg):
         return ("project_list", {})
+    # List/show archived projects
+    if re.match(r"^(list|show|get|gimme|display)\s+(my\s+)?archived\s+projects?\b", msg):
+        return ("project_archived", {})
+    if re.match(r"^archived\s+projects?\s*$", msg):
+        return ("project_archived", {})
     # List/show saved lists (list_lists)
     if re.match(r"^(list|show|get|display)\s+(my\s+)?lists?\b", msg):
         return ("list_lists", {})
@@ -831,6 +845,30 @@ def _format_project_list_for_telegram(projects: list[dict[str, Any]], max_show: 
     return "\n".join(lines)
 
 
+def _format_archived_project_list_for_telegram(projects: list[dict[str, Any]], tz_name: str, max_show: int = 50) -> str:
+    """Format archived projects (ordered by updated_at DESC) for Telegram."""
+    if not projects:
+        return "No archived projects."
+    total = len(projects)
+    show = projects[:max_show]
+    lines = [f"Archived projects ({total}):"]
+    for p in show:
+        name = (p.get("name") or "").strip() or "(no name)"
+        short_id = p.get("short_id") or (p.get("id") or "")[:8]
+        updated = p.get("updated_at") or ""
+        if updated:
+            try:
+                updated = _format_datetime_info(updated, tz_name)
+            except Exception:
+                pass
+        else:
+            updated = "—"
+        lines.append(f"{short_id}. {name} (archived {updated})")
+    if total > max_show:
+        lines.append(f"... and {total - max_show} more.")
+    return "\n".join(lines)
+
+
 def _format_history(history: list[dict[str, str]]) -> str:
     """Format conversation history for the prompt."""
     if not history:
@@ -946,10 +984,67 @@ def run_orchestrator(
     if name == "project_list":
         try:
             from project_service import list_projects
-            projects = list_projects()
+            projects = list_projects(status="active")
         except Exception as e:
             return (f"Error listing projects: {e}", False, None)
         return (_format_project_list_for_telegram(projects), True, None)
+    if name == "project_archived":
+        try:
+            from project_service import list_projects
+            projects = list_projects(status="archived")
+        except Exception as e:
+            return (f"Error listing archived projects: {e}", False, None)
+        return (_format_archived_project_list_for_telegram(projects, tz_name), True, None)
+    if name == "project_archive":
+        short_id = (params.get("short_id") or params.get("project_id") or "").strip()
+        if not short_id:
+            return ("project_archive requires short_id (e.g. 1off or work).", False, None)
+        try:
+            from project_service import get_project_by_short_id, update_project
+            project = get_project_by_short_id(short_id)
+        except Exception as e:
+            return (f"Error looking up project: {e}", False, None)
+        if not project:
+            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None)
+        if project.get("status") == "archived":
+            return (f"Project {short_id} is already archived.", True, None)
+        if not _parse_confirm(params):
+            name_str = (project.get("name") or "").strip() or short_id
+            return (
+                f"Archive project {short_id} ({name_str})? It will be hidden from the project list until you unarchive it. Reply \"yes\" to confirm.",
+                False,
+                {"tool": "project_archive", "short_id": short_id},
+            )
+        try:
+            update_project(project["id"], status="archived")
+        except Exception as e:
+            return (f"Error archiving project: {e}", False, None)
+        return (f"Project {short_id} archived. It is now hidden from the project list.", True, None)
+    if name == "project_unarchive":
+        short_id = (params.get("short_id") or params.get("project_id") or "").strip()
+        if not short_id:
+            return ("project_unarchive requires short_id (e.g. 1off or work).", False, None)
+        try:
+            from project_service import get_project_by_short_id, update_project
+            project = get_project_by_short_id(short_id)
+        except Exception as e:
+            return (f"Error looking up project: {e}", False, None)
+        if not project:
+            return (f"No project with id \"{short_id}\". List archived projects to see short_ids.", False, None)
+        if project.get("status") != "archived":
+            return (f"Project {short_id} is not archived.", True, None)
+        if not _parse_confirm(params):
+            name_str = (project.get("name") or "").strip() or short_id
+            return (
+                f"Unarchive project {short_id} ({name_str})? It will appear in the project list again. Reply \"yes\" to confirm.",
+                False,
+                {"tool": "project_unarchive", "short_id": short_id},
+            )
+        try:
+            update_project(project["id"], status="active")
+        except Exception as e:
+            return (f"Error unarchiving project: {e}", False, None)
+        return (f"Project {short_id} unarchived. It is back in the project list.", True, None)
     if name == "project_create":
         try:
             validated = _validate_project_create(params)

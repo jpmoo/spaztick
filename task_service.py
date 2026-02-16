@@ -171,7 +171,16 @@ def get_task(task_id: str) -> dict[str, Any] | None:
 
 def _add_task_relations(conn: sqlite3.Connection, out: dict[str, Any]) -> None:
     tid = out["id"]
-    out["projects"] = [r[0] for r in conn.execute("SELECT project_id FROM task_projects WHERE task_id = ?", (tid,))]
+    # Only include projects that are active (archived projects hidden from task listing/inspector)
+    out["projects"] = [
+        r[0]
+        for r in conn.execute(
+            """SELECT tp.project_id FROM task_projects tp
+               INNER JOIN projects p ON p.id = tp.project_id AND p.status = 'active'
+               WHERE tp.task_id = ?""",
+            (tid,),
+        )
+    ]
     out["tags"] = [r[0] for r in conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (tid,))]
     out["depends_on"] = [r[0] for r in conn.execute("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?", (tid,))]
 
@@ -288,7 +297,12 @@ def list_tasks(
         for t in out:
             tid = t.get("id")
             if tid:
-                projs = conn.execute("SELECT project_id FROM task_projects WHERE task_id = ?", (tid,)).fetchall()
+                projs = conn.execute(
+                    """SELECT tp.project_id FROM task_projects tp
+                       INNER JOIN projects p ON p.id = tp.project_id AND p.status = 'active'
+                       WHERE tp.task_id = ?""",
+                    (tid,),
+                ).fetchall()
                 t["projects"] = [p[0] for p in projs]
             else:
                 t["projects"] = []

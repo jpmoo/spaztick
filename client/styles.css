@@ -664,6 +664,27 @@ body[data-theme="dark"] .header-icon-settings {
   background: rgba(37, 99, 235, 0.08);
   color: var(--accent);
 }
+
+/* Task list separator: dotted line */
+body.task-list-sep-dotted .task-list .task-row {
+  border-bottom: 1px dotted var(--border);
+  margin-bottom: 0;
+}
+body.task-list-sep-dotted .task-list .task-row:last-child {
+  border-bottom: none;
+}
+
+/* Task list separator: alternating shading */
+body.task-list-sep-shading .task-list .task-row:nth-child(even) {
+  background: var(--surface-side);
+}
+body.task-list-sep-shading .task-list .task-row:nth-child(even):hover {
+  background: var(--bg);
+}
+body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
+  background: rgba(37, 99, 235, 0.08);
+}
+
 .task-list .task-row .task-cell.status-cell .status-icon {
   width: 16px;
   height: 16px;
@@ -1443,6 +1464,58 @@ body[data-theme="dark"] .header-icon-settings {
   word-break: break-word;
   margin-bottom: 0.85em;
 }
+.inspector-content .inspector-edit-input,
+.inspector-content .inspector-edit-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.inspector-content .inspector-edit-textarea {
+  min-height: 60px;
+  resize: vertical;
+}
+.inspector-content .inspector-project-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.archived-projects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.archived-project-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.archived-project-row:last-child {
+  border-bottom: none;
+}
+.archived-project-name {
+  font-weight: 500;
+  min-width: 80px;
+}
+.archived-project-short {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.archived-project-updated {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.archived-project-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
 .inspector-content .inspector-edit-recurrence {
   margin-left: 8px;
   padding: 2px 8px;
@@ -1642,15 +1715,11 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   border-bottom-right-radius: 5px;
 }
 .chat-message.model .bubble {
-  background: var(--bg);
+  /* One shade from background toward user (accent) bubble in all themes */
+  background: color-mix(in srgb, var(--bg) 88%, var(--accent) 12%);
   color: var(--text);
   border: 1px solid var(--border-subtle);
   border-bottom-left-radius: 5px;
-}
-/* Cupertino: chat responses a slightly bluer shade of the region background */
-body[data-theme="cupertino"] .chat-message.model .bubble {
-  background: #e8ecf2;
-  border-color: #d8dce6;
 }
 .chat-message .text {
   white-space: pre-wrap;
@@ -1796,6 +1865,10 @@ body[data-theme="cupertino"] .chat-message.model .bubble {
 .modal.modal-small {
   max-width: 360px;
 }
+.modal.modal-small #new-project-description {
+  width: 100%;
+  box-sizing: border-box;
+}
 .modal.modal-medium {
   max-width: 520px;
   width: 92vw;
@@ -1820,17 +1893,33 @@ body[data-theme="cupertino"] .chat-message.model .bubble {
   font-weight: 500;
   color: var(--text);
 }
-.modal.modal-recurrence .recurrence-anchor {
+.modal.modal-recurrence .recurrence-row-inline {
   display: flex;
-  gap: 16px;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
-.modal.modal-recurrence .recurrence-anchor label {
-  display: flex;
+.modal.modal-recurrence .recurrence-radio-label {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 13px;
   cursor: pointer;
+  margin: 0;
+}
+.modal.modal-recurrence .recurrence-radio-label input {
+  flex-shrink: 0;
+}
+.modal.modal-recurrence .recurrence-monthly-choices .setting-row,
+.modal.modal-recurrence .recurrence-end-choices .setting-row {
+  margin-bottom: 8px;
+}
+.modal.modal-recurrence .recurrence-yearly-label {
+  font-size: 13px;
+  color: var(--text);
+}
+.modal.modal-recurrence .recurrence-end-choices .setting-row:last-child {
+  margin-bottom: 0;
 }
 .modal.modal-recurrence .recurrence-freq-options {
   margin-bottom: 12px;

@@ -26,6 +26,8 @@
   const NAV_SECTION_OPEN_PREFIX = 'spaztick_nav_section_open_';
   const NAV_PROJECT_ORDER_KEY = 'spaztick_nav_project_order';
   const NAV_LIST_ORDER_KEY = 'spaztick_nav_list_order';
+  const DEFAULT_OPEN_VIEW_KEY = 'spaztick_default_open_view';
+  const TASK_LIST_SEPARATOR_KEY = 'spaztick_task_list_separator';
 
   const TASK_PROPERTY_KEYS = ['due_date', 'available_date', 'priority', 'description', 'projects', 'tags', 'recurrence'];
   const TASK_PROPERTY_LABELS = {
@@ -113,6 +115,8 @@
   const settingsApiBase = document.getElementById('settings-api-base');
   const settingsApiKey = document.getElementById('settings-api-key');
   const settingsDateFormat = document.getElementById('settings-date-format');
+  const settingsDefaultOpenView = document.getElementById('settings-default-open-view');
+  const settingsTaskListSeparator = document.getElementById('settings-task-list-separator');
   const customFormatEditBtn = document.getElementById('custom-format-edit-btn');
   const customFormatOverlay = document.getElementById('custom-date-format-overlay');
   const customFormatInput = document.getElementById('custom-format-input');
@@ -152,6 +156,36 @@
   function setApiConfig(base, key) {
     if (base != null) localStorage.setItem(API_BASE_KEY, base);
     if (key != null) localStorage.setItem(API_KEY_KEY, key);
+  }
+  function getDefaultOpenView() {
+    try {
+      const v = localStorage.getItem(DEFAULT_OPEN_VIEW_KEY);
+      return (v && typeof v === 'string') ? v : 'inbox';
+    } catch (_) {}
+    return 'inbox';
+  }
+  function setDefaultOpenView(value) {
+    try {
+      localStorage.setItem(DEFAULT_OPEN_VIEW_KEY, value || 'inbox');
+    } catch (_) {}
+  }
+  const TASK_LIST_SEPARATOR_VALUES = ['none', 'dotted', 'shading'];
+  function getTaskListSeparator() {
+    try {
+      const v = localStorage.getItem(TASK_LIST_SEPARATOR_KEY);
+      return TASK_LIST_SEPARATOR_VALUES.includes(v) ? v : 'none';
+    } catch (_) {}
+    return 'none';
+  }
+  function setTaskListSeparator(value) {
+    try {
+      localStorage.setItem(TASK_LIST_SEPARATOR_KEY, TASK_LIST_SEPARATOR_VALUES.includes(value) ? value : 'none');
+    } catch (_) {}
+  }
+  function applyTaskListSeparator() {
+    const v = getTaskListSeparator();
+    TASK_LIST_SEPARATOR_VALUES.forEach((x) => document.body.classList.remove('task-list-sep-' + x));
+    document.body.classList.add('task-list-sep-' + v);
   }
 
   // --- Date format (settings + task/inspector display) ---
@@ -327,8 +361,26 @@
     settingsApiBase.value = getApiBase();
     settingsApiKey.value = getApiKey();
     if (settingsShowDueOverdueCounts) settingsShowDueOverdueCounts.checked = getShowDueOverdueCounts();
+    if (settingsTaskListSeparator) settingsTaskListSeparator.value = getTaskListSeparator();
     if (settingsDateFormat) settingsDateFormat.value = getDateFormat();
     if (customFormatEditBtn) customFormatEditBtn.classList.toggle('hidden', settingsDateFormat?.value !== 'custom');
+    if (settingsDefaultOpenView) {
+      const current = getDefaultOpenView();
+      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const options = ['<option value="inbox">Inbox</option>'];
+      (projectListCache || []).forEach((p) => {
+        const id = (p.id || '').replace(/"/g, '&quot;');
+        const name = escape(p.name || p.short_id || 'Project');
+        options.push(`<option value="project:${id}">Project: ${name}</option>`);
+      });
+      (getLists ? getLists() : []).forEach((l) => {
+        const id = (l.id || '').replace(/"/g, '&quot;');
+        const name = escape(l.name || 'List');
+        options.push(`<option value="list:${id}">List: ${name}</option>`);
+      });
+      settingsDefaultOpenView.innerHTML = options.join('');
+      settingsDefaultOpenView.value = current;
+    }
     settingsOverlay.classList.remove('hidden');
     settingsOverlay.setAttribute('aria-hidden', 'false');
   }
@@ -343,7 +395,10 @@
     const key = settingsApiKey.value.trim();
     setApiConfig(base, key);
     if (settingsShowDueOverdueCounts) setShowDueOverdueCounts(settingsShowDueOverdueCounts.checked);
+    if (settingsTaskListSeparator) setTaskListSeparator(settingsTaskListSeparator.value);
     if (settingsDateFormat) setDateFormat(settingsDateFormat.value);
+    if (settingsDefaultOpenView) setDefaultOpenView(settingsDefaultOpenView.value);
+    applyTaskListSeparator();
     closeSettings();
     checkConnection();
     loadProjects();
@@ -394,9 +449,87 @@
   settingsOverlay.addEventListener('click', (e) => {
     if (e.target === settingsOverlay) closeSettings();
   });
+  const archivedProjectsOverlay = document.getElementById('archived-projects-overlay');
+  const archivedProjectsList = document.getElementById('archived-projects-list');
+  const archivedProjectsClose = document.getElementById('archived-projects-close');
+  async function openArchivedProjectsModal() {
+    if (!archivedProjectsList) return;
+    archivedProjectsList.innerHTML = '<p class="placeholder">Loading…</p>';
+    if (archivedProjectsOverlay) {
+      archivedProjectsOverlay.classList.remove('hidden');
+      archivedProjectsOverlay.setAttribute('aria-hidden', 'false');
+    }
+    try {
+      const list = await api('/api/external/projects?status=archived');
+      const projects = Array.isArray(list) ? list : [];
+      if (!projects.length) {
+        archivedProjectsList.innerHTML = '<p class="placeholder">No archived projects.</p>';
+        return;
+      }
+      const escape = (s) => (s == null ? '' : String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'));
+      archivedProjectsList.innerHTML = projects.map((p) => {
+        const name = escape(p.name || p.short_id || '');
+        const shortId = escape(p.short_id || '');
+        const updated = p.updated_at ? formatDateTimeForInspector(p.updated_at) : '—';
+        const id = (p.id || '').replace(/"/g, '&quot;');
+        return `<div class="archived-project-row" data-project-id="${id}">
+          <span class="archived-project-name">${name}</span>
+          <span class="archived-project-short">${shortId}</span>
+          <span class="archived-project-updated">${updated}</span>
+          <span class="archived-project-actions">
+            <button type="button" class="btn-secondary btn-sm archived-project-unarchive" data-project-id="${id}">Unarchive</button>
+            <button type="button" class="btn-secondary btn-sm archived-project-delete" data-project-id="${id}">Delete</button>
+          </span>
+        </div>`;
+      }).join('');
+      archivedProjectsList.querySelectorAll('.archived-project-unarchive').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const pid = btn.dataset.projectId;
+          if (!pid || !confirm('Unarchive this project? It will appear in the project list again.')) return;
+          try {
+            await api(`/api/external/projects/${encodeURIComponent(pid)}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status: 'active' }),
+            });
+            loadProjects();
+            openArchivedProjectsModal();
+          } catch (err) {
+            alert(err.message || 'Failed to unarchive project.');
+          }
+        });
+      });
+      archivedProjectsList.querySelectorAll('.archived-project-delete').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          const pid = btn.dataset.projectId;
+          if (!pid || !confirm('Delete this project? It will be removed from all tasks. This cannot be undone.')) return;
+          try {
+            await api(`/api/external/projects/${encodeURIComponent(pid)}`, { method: 'DELETE' });
+            loadProjects();
+            openArchivedProjectsModal();
+          } catch (err) {
+            alert(err.message || 'Failed to delete project.');
+          }
+        });
+      });
+    } catch (e) {
+      archivedProjectsList.innerHTML = `<p class="placeholder">${e.message || 'Error loading archived projects.'}</p>`;
+    }
+  }
+  function closeArchivedProjectsModal() {
+    if (archivedProjectsOverlay) {
+      archivedProjectsOverlay.classList.add('hidden');
+      archivedProjectsOverlay.setAttribute('aria-hidden', 'true');
+    }
+  }
+  const settingsViewArchivedBtn = document.getElementById('settings-view-archived-projects');
+  if (settingsViewArchivedBtn) settingsViewArchivedBtn.addEventListener('click', openArchivedProjectsModal);
+  if (archivedProjectsClose) archivedProjectsClose.addEventListener('click', closeArchivedProjectsModal);
+  if (archivedProjectsOverlay) archivedProjectsOverlay.addEventListener('click', (e) => { if (e.target === archivedProjectsOverlay) closeArchivedProjectsModal(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (recurrenceModalOverlay && !recurrenceModalOverlay.classList.contains('hidden')) closeRecurrenceModal();
+      if (archivedProjectsOverlay && !archivedProjectsOverlay.classList.contains('hidden')) closeArchivedProjectsModal();
+      else if (recurrenceModalOverlay && !recurrenceModalOverlay.classList.contains('hidden')) closeRecurrenceModal();
       else if (descriptionModalOverlay && !descriptionModalOverlay.classList.contains('hidden')) closeDescriptionModal();
       else if (customFormatOverlay && !customFormatOverlay.classList.contains('hidden')) closeCustomDateFormatModal();
       else if (!settingsOverlay.classList.contains('hidden')) closeSettings();
@@ -467,7 +600,7 @@
     });
   }
   function recurrenceFormToObject() {
-    const anchorEl = document.querySelector('input[name="recurrence-anchor"]:checked');
+    const anchorEl = document.getElementById('recurrence-anchor');
     const freqEl = document.getElementById('recurrence-freq');
     const intervalEl = document.getElementById('recurrence-interval');
     const freq = (freqEl && freqEl.value) || 'daily';
@@ -525,7 +658,8 @@
   function recurrencePopulateForm(rec) {
     recurrenceModalCleared = !rec || typeof rec !== 'object';
     if (!rec || typeof rec !== 'object') {
-      document.querySelectorAll('input[name="recurrence-anchor"]').forEach((r) => { r.checked = r.value === 'scheduled'; });
+      const anchorSelect = document.getElementById('recurrence-anchor');
+      if (anchorSelect) anchorSelect.value = 'scheduled';
       const f = document.getElementById('recurrence-freq');
       if (f) f.value = 'daily';
       const i = document.getElementById('recurrence-interval');
@@ -541,7 +675,8 @@
       if (ed) ed.value = '';
       return;
     }
-    document.querySelectorAll('input[name="recurrence-anchor"]').forEach((r) => { r.checked = r.value === (rec.anchor || 'scheduled'); });
+    const anchorSelect = document.getElementById('recurrence-anchor');
+    if (anchorSelect) anchorSelect.value = rec.anchor || 'scheduled';
     const f = document.getElementById('recurrence-freq');
     if (f) f.value = rec.freq || 'daily';
     const i = document.getElementById('recurrence-interval');
@@ -623,34 +758,38 @@
   if (recurrenceModalClose) recurrenceModalClose.addEventListener('click', closeRecurrenceModal);
   const recurrenceModalCancel = document.getElementById('recurrence-modal-cancel');
   if (recurrenceModalCancel) recurrenceModalCancel.addEventListener('click', closeRecurrenceModal);
+  async function saveRecurrenceModal() {
+    if (!recurrenceModalTaskId) return;
+    const saveBtn = document.getElementById('recurrence-modal-save');
+    if (saveBtn && saveBtn.disabled) return;
+    const rec = recurrenceUserClickedClear ? null : recurrenceFormToObject();
+    try {
+      const updated = await updateTask(recurrenceModalTaskId, { recurrence: rec });
+      updateTaskInLists(updated);
+      const row = document.querySelector(`.task-row[data-id="${recurrenceModalTaskId}"]`);
+      if (row && row.classList.contains('selected')) loadTaskDetails(recurrenceModalTaskId);
+      closeRecurrenceModal();
+      refreshTaskList();
+    } catch (e) {
+      console.error('Failed to save recurrence:', e);
+      alert(e.message || 'Failed to save recurrence.');
+    }
+  }
   const recurrenceModalSave = document.getElementById('recurrence-modal-save');
   if (recurrenceModalSave) {
-    recurrenceModalSave.addEventListener('click', async () => {
-      if (!recurrenceModalTaskId || recurrenceModalSave.disabled) return;
-      const rec = recurrenceUserClickedClear ? null : recurrenceFormToObject();
-      try {
-        const updated = await updateTask(recurrenceModalTaskId, { recurrence: rec });
-        updateTaskInLists(updated);
-        const row = document.querySelector(`.task-row[data-id="${recurrenceModalTaskId}"]`);
-        if (row && row.classList.contains('selected')) loadTaskDetails(recurrenceModalTaskId);
-        closeRecurrenceModal();
-        refreshTaskList();
-      } catch (e) {
-        console.error('Failed to save recurrence:', e);
-        alert(e.message || 'Failed to save recurrence.');
-      }
+    recurrenceModalSave.addEventListener('click', () => saveRecurrenceModal());
+  }
+  const recurrenceClearAndSaveBtn = document.getElementById('recurrence-clear-and-save');
+  if (recurrenceClearAndSaveBtn) {
+    recurrenceClearAndSaveBtn.addEventListener('click', () => {
+      recurrenceUserClickedClear = true;
+      recurrenceModalCleared = true;
+      recurrencePopulateForm(null);
+      saveRecurrenceModal();
     });
   }
   const recurrenceFreqEl = document.getElementById('recurrence-freq');
   if (recurrenceFreqEl) recurrenceFreqEl.addEventListener('change', updateRecurrenceFreqOptions);
-  const recurrenceClearBtn = document.getElementById('recurrence-clear');
-  if (recurrenceClearBtn) {
-    recurrenceClearBtn.addEventListener('click', () => {
-      recurrenceUserClickedClear = true;
-      recurrenceModalCleared = true;
-      recurrencePopulateForm(null);
-    });
-  }
   // --- Theme cycle ---
   function getTheme() {
     const t = localStorage.getItem(THEME_KEY) || 'light';
@@ -1974,7 +2113,7 @@
     }
     try {
       const [list, tasksRaw, listsRaw] = await Promise.all([
-        api('/api/external/projects'),
+        api('/api/external/projects?status=active'),
         api('/api/external/tasks?limit=1000').catch(() => []),
         api('/api/external/lists').catch(() => []),
       ]);
@@ -2186,6 +2325,35 @@
       loadListTasks(id);
       loadListDetails(id);
     }
+  }
+  let hasAppliedDefaultOpenView = false;
+  function applyDefaultOpenView() {
+    if (hasAppliedDefaultOpenView) return;
+    hasAppliedDefaultOpenView = true;
+    const v = getDefaultOpenView();
+    if (!v || v === 'inbox') {
+      if (inboxItem) inboxItem.click();
+      return;
+    }
+    if (v.startsWith('project:')) {
+      const id = v.slice(8).trim();
+      if (!id) { if (inboxItem) inboxItem.click(); return; }
+      const li = projectsList && projectsList.querySelector(`.nav-item[data-type="project"][data-id="${id.replace(/"/g, '\\"')}"]`);
+      if (li) {
+        li.click();
+        return;
+      }
+    }
+    if (v.startsWith('list:')) {
+      const id = v.slice(5).trim();
+      if (!id) { if (inboxItem) inboxItem.click(); return; }
+      const li = listsListEl && listsListEl.querySelector(`.nav-item[data-list-id="${id.replace(/"/g, '\\"')}"]`);
+      if (li) {
+        li.click();
+        return;
+      }
+    }
+    if (inboxItem) inboxItem.click();
   }
   async function onProjectArchive(ev) {
     const li = ev.target.closest('.nav-item[data-type="project"]');
@@ -2419,24 +2587,94 @@
     return escapeHtml(String(value));
   }
 
+  function escapeAttr(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  }
   async function loadProjectDetails(projectIdOrShortId) {
     try {
       const p = await api(`/api/external/projects/${encodeURIComponent(projectIdOrShortId)}`);
       const div = document.getElementById('inspector-content');
       const titleEl = document.getElementById('inspector-title');
       titleEl.textContent = (p.name || '(no name)').trim();
-      let html = '';
-      PROJECT_INSPECTOR_KEYS.forEach(([key, label]) => {
-        if (!(key in p)) return;
-        const val = formatInspectorValue(key, p[key]);
-        if (val === null && key !== 'description' && key !== 'notes') return;
-        if (key === 'description' || key === 'notes') {
-          html += `<p><strong>${label}</strong></p><p class="inspector-block">${val || '—'}</p>`;
-        } else {
-          html += `<p><strong>${label}:</strong> ${val !== null ? val : '—'}</p>`;
+      div.dataset.inspectorProjectId = p.id || '';
+      const nameVal = escapeAttr(p.name ?? '');
+      const descVal = String(p.description ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const shortId = escapeAttr(p.short_id ?? '');
+      const statusVal = escapeAttr(p.status ?? 'active');
+      const createdVal = p.created_at ? formatDateTimeForInspector(p.created_at) : '—';
+      const updatedVal = p.updated_at ? formatDateTimeForInspector(p.updated_at) : '—';
+      div.innerHTML = `
+        <p><strong>Short ID:</strong> ${shortId || '—'}</p>
+        <p><strong>Status:</strong> ${statusVal}</p>
+        <p><strong>Created:</strong> ${createdVal}</p>
+        <p><strong>Updated:</strong> ${updatedVal}</p>
+        <div class="setting-row">
+          <label for="inspector-project-name">Name</label>
+          <input type="text" id="inspector-project-name" value="${nameVal}" class="inspector-edit-input" />
+        </div>
+        <div class="setting-row">
+          <label for="inspector-project-description">Description</label>
+          <textarea id="inspector-project-description" rows="3" class="inspector-edit-textarea">${descVal}</textarea>
+        </div>
+        <div class="inspector-project-actions">
+          <button type="button" id="inspector-project-archive" class="btn-secondary btn-sm">Archive</button>
+          <button type="button" id="inspector-project-delete" class="btn-secondary btn-sm">Delete</button>
+          <button type="button" id="inspector-project-save" class="btn-primary btn-sm">Save</button>
+        </div>
+      `;
+      const pid = p.id;
+      const nameInput = document.getElementById('inspector-project-name');
+      const descInput = document.getElementById('inspector-project-description');
+      document.getElementById('inspector-project-save').addEventListener('click', async () => {
+        try {
+          await api(`/api/external/projects/${encodeURIComponent(pid)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: (nameInput && nameInput.value) ? nameInput.value.trim() : undefined,
+              description: (descInput && descInput.value) ? descInput.value.trim() : undefined,
+            }),
+          });
+          if (titleEl) titleEl.textContent = (nameInput && nameInput.value) ? nameInput.value.trim() : '(no name)';
+          loadProjectDetails(pid);
+          refreshTaskList();
+        } catch (err) {
+          alert(err.message || 'Failed to save project.');
         }
       });
-      div.innerHTML = html || '<p class="placeholder">No details.</p>';
+      document.getElementById('inspector-project-archive').addEventListener('click', async () => {
+        if (!confirm('Archive this project? It will be hidden from the project list until you unarchive it.')) return;
+        try {
+          await api(`/api/external/projects/${encodeURIComponent(pid)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'archived' }),
+          });
+          loadProjects();
+          document.getElementById('inspector-title').textContent = 'Inspector';
+          document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+          lastTaskSource = null;
+          document.getElementById('center-title').textContent = '';
+          document.getElementById('center-content').innerHTML = '<p class="placeholder">Select a project or list.</p>';
+        } catch (err) {
+          alert(err.message || 'Failed to archive project.');
+        }
+      });
+      document.getElementById('inspector-project-delete').addEventListener('click', async () => {
+        if (!confirm('Delete this project? It will be removed from all tasks. This cannot be undone.')) return;
+        try {
+          await api(`/api/external/projects/${encodeURIComponent(pid)}`, { method: 'DELETE' });
+          loadProjects();
+          document.getElementById('inspector-title').textContent = 'Inspector';
+          document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+          lastTaskSource = null;
+          document.getElementById('center-title').textContent = '';
+          document.getElementById('center-content').innerHTML = '<p class="placeholder">Select a project or list.</p>';
+        } catch (err) {
+          alert(err.message || 'Failed to delete project.');
+        }
+      });
     } catch (e) {
       document.getElementById('inspector-title').textContent = 'Inspector';
       document.getElementById('inspector-content').innerHTML = `<p class="placeholder">${e.message || 'Error loading project.'}</p>`;
@@ -2661,6 +2899,9 @@
         }
       }
     } catch (_) {}
+    // Force reflow so getBoundingClientRect() in positionPanelResizeHandles sees restored widths
+    if (leftPanel) void leftPanel.offsetWidth;
+    if (rightPanel) void rightPanel.offsetWidth;
     const style = document.createElement('style');
     style.textContent = `
       .panel-resize-handle-vertical,
@@ -3386,7 +3627,10 @@
   });
 
   checkConnection();
-  loadProjects();
-  loadLists();
+  applyTaskListSeparator();
+  loadProjects().then(() => {
+    loadLists();
+    applyDefaultOpenView();
+  });
   setInterval(checkConnection, 30000);
 })();
