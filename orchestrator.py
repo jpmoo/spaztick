@@ -133,7 +133,7 @@ Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume th
 
 # Available tools section (unchanged from original)
 AVAILABLE_TOOLS_SECTION = """
-Available tools: task_create, task_list, task_info, task_update, delete_task, project_create, project_list, project_info, delete_project.
+Available tools: task_create, task_list, task_info, task_update, delete_task, project_create, project_list, project_info, delete_project, list_view, list_lists.
 
 task_create: Only "title" is required. Omit description, priority, dates, projects, tags, flagged if the user did not provide them. New tasks are incomplete and not flagged by default. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Optional "flagged": true to create a flagged task.
 Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (e.g. flagged, due_date).
@@ -166,6 +166,13 @@ Output format: {"name": "project_info", "parameters": {"short_id": "1off"}}.
 
 delete_project: User identifies the project by its friendly id (short_id, e.g. "1off" or "work"). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete. Deleting a project removes it from all tasks that use it; some tasks may end up with no project assignments.
 Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}. Use "short_id" (the project's friendly id from project_list).
+
+list_view: Show tasks from a saved list. The list's saved query and sort/filter settings are applied. Use when the user asks to view or show a saved list by name, short_id, or id (e.g. "show my Inbox list", "view list work", "tasks in list ml1").
+Parameters: list_id (the list's id or short_id, from list_lists or the app) or name (list name to look up). Prefer list_id/short_id if known.
+Output format: {"name": "list_view", "parameters": {"list_id": "work"}} or {"name": "list_view", "parameters": {"name": "Inbox"}}.
+
+list_lists: List all saved lists with their names and short names (short_id). Use when the user asks to list saved lists, show lists, or see list names/short names (e.g. "list lists", "show my lists", "what lists do I have").
+Output format: {"name": "list_lists", "parameters": {}}.
 
 When the user asks about a task or project by number/short_id (e.g. "tell me about 1", "about task #1", "what about project 1off"), output the task_info or project_info JSON—do not answer with general knowledge or ask what they mean. In this chat, "1" in a task context means task 1.
 
@@ -478,6 +485,11 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
         return ("project_list", {})
     if re.match(r"^projects\s*$", msg) or re.match(r"^my projects\s*$", msg):
         return ("project_list", {})
+    # List/show saved lists (list_lists)
+    if re.match(r"^(list|show|get|display)\s+(my\s+)?lists?\b", msg):
+        return ("list_lists", {})
+    if re.match(r"^lists\s*$", msg) or re.match(r"^my lists\s*$", msg) or re.match(r"^what lists\b", msg):
+        return ("list_lists", {})
     return None
 
 
@@ -940,6 +952,62 @@ def run_orchestrator(
         except Exception as e:
             return (f"Error listing tasks: {e}", False, None)
         return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None)
+    if name == "list_view":
+        list_id = (params.get("list_id") or "").strip()
+        list_name = (params.get("name") or "").strip()
+        if not list_id and not list_name:
+            return ("list_view requires list_id or name (the saved list's id or name).", False, None)
+        try:
+            from list_service import get_list, list_lists, run_list
+        except Exception as e:
+            return (f"Error loading list service: {e}", False, None)
+        if not list_id and list_name:
+            for lst in list_lists():
+                if (lst.get("name") or "").strip().lower() == list_name.lower():
+                    list_id = lst.get("id")
+                    break
+            if not list_id:
+                return (f"No saved list named \"{list_name}\". List saved lists to see names and ids.", False, None)
+        lst = get_list(list_id)
+        if not lst:
+            return (f"List \"{list_id}\" not found.", False, None)
+        tz_name = "UTC"
+        try:
+            from config import load as load_config
+            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+        except Exception:
+            pass
+        try:
+            tasks = run_list(list_id, limit=500, tz_name=tz_name)
+        except Exception as e:
+            return (f"Error running list: {e}", False, None)
+        list_label = (lst.get("name") or "").strip() or list_id
+        short_id = (lst.get("short_id") or "").strip()
+        if short_id:
+            header = f"List: {list_label} ({short_id})\n"
+        else:
+            header = f"List: {list_label}\n"
+        return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None)
+    if name == "list_lists":
+        try:
+            from list_service import list_lists as list_lists_svc
+        except Exception as e:
+            return (f"Error loading list service: {e}", False, None)
+        try:
+            lists = list_lists_svc()
+        except Exception as e:
+            return (f"Error listing lists: {e}", False, None)
+        if not lists:
+            return ("No saved lists yet. Create one via the app or API to view lists here.", True, None)
+        lines = ["Lists:"]
+        for lst in lists:
+            name_part = (lst.get("name") or "").strip() or "(no name)"
+            short = (lst.get("short_id") or "").strip()
+            if short:
+                lines.append(f"• {name_part} ({short})")
+            else:
+                lines.append(f"• {name_part}")
+        return ("\n".join(lines), True, None)
     if name == "task_update":
         tz_name = "UTC"
         try:

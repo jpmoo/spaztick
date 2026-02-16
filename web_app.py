@@ -528,6 +528,78 @@ def external_delete_project(project_id: str):
     return {"status": "deleted"}
 
 
+# External: Saved lists
+@app.get("/api/external/lists", dependencies=[Depends(_require_api_key)])
+def external_list_lists():
+    from list_service import list_lists
+    return list_lists()
+
+
+@app.get("/api/external/lists/{list_id}", dependencies=[Depends(_require_api_key)])
+def external_get_list(list_id: str):
+    from list_service import get_list
+    lst = get_list(list_id)
+    if lst is None:
+        raise HTTPException(status_code=404, detail="List not found")
+    return lst
+
+
+@app.get("/api/external/lists/{list_id}/tasks", dependencies=[Depends(_require_api_key)])
+def external_list_tasks(list_id: str, limit: int = 500):
+    from list_service import get_list, run_list
+    from config import load as load_config
+    lst = get_list(list_id)
+    if lst is None:
+        raise HTTPException(status_code=404, detail="List not found")
+    tz_name = getattr(load_config(), "user_timezone", None) or "UTC"
+    tasks = run_list(list_id, limit=min(max(1, limit), 1000), tz_name=tz_name)
+    return tasks
+
+
+@app.post("/api/external/lists", dependencies=[Depends(_require_api_key)])
+def external_create_list(body: dict):
+    from list_service import create_list
+    name = (body.get("name") or body.get("title") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    query_definition = body.get("query_definition")
+    if query_definition is None:
+        raise HTTPException(status_code=400, detail="query_definition is required")
+    return create_list(
+        name,
+        description=body.get("description") or None,
+        query_definition=query_definition,
+        sort_definition=body.get("sort_definition"),
+        list_id=body.get("id"),
+    )
+
+
+@app.put("/api/external/lists/{list_id}", dependencies=[Depends(_require_api_key)])
+def external_update_list(list_id: str, body: dict):
+    from list_service import update_list, get_list
+    lst = get_list(list_id)
+    if lst is None:
+        raise HTTPException(status_code=404, detail="List not found")
+    updated = update_list(
+        list_id,
+        name=body.get("name") if "name" in body else None,
+        description=body.get("description") if "description" in body else None,
+        query_definition=body.get("query_definition") if "query_definition" in body else None,
+        sort_definition=body.get("sort_definition") if "sort_definition" in body else None,
+    )
+    return updated or {}
+
+
+@app.delete("/api/external/lists/{list_id}", dependencies=[Depends(_require_api_key)])
+def external_delete_list(list_id: str):
+    from list_service import delete_list, get_list
+    if get_list(list_id) is None:
+        raise HTTPException(status_code=404, detail="List not found")
+    if not delete_list(list_id):
+        raise HTTPException(status_code=404, detail="List not found")
+    return {"status": "deleted"}
+
+
 # External: Chat (same flow as Telegram — orchestrator + Ollama + tools)
 class ChatRequest(BaseModel):
     message: str
@@ -609,13 +681,6 @@ HTML_PAGE = """<!DOCTYPE html>
     .status.running { color: #4ade80; }
     .error { color: var(--danger); font-size: 0.875rem; margin-top: 0.5rem; }
     .success { color: #4ade80; font-size: 0.875rem; margin-top: 0.5rem; }
-    .task-list { list-style: none; padding: 0; margin: 0; }
-    .task-list li { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: baseline; gap: 0.35rem; }
-    .task-list li:hover { background: var(--border); }
-    .task-list .flag-icon { color: var(--muted); font-size: 0.9em; user-select: none; }
-    .task-list .flag-icon.flagged { color: #eab308; }
-    .task-list .due-date.due-today { color: #ca8a04; font-weight: 500; }
-    .task-list .due-date.overdue { color: var(--danger); font-weight: 500; }
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 100; }
     .modal-overlay.open { display: flex; }
     .modal { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem; max-width: 480px; width: 90%; max-height: 90vh; overflow-y: auto; }
@@ -772,64 +837,6 @@ HTML_PAGE = """<!DOCTYPE html>
     <p class="error" id="save_err" style="display:none;"></p>
   </div>
 
-  <div class="card">
-    <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Projects</h2>
-    <button type="button" class="secondary" id="new_project" style="margin-bottom:0.5rem;">New project</button>
-    <p class="status" id="projects_status">Loading…</p>
-    <ul class="task-list" id="project_list"></ul>
-  </div>
-
-  <div class="card">
-    <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Tasks</h2>
-    <p class="status" id="tasks_status">Loading…</p>
-    <ul class="task-list" id="task_list"></ul>
-  </div>
-
-  <div class="modal-overlay" id="project_modal">
-    <div class="modal">
-      <h3>Edit project</h3>
-      <input type="hidden" id="project_id" />
-      <div><label>Short ID (read-only)</label><input type="text" id="project_short_id_display" readonly /></div>
-      <div><label>Name</label><input type="text" id="project_name" /></div>
-      <div><label>Description (markdown)</label><textarea id="project_description" rows="4"></textarea></div>
-      <div><label>Status</label><select id="project_status"><option value="active">active</option><option value="archived">archived</option></select></div>
-      <div><label>Created</label><input type="text" id="project_created_at" readonly /></div>
-      <div><label>Updated</label><input type="text" id="project_updated_at" readonly /></div>
-      <div class="modal-actions">
-        <button type="button" id="project_save">Save</button>
-        <button type="button" class="danger" id="project_delete">Delete</button>
-        <button type="button" class="secondary" id="project_cancel">Cancel</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="modal-overlay" id="task_modal">
-    <div class="modal">
-      <h3>Edit task</h3>
-      <input type="hidden" id="task_id" />
-      <div><label><input type="checkbox" id="task_flagged" /> Flagged</label></div>
-      <div><label>Number (for reference)</label><input type="text" id="task_number_display" readonly /></div>
-      <div><label>ID (read-only)</label><input type="text" id="task_id_display" readonly /></div>
-      <div><label>Title</label><input type="text" id="task_title" /></div>
-      <div><label>Description</label><textarea id="task_description"></textarea></div>
-      <div><label>Notes</label><textarea id="task_notes"></textarea></div>
-      <div><label>Status</label><select id="task_status"><option value="incomplete">incomplete</option><option value="complete">complete</option></select></div>
-      <div><label>Priority (0-3)</label><input type="number" id="task_priority" min="0" max="3" /></div>
-      <div><label>Available date</label><input type="text" id="task_available_date" placeholder="YYYY-MM-DD" /></div>
-      <div><label>Due date</label><input type="text" id="task_due_date" placeholder="YYYY-MM-DD" /></div>
-      <div><label>Projects</label><div id="task_projects_container"></div></div>
-      <div><label>Tags (comma-separated)</label><input type="text" id="task_tags" placeholder="tag1, tag2" /></div>
-      <div><label>Created</label><input type="text" id="task_created_at" readonly /></div>
-      <div><label>Updated</label><input type="text" id="task_updated_at" readonly /></div>
-      <div><label>Completed</label><input type="text" id="task_completed_at" readonly /></div>
-      <div class="modal-actions">
-        <button type="button" id="task_save">Save</button>
-        <button type="button" class="danger" id="task_delete">Delete</button>
-        <button type="button" class="secondary" id="task_cancel">Cancel</button>
-      </div>
-    </div>
-  </div>
-
   <script>
     const $ = (id) => document.getElementById(id);
     const usePolling = () => $('use_polling').checked;
@@ -929,224 +936,7 @@ HTML_PAGE = """<!DOCTYPE html>
       }
     };
 
-    let projectsList = [];
-    async function loadProjects() {
-      const el = $('project_list');
-      const statusEl = $('projects_status');
-      try {
-        const r = await fetch('/api/projects');
-        const contentType = r.headers.get('content-type') || '';
-        let data;
-        if (contentType.includes('application/json')) {
-          data = await r.json();
-        } else {
-          const text = await r.text();
-          throw new Error(r.ok ? 'Invalid response' : (text || 'Request failed'));
-        }
-        if (!r.ok) throw new Error(data.detail || data.error || 'Request failed');
-        projectsList = Array.isArray(data) ? data : [];
-        statusEl.className = 'status';
-        if (!projectsList.length) {
-          el.innerHTML = '';
-          statusEl.textContent = 'No projects yet.';
-          return;
-        }
-        statusEl.textContent = projectsList.length + ' project(s)';
-        el.innerHTML = projectsList.map(p => {
-          const label = (p.short_id ? p.short_id + ': ' : '') + (p.name || '(no name)') + ' [' + (p.status || 'active') + ']';
-          return '<li data-id="' + p.id + '">' + label + '</li>';
-        }).join('');
-        el.querySelectorAll('li').forEach(li => li.addEventListener('click', () => openProjectModal(li.dataset.id)));
-      } catch (e) {
-        el.innerHTML = '';
-        statusEl.textContent = 'Error: ' + (e.message || 'Loading projects failed');
-        statusEl.className = 'status error';
-      }
-    }
-
-    function openProjectModal(id) {
-      if (!id) {
-        $('project_id').value = '';
-        $('project_short_id_display').value = '';
-        $('project_name').value = '';
-        $('project_description').value = '';
-        $('project_status').value = 'active';
-        $('project_created_at').value = '';
-        $('project_updated_at').value = '';
-        $('project_modal').classList.add('open');
-        return;
-      }
-      fetch('/api/projects/' + encodeURIComponent(id))
-        .then(r => r.json())
-        .then(p => {
-          $('project_id').value = p.id;
-          $('project_short_id_display').value = p.short_id || '';
-          $('project_name').value = p.name || '';
-          $('project_description').value = p.description || '';
-          $('project_status').value = p.status || 'active';
-          $('project_created_at').value = p.created_at || '';
-          $('project_updated_at').value = p.updated_at || '';
-          $('project_modal').classList.add('open');
-        })
-        .catch(() => { $('projects_status').textContent = 'Failed to load project'; });
-    }
-    $('new_project').onclick = () => openProjectModal(null);
-    $('project_save').onclick = async () => {
-      const id = $('project_id').value;
-      const body = {
-        name: $('project_name').value.trim(),
-        description: $('project_description').value.trim() || null,
-        status: $('project_status').value
-      };
-      if (!body.name) { alert('Name is required'); return; }
-      try {
-        if (id) {
-          await fetch('/api/projects/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        } else {
-          await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        }
-        $('project_modal').classList.remove('open');
-        loadProjects();
-        loadTasks();
-      } catch (e) { alert('Save failed: ' + e.message); }
-    };
-    $('project_delete').onclick = () => {
-      if (!confirm('Delete this project? Task associations will be removed.')) return;
-      const id = $('project_id').value;
-      if (!id) { $('project_modal').classList.remove('open'); return; }
-      fetch('/api/projects/' + encodeURIComponent(id), { method: 'DELETE' })
-        .then(() => { $('project_modal').classList.remove('open'); loadProjects(); loadTasks(); })
-        .catch(e => alert('Delete failed: ' + e.message));
-    };
-    $('project_cancel').onclick = () => $('project_modal').classList.remove('open');
-    $('project_modal').addEventListener('click', (e) => { if (e.target === $('project_modal')) $('project_modal').classList.remove('open'); });
-
-    async function loadTasks() {
-      const el = $('task_list');
-      const statusEl = $('tasks_status');
-      try {
-        const r = await fetch('/api/tasks');
-        const contentType = r.headers.get('content-type') || '';
-        let tasks;
-        if (contentType.includes('application/json')) {
-          tasks = await r.json();
-        } else {
-          const text = await r.text();
-          throw new Error(r.ok ? 'Invalid response' : (text || 'Request failed'));
-        }
-        if (!r.ok) {
-          throw new Error(tasks.detail || tasks.error || 'Request failed');
-        }
-        if (!Array.isArray(tasks) || !tasks.length) {
-          el.innerHTML = '';
-          statusEl.textContent = 'No tasks yet.';
-          return;
-        }
-        statusEl.textContent = tasks.length + ' task(s)';
-        const d = new Date();
-        const today = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-        el.innerHTML = tasks.slice(0, 100).map((t, i) => {
-          const due = t.due_date ? ' — due ' + t.due_date : '';
-          let dueClass = '';
-          if (t.due_date) {
-            if (t.due_date < today) dueClass = 'overdue';
-            else if (t.due_date === today) dueClass = 'due-today';
-          }
-          const flagClass = (t.flagged === true || t.flagged === 1) ? 'flag-icon flagged' : 'flag-icon';
-          const label = t.number != null ? String(t.number) : (i + 1);
-          const dueSpan = due ? '<span class="due-date ' + dueClass + '">' + due + '</span>' : '';
-          return '<li data-id="' + t.id + '"><span class="' + flagClass + '" title="' + (t.flagged ? 'Flagged' : 'Not flagged') + '">★</span> ' + label + '. ' + (t.title || '(no title)') + ' [' + (t.status || 'incomplete') + ']' + dueSpan + '</li>';
-        }).join('');
-        el.querySelectorAll('li').forEach(li => li.addEventListener('click', () => openTaskModal(li.dataset.id)));
-      } catch (e) {
-        el.innerHTML = '';
-        statusEl.textContent = 'Error: ' + (e.message || 'Loading tasks failed');
-        statusEl.className = 'status error';
-      }
-    }
-
-    function openTaskModal(id) {
-      fetch('/api/tasks/' + encodeURIComponent(id))
-        .then(r => r.json())
-        .then(t => {
-          $('task_id').value = t.id;
-          $('task_flagged').checked = t.flagged === true || t.flagged === 1;
-          $('task_number_display').value = t.number != null ? String(t.number) : '';
-          $('task_id_display').value = t.id;
-          $('task_title').value = t.title || '';
-          $('task_description').value = t.description || '';
-          $('task_notes').value = t.notes || '';
-          $('task_status').value = t.status || 'incomplete';
-          $('task_priority').value = t.priority !== undefined && t.priority !== null ? t.priority : '';
-          $('task_available_date').value = t.available_date || '';
-          $('task_due_date').value = t.due_date || '';
-          const container = $('task_projects_container');
-          const taskProjectIds = t.projects || [];
-          container.innerHTML = projectsList.length
-            ? projectsList.map(p => '<label style="display:block;margin-bottom:0.25rem;"><input type="checkbox" data-project-id="' + p.id + '" ' + (taskProjectIds.indexOf(p.id) >= 0 ? 'checked' : '') + ' /> ' + (p.short_id || p.id) + ': ' + (p.name || '') + '</label>').join('')
-            : '<span class="muted">No projects. Create one above.</span>';
-          $('task_tags').value = (t.tags || []).join(', ');
-          $('task_created_at').value = t.created_at || '';
-          $('task_updated_at').value = t.updated_at || '';
-          $('task_completed_at').value = t.completed_at || '';
-          $('task_modal').classList.add('open');
-        })
-        .catch(() => $('tasks_status').textContent = 'Failed to load task');
-    }
-
-    $('task_save').onclick = async () => {
-      const id = $('task_id').value;
-      const projects = Array.from($('task_projects_container').querySelectorAll('input[data-project-id]:checked')).map(cb => cb.getAttribute('data-project-id'));
-      const tags = $('task_tags').value.split(',').map(s => s.trim()).filter(Boolean);
-      const av = ($('task_available_date').value || '').trim().substring(0, 10);
-      const due = ($('task_due_date').value || '').trim().substring(0, 10);
-      if (av && due && /^\\d{4}-\\d{2}-\\d{2}$/.test(av) && /^\\d{4}-\\d{2}-\\d{2}$/.test(due) && av > due) {
-        alert('Available date cannot be after due date. Due date cannot be before available date.');
-        return;
-      }
-      const body = {
-        title: $('task_title').value.trim(),
-        description: $('task_description').value.trim() || null,
-        notes: $('task_notes').value.trim() || null,
-        status: $('task_status').value,
-        priority: $('task_priority').value === '' ? null : parseInt($('task_priority').value, 10),
-        available_date: $('task_available_date').value.trim() || null,
-        due_date: $('task_due_date').value.trim() || null,
-        flagged: $('task_flagged').checked,
-        projects,
-        tags
-      };
-      try {
-        const res = await fetch('/api/tasks/' + encodeURIComponent(id), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          alert(data.detail || data.message || res.statusText || 'Save failed');
-          return;
-        }
-        $('task_modal').classList.remove('open');
-        loadTasks();
-      } catch (e) {
-        alert('Save failed: ' + (e.message || e));
-      }
-    };
-
-    $('task_delete').onclick = () => {
-      if (!confirm('Delete this task? This cannot be undone.')) return;
-      const id = $('task_id').value;
-      fetch('/api/tasks/' + encodeURIComponent(id), { method: 'DELETE' })
-        .then(() => {
-          $('task_modal').classList.remove('open');
-          loadTasks();
-        })
-        .catch(e => alert('Delete failed: ' + e.message));
-    };
-
-    $('task_cancel').onclick = () => $('task_modal').classList.remove('open');
-    $('task_modal').addEventListener('click', (e) => { if (e.target === $('task_modal')) $('task_modal').classList.remove('open'); });
-
     loadConfig().then(loadModels);
-    loadProjects();
-    loadTasks();
     refreshStatus();
     setInterval(refreshStatus, 5000);
   </script>

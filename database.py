@@ -100,6 +100,19 @@ CREATE TABLE IF NOT EXISTS task_history (
 
 CREATE INDEX IF NOT EXISTS idx_task_history_task ON task_history(task_id);
 CREATE INDEX IF NOT EXISTS idx_task_history_timestamp ON task_history(timestamp);
+
+-- Saved lists: short_id (friendly 1-4 alphanumeric), name, description, query_definition (JSON AST), sort_definition (JSON), timestamps
+CREATE TABLE IF NOT EXISTS saved_lists (
+    id TEXT PRIMARY KEY,
+    short_id TEXT UNIQUE,
+    name TEXT NOT NULL,
+    description TEXT,
+    query_definition TEXT NOT NULL,
+    sort_definition TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_saved_lists_short_id ON saved_lists(short_id);
 """
 
 
@@ -150,6 +163,12 @@ def init_database(path: Path | None = None) -> Path:
     # Migration: add flagged column if missing
     try:
         conn.execute("ALTER TABLE tasks ADD COLUMN flagged INTEGER NOT NULL DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
+    # Migration: add short_id to saved_lists if missing (backfill done in list_service)
+    try:
+        conn.execute("ALTER TABLE saved_lists ADD COLUMN short_id TEXT")
     except sqlite3.OperationalError as e:
         if "duplicate column" not in str(e).lower():
             raise

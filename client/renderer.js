@@ -18,6 +18,10 @@
   const DEFAULT_RIGHT_PANEL_WIDTH = 320;
   const DATE_FORMAT_KEY = 'spaztick_date_format';
   const DATE_FORMAT_CUSTOM_KEY = 'spaztick_date_format_custom';
+  const SHOW_DUE_OVERDUE_COUNTS_KEY = 'spaztick_show_due_overdue_counts';
+  const NAV_SECTION_OPEN_PREFIX = 'spaztick_nav_section_open_';
+  const NAV_PROJECT_ORDER_KEY = 'spaztick_nav_project_order';
+  const NAV_LIST_ORDER_KEY = 'spaztick_nav_list_order';
 
   const TASK_PROPERTY_KEYS = ['due_date', 'available_date', 'priority', 'description', 'projects', 'tags'];
   const TASK_PROPERTY_LABELS = {
@@ -37,6 +41,7 @@
     status: 'Status',
   };
   let projectListCache = [];
+  let listsListCache = [];
   let normalizedPrioritiesThisSession = false;
 
   function parseDateOnly(str) {
@@ -58,6 +63,31 @@
     const d = parseDateOnly(dateStr);
     if (!d) return false;
     return d < (() => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`; })();
+  }
+  /** One of: 'overdue' | 'due_today' | 'upcoming' | 'complete' for nav count buckets */
+  function taskCountBucket(t) {
+    if (t.status === 'complete') return 'complete';
+    const due = parseDateOnly(t.due_date);
+    if (due && isOverdue(t.due_date)) return 'overdue';
+    if (due && isToday(t.due_date)) return 'due_today';
+    return 'upcoming';
+  }
+  function countTasksByBucket(tasks) {
+    const c = { overdue: 0, due_today: 0, upcoming: 0, complete: 0 };
+    tasks.forEach((t) => { c[taskCountBucket(t)] += 1; });
+    return c;
+  }
+  function renderNavCounts(counts) {
+    const o = counts.overdue || 0;
+    const d = counts.due_today || 0;
+    const u = counts.upcoming || 0;
+    const c = counts.complete || 0;
+    return `<span class="nav-item-count"><span class="count count-overdue">${o}</span><span class="count count-due-today">${d}</span><span class="count count-upcoming">${u}</span><span class="count count-complete">${c}</span></span>`;
+  }
+  function renderNavCountsSimple(counts) {
+    const incomplete = (counts.overdue || 0) + (counts.due_today || 0) + (counts.upcoming || 0);
+    const complete = counts.complete || 0;
+    return `<span class="nav-item-count nav-item-count-simple"><span class="count count-incomplete">${incomplete}</span><span class="count count-complete-simple">${complete}</span></span>`;
   }
 
   const leftPanel = document.getElementById('left-panel');
@@ -97,6 +127,10 @@
   const connectionIndicator = document.getElementById('connection-indicator');
   const themeBtn = document.getElementById('theme-btn');
   const inboxItem = document.getElementById('inbox-item');
+  const inboxCountEl = document.getElementById('inbox-count');
+  const listsListEl = document.getElementById('lists-list');
+  const navigatorAddBtn = document.getElementById('navigator-add-btn');
+  const navigatorAddPopover = document.getElementById('navigator-add-popover');
 
   let lastTasks = [];
   let lastTaskSource = null;
@@ -244,10 +278,20 @@
   toggleLeft.addEventListener('click', toggleLeftPanel);
   toggleRight.addEventListener('click', toggleRightPanel);
 
+  function getShowDueOverdueCounts() {
+    const v = localStorage.getItem(SHOW_DUE_OVERDUE_COUNTS_KEY);
+    return v === null || v === 'true';
+  }
+  function setShowDueOverdueCounts(show) {
+    localStorage.setItem(SHOW_DUE_OVERDUE_COUNTS_KEY, show ? 'true' : 'false');
+  }
+
   // --- Settings modal ---
+  const settingsShowDueOverdueCounts = document.getElementById('settings-show-due-overdue-counts');
   function openSettings() {
     settingsApiBase.value = getApiBase();
     settingsApiKey.value = getApiKey();
+    if (settingsShowDueOverdueCounts) settingsShowDueOverdueCounts.checked = getShowDueOverdueCounts();
     if (settingsDateFormat) settingsDateFormat.value = getDateFormat();
     if (customFormatEditBtn) customFormatEditBtn.classList.toggle('hidden', settingsDateFormat?.value !== 'custom');
     settingsOverlay.classList.remove('hidden');
@@ -263,10 +307,12 @@
     const base = settingsApiBase.value.trim() || 'http://localhost:8081';
     const key = settingsApiKey.value.trim();
     setApiConfig(base, key);
+    if (settingsShowDueOverdueCounts) setShowDueOverdueCounts(settingsShowDueOverdueCounts.checked);
     if (settingsDateFormat) setDateFormat(settingsDateFormat.value);
     closeSettings();
     checkConnection();
     loadProjects();
+    loadLists();
   }
 
   function openCustomDateFormatModal() {
@@ -473,8 +519,11 @@
     const completedCb = document.getElementById('display-show-completed');
     const highlightDueCb = document.getElementById('display-show-highlight-due');
     const manualSortCb = document.getElementById('display-manual-sort');
+    const dropdownEl = document.getElementById('display-settings-dropdown');
     if (!listEl) return;
     const source = lastTaskSource != null ? lastTaskSource : 'project';
+    const isListSource = typeof source === 'string' && source.startsWith('list:');
+    if (dropdownEl) dropdownEl.classList.toggle('display-dropdown-list-only', !!isListSource);
     const { order, visible, showFlagged, showCompleted, showHighlightDue, sortBy, manualSort, manualOrder } = getDisplayProperties(source);
     if (flaggedCb) {
       flaggedCb.checked = showFlagged;
@@ -595,21 +644,33 @@
         e.preventDefault();
         dragged = li;
         li.classList.add('dragging');
+        const indicator = document.createElement('div');
+        indicator.className = 'drop-indicator';
+        indicator.style.display = 'none';
+        listEl.appendChild(indicator);
+        let dropIndex = 0;
         const onMove = (e2) => {
           if (!dragged) return;
           const rect = listEl.getBoundingClientRect();
           const items = Array.from(listEl.querySelectorAll('li'));
-          const y = e2.clientY - rect.top;
-          let idx = items.findIndex((item) => item.getBoundingClientRect().top + item.offsetHeight / 2 > e2.clientY);
-          if (idx < 0) idx = items.length;
-          const curIdx = items.indexOf(dragged);
-          if (curIdx !== idx && idx !== curIdx + 1) {
-            if (idx > curIdx) idx--;
-            listEl.insertBefore(dragged, listEl.children[idx]);
+          const y = e2.clientY;
+          if (y < rect.top) dropIndex = 0;
+          else if (y > rect.bottom) dropIndex = items.length;
+          else {
+            const idx = items.findIndex((item) => item.getBoundingClientRect().top + item.offsetHeight / 2 > y);
+            dropIndex = idx < 0 ? items.length : idx;
           }
+          updateDropIndicator(listEl, indicator, dropIndex, items);
         };
         const onUp = () => {
-          if (dragged) dragged.classList.remove('dragging');
+          if (dragged) {
+            const items = Array.from(listEl.querySelectorAll('li'));
+            if (dropIndex >= 0 && dropIndex <= items.length) {
+              listEl.insertBefore(dragged, items[dropIndex] || null);
+            }
+            dragged.classList.remove('dragging');
+          }
+          if (indicator.parentNode) indicator.remove();
           dragged = null;
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
@@ -710,10 +771,33 @@
     redrawDisplayedTasks();
   }
 
+  function updateCenterHeaderForSource() {
+    const listFilterBtn = document.getElementById('list-filter-btn');
+    const displayDropdown = document.getElementById('display-settings-dropdown');
+    const isList = lastTaskSource && lastTaskSource.startsWith('list:');
+    if (listFilterBtn) listFilterBtn.classList.toggle('hidden', !isList);
+    if (displayDropdown && isList) displayDropdown.classList.add('hidden');
+  }
+
   function refreshCenterView() {
     if (lastTaskSource === 'inbox') loadInboxTasks();
-    else if (lastTaskSource && lastTaskSource.startsWith('list:')) return; // lists: future
-    else if (lastTaskSource) loadProjectTasks(lastTaskSource);
+    else if (lastTaskSource && lastTaskSource.startsWith('list:')) {
+      const listId = lastTaskSource.slice(5);
+      if (listId) loadListTasks(listId);
+    } else if (lastTaskSource) loadProjectTasks(lastTaskSource);
+  }
+
+  async function loadListTasks(listId) {
+    const center = document.getElementById('center-content');
+    if (!center) return;
+    center.innerHTML = '<p class="placeholder">Loading…</p>';
+    try {
+      const tasks = await api(`/api/external/lists/${encodeURIComponent(listId)}/tasks?limit=500`);
+      const list = lastTaskSource && lastTaskSource.startsWith('list:') ? lastTaskSource : 'list:' + listId;
+      renderTaskList(Array.isArray(tasks) ? tasks : [], list);
+    } catch (e) {
+      center.innerHTML = `<p class="placeholder">${e.message || 'Failed to load list tasks.'}</p>`;
+    }
   }
 
   function projectIdToShortName(projectId) {
@@ -1475,6 +1559,7 @@
   function renderTaskList(tasks, source) {
     lastTasks = tasks || [];
     lastTaskSource = source;
+    updateCenterHeaderForSource();
     const center = document.getElementById('center-content');
     if (!tasks || !tasks.length) {
       displayedTasks = [];
@@ -1515,20 +1600,33 @@
         e.stopPropagation();
         let dragged = row;
         row.classList.add('dragging');
+        const indicator = document.createElement('div');
+        indicator.className = 'drop-indicator';
+        indicator.style.display = 'none';
+        listEl.appendChild(indicator);
+        let dropIndex = 0;
         const onMove = (e2) => {
           if (!dragged) return;
           const items = Array.from(listEl.querySelectorAll('.task-row'));
           const y = e2.clientY;
-          let idx = items.findIndex((item) => item.getBoundingClientRect().top + item.offsetHeight / 2 > y);
-          if (idx < 0) idx = items.length;
-          const curIdx = items.indexOf(dragged);
-          if (curIdx !== idx && idx !== curIdx + 1) {
-            if (idx > curIdx) idx--;
-            listEl.insertBefore(dragged, listEl.children[idx]);
+          const rect = listEl.getBoundingClientRect();
+          if (y < rect.top) dropIndex = 0;
+          else if (y > rect.bottom) dropIndex = items.length;
+          else {
+            const idx = items.findIndex((item) => item.getBoundingClientRect().top + item.offsetHeight / 2 > y);
+            dropIndex = idx < 0 ? items.length : idx;
           }
+          updateDropIndicator(listEl, indicator, dropIndex, items);
         };
         const onUp = () => {
-          if (dragged) dragged.classList.remove('dragging');
+          if (dragged) {
+            const items = Array.from(listEl.querySelectorAll('.task-row'));
+            if (dropIndex >= 0 && dropIndex <= items.length) {
+              listEl.insertBefore(dragged, items[dropIndex] || null);
+            }
+            dragged.classList.remove('dragging');
+          }
+          if (indicator.parentNode) indicator.remove();
           dragged = null;
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
@@ -1558,12 +1656,15 @@
 
   // --- Inbox (tasks with no project) ---
   function onInboxClick() {
+    lastTaskSource = 'inbox';
     if (inboxItem) inboxItem.classList.add('selected');
     projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     document.getElementById('center-title').textContent = 'Inbox';
     document.getElementById('center-content').innerHTML = '<p class="placeholder">Loading…</p>';
     document.getElementById('inspector-title').textContent = 'Inspector';
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+    updateCenterHeaderForSource();
     loadInboxTasks();
   }
 
@@ -1586,11 +1687,12 @@
     }
   }
 
-  // --- Load projects (left panel) ---
+  // --- Load projects (left panel) and task counts for Inbox / Projects ---
   async function loadProjects() {
     const key = getApiKey();
     if (!key) {
       projectsList.innerHTML = '<li class="nav-item placeholder">Set API key in Settings</li>';
+      if (inboxCountEl) inboxCountEl.textContent = '';
       return;
     }
     if (!normalizedPrioritiesThisSession) {
@@ -1600,40 +1702,113 @@
       } catch (_) {}
     }
     try {
-      const list = await api('/api/external/projects');
+      const [list, tasksRaw, listsRaw] = await Promise.all([
+        api('/api/external/projects'),
+        api('/api/external/tasks?limit=1000').catch(() => []),
+        api('/api/external/lists').catch(() => []),
+      ]);
+      const tasks = Array.isArray(tasksRaw) ? tasksRaw : [];
+      const showDueOverdueCounts = getShowDueOverdueCounts();
+      const countRendererNav = showDueOverdueCounts ? (c) => renderNavCounts(c) : (c) => renderNavCountsSimple(c);
+      const inboxTasks = tasks.filter((t) => !t.projects || t.projects.length === 0);
+      if (inboxCountEl) inboxCountEl.innerHTML = countRendererNav(countTasksByBucket(inboxTasks));
+
       projectListCache = Array.isArray(list) ? list : [];
+      listsListCache = applyListOrder(Array.isArray(listsRaw) ? listsRaw : []);
       if (!projectListCache.length) {
         projectsList.innerHTML = '<li class="nav-item placeholder">No projects</li>';
+        const listsList0 = document.getElementById('lists-list');
+        if (listsList0) {
+          const listPlaceholder0 = listsList0.querySelector('.nav-item.placeholder');
+          if (listPlaceholder0) {
+            const showDueOverdue0 = getShowDueOverdueCounts();
+            const countRenderer0 = showDueOverdue0 ? (c) => renderNavCounts(c) : (c) => renderNavCountsSimple(c);
+            const countWrap0 = listPlaceholder0.querySelector('.nav-item-count');
+            if (countWrap0) countWrap0.outerHTML = countRenderer0(countTasksByBucket([]));
+          }
+        }
         return;
       }
-      projectListCache.sort((a, b) => {
-        const nameA = (a.name || a.short_id || '').toString().toLowerCase();
-        const nameB = (b.name || b.short_id || '').toString().toLowerCase();
-        return nameA.localeCompare(nameB, undefined, { numeric: true });
+      const projectOrder = getProjectOrder();
+      if (projectOrder.length) {
+        projectListCache.sort((a, b) => {
+          const ia = projectOrder.indexOf(String(a.id));
+          const ib = projectOrder.indexOf(String(b.id));
+          if (ia !== -1 && ib !== -1) return ia - ib;
+          if (ia !== -1) return -1;
+          if (ib !== -1) return 1;
+          const nameA = (a.name || a.short_id || '').toString().toLowerCase();
+          const nameB = (b.name || b.short_id || '').toString().toLowerCase();
+          return nameA.localeCompare(nameB, undefined, { numeric: true });
+        });
+      } else {
+        projectListCache.sort((a, b) => {
+          const nameA = (a.name || a.short_id || '').toString().toLowerCase();
+          const nameB = (b.name || b.short_id || '').toString().toLowerCase();
+          return nameA.localeCompare(nameB, undefined, { numeric: true });
+        });
+      }
+      const projectTasksMap = new Map();
+      projectListCache.forEach((p) => projectTasksMap.set(String(p.id), []));
+      tasks.forEach((t) => {
+        (t.projects || []).forEach((pid) => {
+          const k = String(pid);
+          if (projectTasksMap.has(k)) projectTasksMap.get(k).push(t);
+        });
       });
+      const archiveSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M20.5 7V13C20.5 16.7712 20.5 18.6569 19.3284 19.8284C18.1569 21 16.2712 21 12.5 21H11.5C7.72876 21 5.84315 21 4.67157 19.8284C3.5 18.6569 3.5 16.7712 3.5 13V7"/><path d="M2 5C2 4.05719 2 3.58579 2.29289 3.29289C2.58579 3 3.05719 3 4 3H20C20.9428 3 21.4142 3 21.7071 3.29289C22 3.58579 22 4.05719 22 5C22 5.94281 22 6.41421 21.7071 6.70711C21.4142 7 20.9428 7 20 7H4C3.05719 7 2.58579 7 2.29289 6.70711C2 6.41421 2 5.94281 2 5Z"/><path d="M12 7L12 16M12 16L15 12.6667M12 16L9 12.6667"/></svg>';
+      const minusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>';
+      const moveSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
       projectsList.innerHTML = projectListCache.map((p) => {
         const name = (p.name || p.short_id || 'Project').replace(/</g, '&lt;');
-        const shortId = (p.short_id || '').replace(/</g, '&lt;');
-        return `<li class="nav-item" data-type="project" data-id="${(p.id || '').replace(/"/g, '&quot;')}" data-short-id="${shortId}">${name}${shortId ? ` (${shortId})` : ''}</li>`;
+        const projectTasks = projectTasksMap.get(String(p.id)) || [];
+        const countHtml = countRendererNav(countTasksByBucket(projectTasks));
+        const label = (p.name || p.short_id || 'Project').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        const idEsc = (p.id || '').replace(/"/g, '&quot;');
+        const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-archive" title="Archive" aria-label="Archive project">${archiveSvg}</button><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete project">${minusSvg}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
+        return `<li class="nav-item" data-type="project" data-id="${idEsc}" data-label="${label}">${name}${countHtml}${actions}</li>`;
       }).join('');
       projectsList.querySelectorAll('.nav-item').forEach((el) => {
         el.addEventListener('click', onProjectClick);
       });
+      projectsList.querySelectorAll('.nav-item-archive').forEach((btn) => {
+        btn.addEventListener('click', (e) => { e.stopPropagation(); onProjectArchive(e); });
+      });
+      projectsList.querySelectorAll('.nav-item-delete').forEach((btn) => {
+        btn.addEventListener('click', (e) => { e.stopPropagation(); onProjectDelete(e); });
+      });
+      projectsList.querySelectorAll('.nav-item-drag-handle').forEach((handle) => {
+        handle.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); onNavItemDragStart(e, 'project'); });
+      });
+      const listsList = document.getElementById('lists-list');
+      if (listsList) {
+        loadLists();
+        const listPlaceholder = listsList.querySelector('.nav-item.placeholder');
+        if (listPlaceholder) {
+          const countWrap = listPlaceholder.querySelector('.nav-item-count');
+          if (countWrap) countWrap.outerHTML = countRendererNav(countTasksByBucket([]));
+        }
+      }
     } catch (e) {
       projectListCache = [];
       projectsList.innerHTML = `<li class="nav-item placeholder">${e.message || 'Error'}</li>`;
+      if (inboxCountEl) inboxCountEl.textContent = '';
     }
   }
 
   function onProjectClick(ev) {
+    if (ev.target.closest('.nav-item-actions')) return;
     const li = ev.currentTarget;
     if (li.classList.contains('placeholder')) return;
     if (inboxItem) inboxItem.classList.remove('selected');
     projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     li.classList.add('selected');
     const type = li.dataset.type;
     const id = li.dataset.id;
-    document.getElementById('center-title').textContent = type === 'project' ? (li.textContent.trim() || 'Project') : 'List';
+    lastTaskSource = type === 'project' && id ? id : null;
+    updateCenterHeaderForSource();
+    document.getElementById('center-title').textContent = type === 'project' ? (li.dataset.label || 'Project') : 'List';
     document.getElementById('center-content').innerHTML = '<p class="placeholder">Loading tasks…</p>';
     document.getElementById('inspector-title').textContent = 'Project';
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
@@ -1643,6 +1818,256 @@
     } else {
       document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
     }
+  }
+
+  function getProjectOrder() {
+    try {
+      const raw = localStorage.getItem(NAV_PROJECT_ORDER_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr.map(String) : [];
+      }
+    } catch (_) {}
+    return [];
+  }
+  function saveProjectOrder(ids) {
+    try {
+      localStorage.setItem(NAV_PROJECT_ORDER_KEY, JSON.stringify(ids));
+    } catch (_) {}
+  }
+  function getListOrder() {
+    try {
+      const raw = localStorage.getItem(NAV_LIST_ORDER_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        return Array.isArray(arr) ? arr.map(String) : [];
+      }
+    } catch (_) {}
+    return [];
+  }
+  function saveListOrder(ids) {
+    try {
+      localStorage.setItem(NAV_LIST_ORDER_KEY, JSON.stringify(ids));
+    } catch (_) {}
+  }
+  function applyListOrder(lists) {
+    if (!Array.isArray(lists) || !lists.length) return lists;
+    const order = getListOrder();
+    if (!order.length) return lists;
+    const byId = new Map(lists.map((l) => [String(l.id), l]));
+    const ordered = order.map((id) => byId.get(id)).filter(Boolean);
+    const rest = lists.filter((l) => !order.includes(String(l.id)));
+    return ordered.concat(rest);
+  }
+  function getLists() {
+    return Array.isArray(listsListCache) ? listsListCache.slice() : [];
+  }
+  async function loadListsFromApi() {
+    try {
+      const data = await api('/api/external/lists');
+      const raw = Array.isArray(data) ? data : [];
+      listsListCache = applyListOrder(raw);
+    } catch (_) {
+      listsListCache = [];
+    }
+    loadLists();
+  }
+  function loadLists() {
+    if (!listsListEl) return;
+    const lists = getLists();
+    const showDueOverdueCounts = getShowDueOverdueCounts();
+    const countRendererNav = showDueOverdueCounts ? (c) => renderNavCounts(c) : (c) => renderNavCountsSimple(c);
+    const emptyCountHtml = countRendererNav(countTasksByBucket([]));
+    if (!lists.length) {
+      listsListEl.innerHTML = `<li class="nav-item placeholder">—${emptyCountHtml}</li>`;
+      return;
+    }
+    const minusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>';
+    const moveSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
+    listsListEl.innerHTML = lists.map((list) => {
+      const name = (list.name || '').replace(/</g, '&lt;');
+      const label = (list.name || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      const listIdEsc = (list.id || '').replace(/"/g, '&quot;');
+      /* Lists: delete + reorder only (no archive) */
+      const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete list">${minusSvg}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
+      return `<li class="nav-item" data-type="list" data-list-id="${listIdEsc}" data-label="${label}">${name}${emptyCountHtml}${actions}</li>`;
+    }).join('');
+    listsListEl.querySelectorAll('.nav-item').forEach((el) => {
+      el.addEventListener('click', onListClick);
+    });
+    listsListEl.querySelectorAll('.nav-item-delete').forEach((btn) => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); onListDelete(e); });
+    });
+    listsListEl.querySelectorAll('.nav-item-drag-handle').forEach((handle) => {
+      handle.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); onNavItemDragStart(e, 'list'); });
+    });
+  }
+  function onListClick(ev) {
+    if (ev.target.closest('.nav-item-actions')) return;
+    const li = ev.currentTarget;
+    if (li.classList.contains('placeholder')) return;
+    if (inboxItem) inboxItem.classList.remove('selected');
+    projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    li.classList.add('selected');
+    const id = li.dataset.listId;
+    const name = li.dataset.label || 'List';
+    lastTaskSource = 'list:' + (id || '');
+    document.getElementById('center-title').textContent = name;
+    document.getElementById('inspector-title').textContent = 'List';
+    document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+    updateCenterHeaderForSource();
+    if (id) loadListTasks(id);
+  }
+  async function onProjectArchive(ev) {
+    const li = ev.target.closest('.nav-item[data-type="project"]');
+    if (!li || !li.dataset.id) return;
+    const name = li.dataset.label || 'Project';
+    if (!confirm(`Archive project "${name}"?`)) return;
+    try {
+      await api(`/api/external/projects/${encodeURIComponent(li.dataset.id)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'archived' }),
+      });
+      await loadProjects();
+    } catch (e) {
+      alert(e.message || 'Failed to archive project');
+    }
+  }
+  async function onProjectDelete(ev) {
+    const li = ev.target.closest('.nav-item[data-type="project"]');
+    if (!li || !li.dataset.id) return;
+    const name = li.dataset.label || 'Project';
+    if (!confirm(`Delete project "${name}"? This cannot be undone.`)) return;
+    try {
+      await api(`/api/external/projects/${encodeURIComponent(li.dataset.id)}`, { method: 'DELETE' });
+      await loadProjects();
+    } catch (e) {
+      alert(e.message || 'Failed to delete project');
+    }
+  }
+  async function onListDelete(ev) {
+    const li = ev.target.closest('.nav-item[data-type="list"]');
+    if (!li || !li.dataset.listId) return;
+    const name = li.dataset.label || 'List';
+    if (!confirm(`Delete list "${name}"?`)) return;
+    try {
+      await api(`/api/external/lists/${encodeURIComponent(li.dataset.listId)}`, { method: 'DELETE' });
+      await loadListsFromApi();
+      if (lastTaskSource === 'list:' + li.dataset.listId) {
+        lastTaskSource = '';
+        if (inboxItem) inboxItem.click();
+      }
+    } catch (e) {
+      alert(e.message || 'Failed to delete list');
+    }
+  }
+  let navDragState = null;
+  function updateDropIndicator(listEl, indicator, dropIndex, items) {
+    if (!indicator || !listEl) return;
+    const listRect = listEl.getBoundingClientRect();
+    let topPx;
+    if (items.length === 0) {
+      topPx = 0;
+    } else if (dropIndex === 0) {
+      topPx = items[0].getBoundingClientRect().top - listRect.top + listEl.scrollTop;
+    } else if (dropIndex >= items.length) {
+      const last = items[items.length - 1];
+      const lastBottom = last.getBoundingClientRect().bottom - listRect.top + listEl.scrollTop;
+      topPx = Math.max(0, lastBottom - 2);
+    } else {
+      topPx = items[dropIndex].getBoundingClientRect().top - listRect.top + listEl.scrollTop;
+    }
+    indicator.style.top = topPx + 'px';
+    indicator.style.display = 'block';
+  }
+  function onNavItemDragStart(ev, kind) {
+    if (navDragState) return;
+    const li = ev.target.closest('.nav-item');
+    if (!li || li.classList.contains('placeholder')) return;
+    const listEl = kind === 'project' ? projectsList : listsListEl;
+    const items = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)'));
+    const idx = items.indexOf(li);
+    if (idx === -1) return;
+    li.classList.add('nav-item-dragging');
+    const indicator = document.createElement('div');
+    indicator.className = 'drop-indicator';
+    indicator.style.display = 'none';
+    listEl.appendChild(indicator);
+    navDragState = { kind, listEl, items, index: idx, li, y0: ev.clientY, indicator, dropIndex: idx };
+    function onMove(e) {
+      if (!navDragState) return;
+      e.preventDefault();
+      const y = e.clientY;
+      const rect = listEl.getBoundingClientRect();
+      const currentItems = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)'));
+      let dropIndex;
+      if (y < rect.top) {
+        dropIndex = 0;
+      } else if (currentItems.length > 0) {
+        const lastItem = currentItems[currentItems.length - 1];
+        const lastBottom = lastItem.getBoundingClientRect().bottom;
+        const sectionBody = listEl.closest('.nav-section-body');
+        const sectionBottom = sectionBody ? sectionBody.getBoundingClientRect().bottom : rect.bottom;
+        const bottomZone = 24;
+        if (y >= lastBottom - bottomZone || y >= sectionBottom - bottomZone) {
+          dropIndex = currentItems.length;
+        } else {
+          dropIndex = currentItems.findIndex((item) => item.getBoundingClientRect().top + item.offsetHeight / 2 > y);
+          if (dropIndex < 0) dropIndex = currentItems.length;
+        }
+      } else {
+        dropIndex = currentItems.length;
+      }
+      navDragState.dropIndex = dropIndex;
+      updateDropIndicator(listEl, navDragState.indicator, dropIndex, currentItems);
+    }
+    function onUp() {
+      if (!navDragState) return;
+      const listEl = navDragState.listEl;
+      const currentItems = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)'));
+      const dropIndex = navDragState.dropIndex;
+      if (dropIndex >= 0 && dropIndex <= currentItems.length) {
+        listEl.insertBefore(navDragState.li, currentItems[dropIndex] || null);
+      }
+      navDragState.li.classList.remove('nav-item-dragging');
+      if (navDragState.indicator && navDragState.indicator.parentNode) navDragState.indicator.remove();
+      const items = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)'));
+      if (navDragState.kind === 'project') {
+        const ids = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)')).map((el) => el.dataset.id).filter(Boolean);
+        saveProjectOrder(ids);
+      } else {
+        const ids = Array.from(listEl.querySelectorAll('.nav-item:not(.placeholder)')).map((el) => el.dataset.listId).filter(Boolean);
+        saveListOrder(ids);
+        const lists = getLists();
+        const ordered = ids.map((id) => lists.find((l) => l.id === id)).filter(Boolean);
+        const rest = lists.filter((l) => !ids.includes(l.id));
+        listsListCache = ordered.concat(rest);
+        loadLists();
+      }
+      navDragState = null;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+  function openListInCenter(listId) {
+    const lists = getLists();
+    const list = lists.find((l) => l.id === listId);
+    if (!list) return;
+    if (inboxItem) inboxItem.classList.remove('selected');
+    projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    listsListEl.querySelectorAll('.nav-item').forEach((x) => {
+      x.classList.toggle('selected', x.dataset.listId === listId);
+    });
+    lastTaskSource = 'list:' + listId;
+    document.getElementById('center-title').textContent = list.name || 'List';
+    document.getElementById('inspector-title').textContent = 'List';
+    document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+    updateCenterHeaderForSource();
+    loadListTasks(listId);
   }
 
   const PROJECT_INSPECTOR_KEYS = [
@@ -1960,6 +2385,228 @@
   const centerRefreshBtn = document.getElementById('center-refresh-btn');
   if (centerRefreshBtn) centerRefreshBtn.addEventListener('click', refreshCenterView);
 
+  // --- List filter & sort modal (when viewing a list) ---
+  const LIST_FILTER_FIELDS = [
+    { field: 'title', label: 'Title', valueType: 'text', operators: [
+      { op: 'contains', label: 'contains' }, { op: 'equals', label: 'equals' }, { op: 'starts_with', label: 'starts with' }, { op: 'ends_with', label: 'ends with' }, { op: 'not_contains', label: 'does not contain' }
+    ]},
+    { field: 'status', label: 'Status', valueType: 'status', operators: [{ op: 'equals', label: 'is' }] },
+    { field: 'due_date', label: 'Due date', valueType: 'date', operators: [
+      { op: 'is_empty', label: 'is empty' }, { op: 'is_on', label: 'is on' }, { op: 'is_before', label: 'is before' }, { op: 'is_after', label: 'is after' }, { op: 'is_on_or_before', label: 'on or before' }, { op: 'is_on_or_after', label: 'on or after' }
+    ]},
+    { field: 'available_date', label: 'Available date', valueType: 'date', operators: [
+      { op: 'is_empty', label: 'is empty' }, { op: 'is_on', label: 'is on' }, { op: 'is_before', label: 'is before' }, { op: 'is_after', label: 'is after' }, { op: 'is_on_or_before', label: 'on or before' }, { op: 'is_on_or_after', label: 'on or after' }
+    ]},
+    { field: 'priority', label: 'Priority', valueType: 'number', operators: [
+      { op: 'equals', label: 'equals' }, { op: 'greater_than', label: '>' }, { op: 'less_than', label: '<' }, { op: 'greater_or_equal', label: '>=' }, { op: 'less_or_equal', label: '<=' }
+    ]},
+    { field: 'flagged', label: 'Focused', valueType: 'flagged', operators: [{ op: 'equals', label: 'is' }] },
+    { field: 'tags', label: 'Tags', valueType: 'tags', operators: [{ op: 'is_empty', label: 'is empty' }, { op: 'includes', label: 'includes' }, { op: 'excludes', label: 'excludes' }] },
+    { field: 'project', label: 'Project', valueType: 'projects', operators: [{ op: 'is_empty', label: 'is empty' }, { op: 'includes', label: 'includes' }, { op: 'excludes', label: 'excludes' }] },
+  ];
+  const LIST_SORT_FIELDS = [
+    { key: 'due_date', label: 'Due date' }, { key: 'available_date', label: 'Available date' }, { key: 'created_at', label: 'Created' }, { key: 'completed_at', label: 'Completed' }, { key: 'title', label: 'Name' }, { key: 'priority', label: 'Priority' }, { key: 'status', label: 'Status' }
+  ];
+  let currentListSettingsListId = null;
+
+  function listSettingsConditionToRow(cond) {
+    const f = LIST_FILTER_FIELDS.find((x) => x.field === (cond && cond.field));
+    const fieldConfig = f || LIST_FILTER_FIELDS[0];
+    const op = (cond && cond.operator) || (fieldConfig.operators[0] && fieldConfig.operators[0].op);
+    const value = cond && cond.value;
+    const valueStr = value === undefined || value === null ? '' : (Array.isArray(value) ? value.join(', ') : String(value));
+    const opOpts = fieldConfig.operators.map((o) => `<option value="${o.op}" ${o.op === op ? 'selected' : ''}>${o.label}</option>`).join('');
+    const fieldOpts = LIST_FILTER_FIELDS.map((x) => `<option value="${x.field}" ${x.field === fieldConfig.field ? 'selected' : ''}>${x.label}</option>`).join('');
+    const isDate = fieldConfig.valueType === 'date';
+    const valueHtml = isDate
+      ? `<div class="filter-value-wrap"><input type="text" class="list-filter-value" placeholder="e.g. today, today+3" value="${(valueStr || '').replace(/"/g, '&quot;')}" /><input type="date" class="list-filter-date-picker" style="max-width:120px;" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button></div>`
+      : fieldConfig.valueType === 'status'
+        ? `<div class="filter-value-wrap"><select class="list-filter-value"><option value="incomplete" ${valueStr === 'incomplete' ? 'selected' : ''}>Incomplete</option><option value="complete" ${valueStr === 'complete' ? 'selected' : ''}>Complete</option></select></div>`
+        : fieldConfig.valueType === 'flagged'
+          ? `<div class="filter-value-wrap"><select class="list-filter-value"><option value="false" ${valueStr === 'false' || valueStr === '0' ? 'selected' : ''}>No</option><option value="true" ${valueStr === 'true' || valueStr === '1' ? 'selected' : ''}>Yes</option></select></div>`
+          : `<div class="filter-value-wrap"><input type="text" class="list-filter-value" placeholder="${fieldConfig.valueType === 'tags' ? 'comma-separated tags' : fieldConfig.valueType === 'number' ? '0-3' : 'value'}" value="${(valueStr || '').replace(/"/g, '&quot;')}" /></div>`;
+    return `<div class="list-settings-filter-row" data-field="${fieldConfig.field}">
+      <select class="list-filter-field" aria-label="Field">${fieldOpts}</select>
+      <select class="list-filter-op" aria-label="Operator">${opOpts}</select>
+      ${valueHtml}
+      <button type="button" class="list-settings-remove" aria-label="Remove">×</button>
+    </div>`;
+  }
+
+  function listSettingsSortToRow(s) {
+    const field = (s && s.field) || 'due_date';
+    const direction = (s && s.direction) || 'asc';
+    const fieldOpts = LIST_SORT_FIELDS.map((x) => `<option value="${x.key}" ${x.key === field ? 'selected' : ''}>${x.label}</option>`).join('');
+    return `<div class="list-settings-sort-row">
+      <select class="list-sort-field" aria-label="Sort by">${fieldOpts}</select>
+      <select class="list-sort-dir" aria-label="Direction">
+        <option value="asc" ${direction === 'asc' ? 'selected' : ''}>Asc</option>
+        <option value="desc" ${direction === 'desc' ? 'selected' : ''}>Desc</option>
+      </select>
+      <button type="button" class="list-settings-remove" aria-label="Remove">×</button>
+    </div>`;
+  }
+
+  function openListSettingsModal(listId) {
+    currentListSettingsListId = listId;
+    const overlay = document.getElementById('list-settings-overlay');
+    const filtersEl = document.getElementById('list-settings-filters');
+    const sortEl = document.getElementById('list-settings-sort');
+    if (!overlay || !filtersEl || !sortEl) return;
+    (async () => {
+      try {
+        const list = await api(`/api/external/lists/${encodeURIComponent(listId)}`);
+        const qd = list && list.query_definition;
+        const sd = list && list.sort_definition;
+        const children = (qd && qd.type === 'group' && Array.isArray(qd.children)) ? qd.children : (qd && qd.type === 'condition') ? [qd] : [];
+        const conditions = children.filter((c) => c && c.type === 'condition');
+        filtersEl.innerHTML = conditions.length ? conditions.map((c) => listSettingsConditionToRow(c)).join('') : listSettingsConditionToRow({});
+        const sortWithin = (sd && Array.isArray(sd.sort_within_group)) ? sd.sort_within_group : [];
+        sortEl.innerHTML = sortWithin.length ? sortWithin.map((s) => listSettingsSortToRow(s)).join('') : listSettingsSortToRow({});
+      } catch (_) {
+        filtersEl.innerHTML = listSettingsConditionToRow({});
+        sortEl.innerHTML = listSettingsSortToRow({});
+      }
+      setupListSettingsModalHandlers();
+      overlay.classList.remove('hidden');
+      overlay.setAttribute('aria-hidden', 'false');
+    })();
+  }
+
+  function setupListSettingsModalHandlers() {
+    const filtersEl = document.getElementById('list-settings-filters');
+    const sortEl = document.getElementById('list-settings-sort');
+    const addFilterBtn = document.getElementById('list-settings-add-filter');
+    const addSortBtn = document.getElementById('list-settings-add-sort');
+    if (!filtersEl || !sortEl) return;
+    filtersEl.querySelectorAll('.list-settings-remove').forEach((btn) => {
+      btn.onclick = () => { btn.closest('.list-settings-filter-row').remove(); };
+    });
+    filtersEl.querySelectorAll('.list-filter-field').forEach((select) => {
+      select.onchange = () => {
+        const row = select.closest('.list-settings-filter-row');
+        const f = LIST_FILTER_FIELDS.find((x) => x.field === select.value);
+        const valueWrap = row.querySelector('.filter-value-wrap');
+        const opSelect = row.querySelector('.list-filter-op');
+        if (!valueWrap || !opSelect || !f) return;
+        const opOpts = f.operators.map((o) => `<option value="${o.op}">${o.label}</option>`).join('');
+        opSelect.innerHTML = opOpts;
+        const isDate = f.valueType === 'date';
+        const newValueHtml = isDate
+          ? `<input type="text" class="list-filter-value" placeholder="e.g. today, today+3" /><input type="date" class="list-filter-date-picker" style="max-width:120px;" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button>`
+          : f.valueType === 'status'
+            ? `<select class="list-filter-value"><option value="incomplete">Incomplete</option><option value="complete">Complete</option></select>`
+            : f.valueType === 'flagged'
+              ? `<select class="list-filter-value"><option value="false">No</option><option value="true">Yes</option></select>`
+              : `<input type="text" class="list-filter-value" placeholder="${f.valueType === 'tags' ? 'comma-separated tags' : f.valueType === 'number' ? '0-3' : 'value'}" />`;
+        valueWrap.innerHTML = newValueHtml;
+        const valEl = valueWrap.querySelector('.list-filter-value');
+        if (valEl) valEl.focus();
+        bindDatePickerInRow(row);
+      };
+    });
+    filtersEl.querySelectorAll('.list-filter-date-picker, .date-picker-btn').forEach((el) => {});
+    filtersEl.querySelectorAll('.list-settings-filter-row').forEach((row) => bindDatePickerInRow(row));
+    sortEl.querySelectorAll('.list-settings-remove').forEach((btn) => {
+      btn.onclick = () => { btn.closest('.list-settings-sort-row').remove(); };
+    });
+    function bindDatePickerInRow(row) {
+      const dateInput = row && row.querySelector('.list-filter-date-picker');
+      const textInput = row && row.querySelector('.list-filter-value');
+      const dateBtn = row && row.querySelector('.date-picker-btn');
+      if (dateInput && textInput) {
+        dateInput.onchange = () => { textInput.value = dateInput.value || ''; };
+        if (dateBtn) dateBtn.onclick = () => { dateInput.showPicker ? dateInput.showPicker() : dateInput.focus(); };
+      }
+    }
+    if (addFilterBtn) addFilterBtn.onclick = () => {
+      const div = document.createElement('div');
+      div.innerHTML = listSettingsConditionToRow({});
+      filtersEl.appendChild(div.firstElementChild);
+      setupListSettingsModalHandlers();
+    };
+    if (addSortBtn) addSortBtn.onclick = () => {
+      const div = document.createElement('div');
+      div.innerHTML = listSettingsSortToRow({});
+      sortEl.appendChild(div.firstElementChild);
+      setupListSettingsModalHandlers();
+    };
+  }
+
+  function collectListSettingsPayload() {
+    const filtersEl = document.getElementById('list-settings-filters');
+    const sortEl = document.getElementById('list-settings-sort');
+    const conditions = [];
+    (filtersEl && filtersEl.querySelectorAll('.list-settings-filter-row')).forEach((row) => {
+      const fieldSelect = row.querySelector('.list-filter-field');
+      const opSelect = row.querySelector('.list-filter-op');
+      const valueEl = row.querySelector('.list-filter-value');
+      const field = fieldSelect && fieldSelect.value;
+      const op = opSelect && opSelect.value;
+      const f = LIST_FILTER_FIELDS.find((x) => x.field === field);
+      if (!field || !op || !f) return;
+      let value = valueEl && (valueEl.tagName === 'SELECT' ? valueEl.value : valueEl.value.trim());
+      if (f.valueType === 'number' && value !== '') value = parseInt(value, 10);
+      if (f.valueType === 'tags' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
+      if (f.valueType === 'projects' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
+      if (f.valueType === 'flagged') value = value === 'true' || value === '1';
+      if (op === 'is_empty') value = null;
+      conditions.push({ type: 'condition', field, operator: op, value });
+    });
+    const sortWithin = [];
+    (sortEl && sortEl.querySelectorAll('.list-settings-sort-row')).forEach((row) => {
+      const fieldSelect = row.querySelector('.list-sort-field');
+      const dirSelect = row.querySelector('.list-sort-dir');
+      if (fieldSelect && dirSelect) sortWithin.push({ field: fieldSelect.value, direction: dirSelect.value });
+    });
+    const query_definition = conditions.length ? { type: 'group', operator: 'AND', children: conditions } : { type: 'group', operator: 'AND', children: [] };
+    const sort_definition = { group_by: [], sort_within_group: sortWithin };
+    return { query_definition, sort_definition };
+  }
+
+  function closeListSettingsModal() {
+    const overlay = document.getElementById('list-settings-overlay');
+    if (overlay) {
+      overlay.classList.add('hidden');
+      overlay.setAttribute('aria-hidden', 'true');
+    }
+    currentListSettingsListId = null;
+  }
+
+  const listFilterBtn = document.getElementById('list-filter-btn');
+  if (listFilterBtn) {
+    listFilterBtn.addEventListener('click', () => {
+      if (!lastTaskSource || !lastTaskSource.startsWith('list:')) return;
+      const listId = lastTaskSource.slice(5);
+      if (listId) openListSettingsModal(listId);
+    });
+  }
+  const listSettingsClose = document.getElementById('list-settings-close');
+  const listSettingsCancel = document.getElementById('list-settings-cancel');
+  const listSettingsSave = document.getElementById('list-settings-save');
+  const listSettingsOverlay = document.getElementById('list-settings-overlay');
+  if (listSettingsCancel) listSettingsCancel.addEventListener('click', closeListSettingsModal);
+  if (listSettingsClose) listSettingsClose.addEventListener('click', closeListSettingsModal);
+  if (listSettingsOverlay) listSettingsOverlay.addEventListener('click', (e) => { if (e.target === listSettingsOverlay) closeListSettingsModal(); });
+  if (listSettingsSave) {
+    listSettingsSave.addEventListener('click', async () => {
+      const listId = currentListSettingsListId;
+      if (!listId) { closeListSettingsModal(); return; }
+      try {
+        const { query_definition, sort_definition } = collectListSettingsPayload();
+        await api(`/api/external/lists/${encodeURIComponent(listId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query_definition, sort_definition }),
+        });
+        closeListSettingsModal();
+        if (lastTaskSource === 'list:' + listId) loadListTasks(listId);
+      } catch (e) {
+        alert(e.message || 'Failed to save list settings.');
+      }
+    });
+  }
+
   function refreshNavigator() {
     loadProjects();
     refreshCenterView();
@@ -1967,9 +2614,197 @@
   const navigatorRefreshBtn = document.getElementById('navigator-refresh-btn');
   if (navigatorRefreshBtn) navigatorRefreshBtn.addEventListener('click', refreshNavigator);
 
+  const navigatorEditBtn = document.getElementById('navigator-edit-btn');
+  function exitEditMode() {
+    if (!leftPanel) return;
+    leftPanel.classList.remove('left-panel-edit-mode');
+    if (navigatorEditBtn) navigatorEditBtn.classList.remove('active');
+    document.querySelectorAll('.nav-section[data-section]').forEach((section) => {
+      const sectionId = section.dataset.section;
+      if (sectionId === 'inbox') return;
+      const header = section.querySelector('.nav-section-header');
+      const open = getNavSectionOpen(sectionId);
+      if (!open) section.classList.add('collapsed');
+      else section.classList.remove('collapsed');
+      if (header) header.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    loadProjects();
+    loadLists();
+    if (editModeOutsideClickRef) {
+      document.removeEventListener('click', editModeOutsideClickRef, true);
+      editModeOutsideClickRef = null;
+    }
+  }
+  let editModeOutsideClickRef = null;
+  function enterEditMode() {
+    if (!leftPanel) return;
+    leftPanel.classList.add('left-panel-edit-mode');
+    if (navigatorEditBtn) navigatorEditBtn.classList.add('active');
+    document.querySelectorAll('#nav-section-projects, #nav-section-lists').forEach((section) => {
+      section.classList.remove('collapsed');
+      const header = section.querySelector('.nav-section-header');
+      if (header) header.setAttribute('aria-expanded', 'true');
+    });
+    editModeOutsideClickRef = (ev) => {
+      if (ev.target.closest('#navigator-edit-btn')) return;
+      if (ev.target.closest('.nav-item-actions')) return;
+      exitEditMode();
+    };
+    document.addEventListener('click', editModeOutsideClickRef, true);
+  }
+  if (navigatorEditBtn) {
+    navigatorEditBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (leftPanel && leftPanel.classList.contains('left-panel-edit-mode')) exitEditMode();
+      else enterEditMode();
+    });
+  }
+
+  // --- Navigator add (plus) button: popover → Project or List → modals ---
+  const newProjectOverlay = document.getElementById('new-project-overlay');
+  const newProjectName = document.getElementById('new-project-name');
+  const newProjectDescription = document.getElementById('new-project-description');
+  const newProjectClose = document.getElementById('new-project-close');
+  const newProjectCancel = document.getElementById('new-project-cancel');
+  const newProjectCreate = document.getElementById('new-project-create');
+  const newListOverlay = document.getElementById('new-list-overlay');
+  const newListName = document.getElementById('new-list-name');
+  const newListClose = document.getElementById('new-list-close');
+  const newListCancel = document.getElementById('new-list-cancel');
+  const newListCreate = document.getElementById('new-list-create');
+
+  function closeAddPopover() {
+    if (navigatorAddPopover) {
+      navigatorAddPopover.classList.add('hidden');
+      if (navigatorAddBtn) navigatorAddBtn.setAttribute('aria-expanded', 'false');
+    }
+  }
+  if (navigatorAddBtn && navigatorAddPopover) {
+    navigatorAddBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = !navigatorAddPopover.classList.toggle('hidden');
+      navigatorAddBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    });
+    document.addEventListener('click', closeAddPopover);
+    navigatorAddPopover.addEventListener('click', (e) => e.stopPropagation());
+    navigatorAddPopover.querySelectorAll('.navigator-add-popover-item').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const choice = btn.dataset.choice;
+        closeAddPopover();
+        if (choice === 'project') {
+          if (newProjectOverlay) {
+            if (newProjectName) newProjectName.value = '';
+            if (newProjectDescription) newProjectDescription.value = '';
+            newProjectOverlay.classList.remove('hidden');
+            newProjectOverlay.setAttribute('aria-hidden', 'false');
+            setTimeout(() => newProjectName && newProjectName.focus(), 50);
+          }
+        } else if (choice === 'list') {
+          if (newListOverlay) {
+            if (newListName) newListName.value = '';
+            newListOverlay.classList.remove('hidden');
+            newListOverlay.setAttribute('aria-hidden', 'false');
+            setTimeout(() => newListName && newListName.focus(), 50);
+          }
+        }
+      });
+    });
+  }
+
+  function closeNewProjectModal() {
+    if (newProjectOverlay) {
+      newProjectOverlay.classList.add('hidden');
+      newProjectOverlay.setAttribute('aria-hidden', 'true');
+    }
+  }
+  if (newProjectCreate) {
+    newProjectCreate.addEventListener('click', async () => {
+      const name = newProjectName && newProjectName.value.trim();
+      if (!name) return;
+      const description = newProjectDescription ? newProjectDescription.value.trim() : '';
+      try {
+        await api('/api/external/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, description: description || undefined }),
+        });
+        closeNewProjectModal();
+        loadProjects();
+      } catch (e) {
+        console.error('Failed to create project:', e);
+        alert(e.message || 'Failed to create project.');
+      }
+    });
+  }
+  if (newProjectCancel) newProjectCancel.addEventListener('click', closeNewProjectModal);
+  if (newProjectClose) newProjectClose.addEventListener('click', closeNewProjectModal);
+  if (newProjectOverlay) {
+    newProjectOverlay.addEventListener('click', (e) => { if (e.target === newProjectOverlay) closeNewProjectModal(); });
+  }
+
+  function closeNewListModal() {
+    if (newListOverlay) {
+      newListOverlay.classList.add('hidden');
+      newListOverlay.setAttribute('aria-hidden', 'true');
+    }
+  }
+  if (newListCreate) {
+    newListCreate.addEventListener('click', async () => {
+      const name = newListName && newListName.value.trim();
+      if (!name) return;
+      try {
+        const created = await api('/api/external/lists', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, query_definition: {} }),
+        });
+        await loadListsFromApi();
+        closeNewListModal();
+        if (created && created.id) openListInCenter(created.id);
+      } catch (e) {
+        console.error('Failed to create list:', e);
+        alert(e.message || 'Failed to create list.');
+      }
+    });
+  }
+  if (newListCancel) newListCancel.addEventListener('click', closeNewListModal);
+  if (newListClose) newListClose.addEventListener('click', closeNewListModal);
+  if (newListOverlay) {
+    newListOverlay.addEventListener('click', (e) => { if (e.target === newListOverlay) closeNewListModal(); });
+  }
+
   // --- Init ---
   if (inboxItem) inboxItem.addEventListener('click', onInboxClick);
+
+  // --- Collapsible nav sections (Projects, Lists): persist open/closed; Inbox is label-only ---
+  function getNavSectionOpen(sectionId) {
+    const key = NAV_SECTION_OPEN_PREFIX + sectionId;
+    const stored = localStorage.getItem(key);
+    return stored === null ? true : stored === 'true';
+  }
+  function setNavSectionOpen(sectionId, open) {
+    localStorage.setItem(NAV_SECTION_OPEN_PREFIX + sectionId, String(open));
+  }
+  document.querySelectorAll('.nav-section[data-section]').forEach((section) => {
+    const sectionId = section.dataset.section;
+    if (sectionId === 'inbox') return;
+    const header = section.querySelector('.nav-section-header');
+    const body = section.querySelector('.nav-section-body');
+    if (!header || !body) return;
+    const open = getNavSectionOpen(sectionId);
+    if (!open) section.classList.add('collapsed');
+    header.setAttribute('aria-expanded', open ? 'true' : 'false');
+    header.addEventListener('click', () => {
+      const isCollapsed = section.classList.toggle('collapsed');
+      const nowOpen = !isCollapsed;
+      setNavSectionOpen(sectionId, nowOpen);
+      header.setAttribute('aria-expanded', nowOpen ? 'true' : 'false');
+    });
+  });
+
   checkConnection();
   loadProjects();
+  loadLists();
   setInterval(checkConnection, 30000);
 })();

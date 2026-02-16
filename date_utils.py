@@ -19,6 +19,32 @@ def _today_in_tz(tz_name: str) -> date:
     return datetime.now(tz).date()
 
 
+def resolve_date_expression(value: str | None, tz_name: str = "UTC") -> str | None:
+    """
+    Resolve list query date expressions to YYYY-MM-DD.
+    Supports: "today", "today+3", "today-1" (no spaces around +/-).
+    Used by saved list AST compilation; does NOT handle "tomorrow", "next week", etc.
+    """
+    if not value or not str(value).strip():
+        return None
+    raw = str(value).strip().lower()
+    if _ISO_DATE.match(raw):
+        return raw
+    try:
+        today = _today_in_tz((tz_name or "").strip() or "UTC")
+    except Exception:
+        today = date.today()
+    if raw == "today":
+        return today.isoformat()
+    m = re.match(r"^today\+(\d+)$", raw)
+    if m:
+        return (today + timedelta(days=int(m.group(1)))).isoformat()
+    m = re.match(r"^today-(\d+)$", raw)
+    if m:
+        return (today - timedelta(days=int(m.group(1)))).isoformat()
+    return None
+
+
 def resolve_relative_date(value: str | None, tz_name: str = "UTC") -> str | None:
     """
     Convert a date string to YYYY-MM-DD. Respects user timezone for relative phrases.

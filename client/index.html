@@ -18,27 +18,48 @@
         <h2>Navigator</h2>
       </div>
       <nav class="panel-content">
-        <section class="nav-section">
-          <ul class="nav-list">
-            <li id="inbox-item" class="nav-item" data-type="inbox" title="Tasks with no project">
-              <svg class="nav-item-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M4 14H6.67452C7.1637 14 7.40829 14 7.63846 14.0553C7.84254 14.1043 8.03763 14.1851 8.21657 14.2947C8.4184 14.4184 8.59136 14.5914 8.93726 14.9373L9.06274 15.0627C9.40865 15.4086 9.5816 15.5816 9.78343 15.7053C9.96237 15.8149 10.1575 15.8957 10.3615 15.9447C10.5917 16 10.8363 16 11.3255 16H12.6745C13.1637 16 13.4083 16 13.6385 15.9447C13.8425 15.8957 14.0376 15.8149 14.2166 15.7053C14.4184 15.5816 14.5914 15.4086 14.9373 15.0627L15.0627 14.9373C15.4086 14.5914 15.5816 14.4184 15.7834 14.2947C15.9624 14.1851 16.1575 14.1043 16.3615 14.0553C16.5917 14 16.8363 14 17.3255 14H20M7.2 4H16.8C17.9201 4 18.4802 4 18.908 4.21799C19.2843 4.40973 19.5903 4.71569 19.782 5.09202C20 5.51984 20 6.07989 20 7.2V16.8C20 17.9201 20 18.4802 19.782 18.908C19.5903 19.2843 19.2843 19.5903 18.908 19.782C18.4802 20 17.9201 20 16.8 20H7.2C6.0799 20 5.51984 20 5.09202 19.782C4.71569 19.5903 4.40973 19.2843 4.21799 18.908C4 18.4802 4 17.9201 4 16.8V7.2C4 6.0799 4 5.51984 4.21799 5.09202C4.40973 4.71569 4.71569 4.40973 5.09202 4.21799C5.51984 4 6.0799 4 7.2 4Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              <span>Inbox</span>
-            </li>
-          </ul>
+        <button type="button" id="inbox-item" class="nav-inbox-row" data-type="inbox" title="Tasks with no project" aria-label="Inbox">
+          <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M4 14H6.67452C7.1637 14 7.40829 14 7.63846 14.0553C7.84254 14.1043 8.03763 14.1851 8.21657 14.2947C8.4184 14.4184 8.59136 14.5914 8.93726 14.9373L9.06274 15.0627C9.40865 15.4086 9.5816 15.5816 9.78343 15.7053C9.96237 15.8149 10.1575 15.8957 10.3615 15.9447C10.5917 16 10.8363 16 11.3255 16H12.6745C13.1637 16 13.4083 16 13.6385 15.9447C13.8425 15.8957 14.0376 15.8149 14.2166 15.7053C14.4184 15.5816 14.5914 15.4086 14.9373 15.0627L15.0627 14.9373C15.4086 14.5914 15.5816 14.4184 15.7834 14.2947C15.9624 14.1851 16.1575 14.1043 16.3615 14.0553C16.5917 14 16.8363 14 17.3255 14H20M7.2 4H16.8C17.9201 4 18.4802 4 18.908 4.21799C19.2843 4.40973 19.5903 4.71569 19.782 5.09202C20 5.51984 20 6.07989 20 7.2V16.8C20 17.9201 20 18.4802 19.782 18.908C19.5903 19.2843 19.2843 19.5903 18.908 19.782C18.4802 20 17.9201 20 16.8 20H7.2C6.0799 20 5.51984 20 5.09202 19.782C4.71569 19.5903 4.40973 19.2843 4.21799 18.908C4 18.4802 4 17.9201 4 16.8V7.2C4 6.0799 4 5.51984 4.21799 5.09202C4.40973 4.71569 4.71569 4.40973 5.09202 4.21799C5.51984 4 6.0799 4 7.2 4Z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span class="nav-section-title-text">Inbox</span>
+          <span class="nav-item-count" id="inbox-count"></span>
+        </button>
+        <section class="nav-section" id="nav-section-projects" data-section="projects">
+          <button type="button" class="nav-section-header" aria-expanded="true" aria-controls="nav-section-projects-body">
+            <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>
+            <span class="nav-section-title-text">Projects</span>
+            <svg class="nav-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="nav-section-body" id="nav-section-projects-body">
+            <ul class="nav-list" id="projects-list">
+              <li class="nav-item placeholder">Loading…</li>
+            </ul>
+          </div>
         </section>
-        <section class="nav-section">
-          <h3 class="nav-section-title"><svg class="section-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>Projects</h3>
-          <ul class="nav-list" id="projects-list">
-            <li class="nav-item placeholder">Loading…</li>
-          </ul>
-        </section>
-        <section class="nav-section">
-          <h3 class="nav-section-title"><svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M8 5.00005C7.01165 5.00082 6.49359 5.01338 6.09202 5.21799C5.71569 5.40973 5.40973 5.71569 5.21799 6.09202C5 6.51984 5 7.07989 5 8.2V17.8C5 18.9201 5 19.4802 5.21799 19.908C5.40973 20.2843 5.71569 20.5903 6.09202 20.782C6.51984 21 7.07989 21 8.2 21H15.8C16.9201 21 17.4802 21 17.908 20.782C18.2843 20.5903 18.5903 20.2843 18.782 19.908C19 19.4802 19 18.9201 19 17.8V8.2C19 7.07989 19 6.51984 18.782 6.09202C18.5903 5.71569 18.2843 5.40973 17.908 5.21799C17.5064 5.01338 16.9884 5.00082 16 5.00005M8 5.00005V7H16V5.00005M8 5.00005V4.70711C8 4.25435 8.17986 3.82014 8.5 3.5C8.82014 3.17986 9.25435 3 9.70711 3H14.2929C14.7456 3 15.1799 3.17986 15.5 3.5C15.8201 3.82014 16 4.25435 16 4.70711V5.00005M15 12H12M15 16H12M9 12H9.01M9 16H9.01" stroke-linecap="round" stroke-linejoin="round"/></svg>Lists</h3>
-          <ul class="nav-list" id="lists-list">
-            <li class="nav-item placeholder">—</li>
-          </ul>
+        <section class="nav-section" id="nav-section-lists" data-section="lists">
+          <button type="button" class="nav-section-header" aria-expanded="true" aria-controls="nav-section-lists-body">
+            <svg class="section-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M8 5.00005C7.01165 5.00082 6.49359 5.01338 6.09202 5.21799C5.71569 5.40973 5.40973 5.71569 5.21799 6.09202C5 6.51984 5 7.07989 5 8.2V17.8C5 18.9201 5 19.4802 5.21799 19.908C5.40973 20.2843 5.71569 20.5903 6.09202 20.782C6.51984 21 7.07989 21 8.2 21H15.8C16.9201 21 17.4802 21 17.908 20.782C18.2843 20.5903 18.5903 20.2843 18.782 19.908C19 19.4802 19 18.9201 19 17.8V8.2C19 7.07989 19 6.51984 18.782 6.09202C18.5903 5.71569 18.2843 5.40973 17.908 5.21799C17.5064 5.01338 16.9884 5.00082 16 5.00005M8 5.00005V7H16V5.00005M8 5.00005V4.70711C8 4.25435 8.17986 3.82014 8.5 3.5C8.82014 3.17986 9.25435 3 9.70711 3H14.2929C14.7456 3 15.1799 3.17986 15.5 3.5C15.8201 3.82014 16 4.25435 16 4.70711V5.00005M15 12H12M15 16H12M9 12H9.01M9 16H9.01" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="nav-section-title-text">Lists</span>
+            <svg class="nav-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="nav-section-body" id="nav-section-lists-body">
+            <ul class="nav-list" id="lists-list">
+              <li class="nav-item placeholder">—<span class="nav-item-count"><span class="count count-overdue">0</span><span class="count count-due-today">0</span><span class="count count-upcoming">0</span><span class="count count-complete">0</span></span></li>
+            </ul>
+          </div>
         </section>
       </nav>
+      <div class="left-panel-footer">
+        <button type="button" id="navigator-edit-btn" class="navigator-edit-btn" title="Edit order and delete" aria-label="Edit navigator">
+          <svg class="navigator-edit-icon" viewBox="0 0 15 15" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M4.5 8.5L4.14645 8.14645L4 8.29289V8.5H4.5ZM8.5 4.5L8.85355 4.14645C8.65829 3.95118 8.34171 3.95118 8.14645 4.14645L8.5 4.5ZM10.5 6.5L10.8536 6.85355C11.0488 6.65829 11.0488 6.34171 10.8536 6.14645L10.5 6.5ZM6.5 10.5V11H6.70711L6.85355 10.8536L6.5 10.5ZM4.5 10.5H4C4 10.7761 4.22386 11 4.5 11V10.5ZM7.5 14C3.91015 14 1 11.0899 1 7.5H0C0 11.6421 3.35786 15 7.5 15V14ZM14 7.5C14 11.0899 11.0899 14 7.5 14V15C11.6421 15 15 11.6421 15 7.5H14ZM7.5 1C11.0899 1 14 3.91015 14 7.5H15C15 3.35786 11.6421 0 7.5 0V1ZM7.5 0C3.35786 0 0 3.35786 0 7.5H1C1 3.91015 3.91015 1 7.5 1V0ZM4.85355 8.85355L8.85355 4.85355L8.14645 4.14645L4.14645 8.14645L4.85355 8.85355ZM8.14645 4.85355L10.1464 6.85355L10.8536 6.14645L8.85355 4.14645L8.14645 4.85355ZM10.1464 6.14645L6.14645 10.1464L6.85355 10.8536L10.8536 6.85355L10.1464 6.14645ZM6.5 10H4.5V11H6.5V10ZM5 10.5V8.5H4V10.5H5Z"/></svg>
+        </button>
+        <button type="button" id="navigator-add-btn" class="navigator-add-btn" title="Add project or list" aria-label="Add project or list" aria-haspopup="true" aria-expanded="false">
+          <svg class="navigator-add-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 12H12M12 12H16M12 12V16M12 12V8M12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12C21 16.9706 16.9706 21 12 21Z"/></svg>
+        </button>
+        <div id="navigator-add-popover" class="navigator-add-popover hidden" role="menu">
+          <button type="button" class="navigator-add-popover-item" data-choice="project">Project</button>
+          <button type="button" class="navigator-add-popover-item" data-choice="list">List</button>
+        </div>
+      </div>
     </aside>
     <div class="resize-handle resize-handle-vertical" id="left-panel-resize-handle" title="Drag to resize" aria-label="Resize left panel"></div>
 
@@ -49,6 +70,9 @@
         </button>
         <h2 id="center-title">Tasks</h2>
         <div class="header-actions">
+          <button type="button" id="list-filter-btn" class="icon-btn hidden" title="Filter &amp; sort list" aria-label="Filter and sort list" aria-haspopup="dialog">
+            <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M19 3H5C3.89543 3 3 3.89543 3 5V6.17157C3 6.70201 3.21071 7.21071 3.58579 7.58579L9.41421 13.4142C9.78929 13.7893 10 14.298 10 14.8284V20V20.2857C10 20.9183 10.7649 21.2351 11.2122 20.7878L12 20L13.4142 18.5858C13.7893 18.2107 14 17.702 14 17.1716V14.8284C14 14.298 14.2107 13.7893 14.5858 13.4142L20.4142 7.58579C20.7893 7.21071 21 6.70201 21 6.17157V5C21 3.89543 20.1046 3 19 3Z"/></svg>
+          </button>
           <button type="button" id="display-settings-btn" class="icon-btn" title="Display settings" aria-label="Display settings" aria-haspopup="true" aria-expanded="false">
             <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8L15 8M15 8C15 9.65686 16.3431 11 18 11C19.6569 11 21 9.65685 21 8C21 6.34315 19.6569 5 18 5C16.3431 5 15 6.34315 15 8ZM9 16L21 16M9 16C9 17.6569 7.65685 19 6 19C4.34315 19 3 17.6569 3 16C3 14.3431 4.34315 13 6 13C7.65685 13 9 14.3431 9 16Z"/></svg>
           </button>
@@ -68,11 +92,13 @@
             </div>
             <ul id="display-properties-list" class="display-properties-list"></ul>
             <div class="display-dropdown-title">Sort</div>
-            <div id="display-sort-ladder" class="display-sort-ladder"></div>
-            <button type="button" id="display-sort-add" class="display-sort-add">Add sort level</button>
             <div class="display-dropdown-flagged">
               <input type="checkbox" id="display-manual-sort" />
               <label for="display-manual-sort">Manual sort</label>
+            </div>
+            <div class="display-sort-levels">
+              <div id="display-sort-ladder" class="display-sort-ladder"></div>
+              <button type="button" id="display-sort-add" class="display-sort-add">Add sort level</button>
             </div>
           </div>
         </div>
@@ -157,6 +183,10 @@
         </section>
         <section class="settings-section">
           <h3>Display</h3>
+          <div class="setting-row setting-row-checkbox">
+            <input type="checkbox" id="settings-show-due-overdue-counts" />
+            <label for="settings-show-due-overdue-counts">Show # of due and overdue tasks in lefthand panel</label>
+          </div>
           <div class="setting-row">
             <label for="settings-date-format">Date format</label>
             <div class="date-format-setting">
@@ -198,6 +228,74 @@
       <div class="modal-footer">
         <button type="button" id="description-modal-cancel" class="btn-secondary">Cancel</button>
         <button type="button" id="description-modal-save" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="new-project-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-small" role="dialog" aria-labelledby="new-project-title">
+      <div class="modal-header">
+        <h2 id="new-project-title">New project</h2>
+        <button type="button" id="new-project-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-row">
+          <label for="new-project-name">Name</label>
+          <input type="text" id="new-project-name" placeholder="Project name" />
+        </div>
+        <div class="setting-row">
+          <label for="new-project-description">Description</label>
+          <textarea id="new-project-description" placeholder="Optional description" rows="3"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="new-project-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="new-project-create" class="btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="new-list-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-small" role="dialog" aria-labelledby="new-list-title">
+      <div class="modal-header">
+        <h2 id="new-list-title">New list</h2>
+        <button type="button" id="new-list-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-row">
+          <label for="new-list-name">Name</label>
+          <input type="text" id="new-list-name" placeholder="List name" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="new-list-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="new-list-create" class="btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="list-settings-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-medium" role="dialog" aria-labelledby="list-settings-title" aria-modal="true">
+      <div class="modal-header">
+        <h2 id="list-settings-title">List filter &amp; sort</h2>
+        <button type="button" id="list-settings-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <section class="list-settings-section">
+          <h3 class="list-settings-section-title">Filters</h3>
+          <p class="setting-hint">Conditions that tasks must match. Dates: type an expression (e.g. today, today+3) or use the date picker.</p>
+          <div id="list-settings-filters" class="list-settings-filters"></div>
+          <button type="button" id="list-settings-add-filter" class="btn-secondary btn-sm">Add condition</button>
+        </section>
+        <section class="list-settings-section">
+          <h3 class="list-settings-section-title">Sort</h3>
+          <div id="list-settings-sort" class="list-settings-sort"></div>
+          <button type="button" id="list-settings-add-sort" class="btn-secondary btn-sm">Add sort level</button>
+        </section>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="list-settings-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="list-settings-save" class="btn-primary">Save</button>
       </div>
     </div>
   </div>
