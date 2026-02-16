@@ -41,12 +41,16 @@
 
     <main id="center-panel" class="panel center-panel">
       <div class="panel-header center-panel-header">
+        <button type="button" id="center-refresh-btn" class="icon-btn" title="Refresh" aria-label="Refresh">
+          <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4.06189 13C4.02104 12.6724 4 12.3387 4 12C4 7.58172 7.58172 4 12 4C14.5006 4 16.7332 5.14727 18.2002 6.94416M19.9381 11C19.979 11.3276 20 11.6613 20 12C20 16.4183 16.4183 20 12 20C9.61061 20 7.46589 18.9525 6 17.2916M9 17H6V17.2916M18.2002 4V6.94416M18.2002 6.94416V6.99993L15.2002 7M6 20V17.2916"/></svg>
+        </button>
+        <h2 id="center-title">Tasks</h2>
         <div class="header-actions">
           <button type="button" id="display-settings-btn" class="icon-btn" title="Display settings" aria-label="Display settings" aria-haspopup="true" aria-expanded="false">
             <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8L15 8M15 8C15 9.65686 16.3431 11 18 11C19.6569 11 21 9.65685 21 8C21 6.34315 19.6569 5 18 5C16.3431 5 15 6.34315 15 8ZM9 16L21 16M9 16C9 17.6569 7.65685 19 6 19C4.34315 19 3 17.6569 3 16C3 14.3431 4.34315 13 6 13C7.65685 13 9 14.3431 9 16Z"/></svg>
           </button>
           <div id="display-settings-dropdown" class="display-dropdown hidden" role="menu" aria-label="Task properties">
-            <div class="display-dropdown-title">Visible columns (drag to reorder)</div>
+            <div class="display-dropdown-title">Visible columns</div>
             <div class="display-dropdown-flagged">
               <input type="checkbox" id="display-show-flagged" />
               <label for="display-show-flagged">Show flag</label>
@@ -58,16 +62,13 @@
             <ul id="display-properties-list" class="display-properties-list"></ul>
           </div>
         </div>
-        <button type="button" id="center-refresh-btn" class="icon-btn" title="Refresh" aria-label="Refresh">
-          <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4.06189 13C4.02104 12.6724 4 12.3387 4 12C4 7.58172 7.58172 4 12 4C14.5006 4 16.7332 5.14727 18.2002 6.94416M19.9381 11C19.979 11.3276 20 11.6613 20 12C20 16.4183 16.4183 20 12 20C9.61061 20 7.46589 18.9525 6 17.2916M9 17H6V17.2916M18.2002 4V6.94416M18.2002 6.94416V6.99993L15.2002 7M6 20V17.2916"/></svg>
-        </button>
-        <h2 id="center-title">Tasks</h2>
       </div>
       <div class="panel-content" id="center-content">
         <p class="placeholder">Select a project or list from the left, or a task from here.</p>
       </div>
     </main>
 
+    <div class="resize-handle resize-handle-vertical" id="right-panel-resize-handle" title="Drag to resize" aria-label="Resize right panel"></div>
     <aside id="right-panel" class="panel right-panel">
       <div class="panel-header">
         <h2 id="inspector-title">Inspector</h2>
@@ -139,19 +140,45 @@
           <h3>Display</h3>
           <div class="setting-row">
             <label for="settings-date-format">Date format</label>
-            <select id="settings-date-format">
-              <option value="short">Short (MM/DD/YYYY)</option>
-              <option value="short-eu">Short (DD/MM/YYYY)</option>
-              <option value="short-iso">Short (YYYY-MM-DD)</option>
-              <option value="medium">Medium (e.g. Jan 15, 2025)</option>
-              <option value="long">Long (e.g. January 15, 2025)</option>
-              <option value="custom">Custom…</option>
-            </select>
+            <div class="date-format-setting">
+              <select id="settings-date-format">
+                <option value="short">Short (MM/DD/YYYY)</option>
+                <option value="short-eu">Short (DD/MM/YYYY)</option>
+                <option value="short-iso">Short (YYYY-MM-DD)</option>
+                <option value="medium">Medium (e.g. Jan 15, 2025)</option>
+                <option value="long">Long (e.g. January 15, 2025)</option>
+                <option value="custom">Custom…</option>
+              </select>
+              <button type="button" id="custom-format-edit-btn" class="btn-secondary custom-format-edit-btn hidden" aria-label="Edit custom format">Edit custom…</button>
+            </div>
           </div>
         </section>
       </div>
       <div class="modal-footer">
         <button type="button" id="settings-save" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="description-modal-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-description" role="dialog" aria-labelledby="description-modal-title">
+      <div class="modal-header">
+        <h2 id="description-modal-title">Description</h2>
+        <button type="button" id="description-modal-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body description-modal-body">
+        <div class="description-modal-tabs">
+          <button type="button" id="description-tab-edit" class="description-tab active" aria-pressed="true">Edit</button>
+          <button type="button" id="description-tab-preview" class="description-tab" aria-pressed="false">Preview</button>
+        </div>
+        <div id="description-edit-pane" class="description-pane">
+          <textarea id="description-edit-textarea" placeholder="Add a description (Markdown supported)…" rows="12"></textarea>
+        </div>
+        <div id="description-preview-pane" class="description-pane hidden description-preview-content"></div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="description-modal-cancel" class="btn-secondary">Cancel</button>
+        <button type="button" id="description-modal-save" class="btn-primary">Save</button>
       </div>
     </div>
   </div>

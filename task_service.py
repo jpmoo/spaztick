@@ -24,6 +24,9 @@ from database import get_connection, get_db_path, has_number_column, init_databa
 STATUSES = frozenset({"incomplete", "complete"})
 PRIORITY_MIN, PRIORITY_MAX = 0, 3
 
+# Sentinel: pass for optional params to mean "don't change"; None means "set to null"
+_UNSET = object()
+
 
 def _date_only(s: str | None) -> str | None:
     """Normalize to YYYY-MM-DD for comparison, or None if empty/invalid."""
@@ -284,11 +287,11 @@ def update_task(
     notes: str | None = None,
     status: str | None = None,
     priority: int | None = None,
-    available_date: str | None = None,
-    due_date: str | None = None,
+    available_date: str | None = _UNSET,
+    due_date: str | None = _UNSET,
     flagged: bool | None = None,
 ) -> dict[str, Any] | None:
-    """Update task fields. Only provided fields are changed."""
+    """Update task fields. Only provided fields are changed. Pass None for available_date/due_date to clear."""
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if priority is not None and (priority < PRIORITY_MIN or priority > PRIORITY_MAX):
@@ -298,9 +301,9 @@ def update_task(
         row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if not row:
             return None
-        # Effective dates: new value if updating, else current
-        eff_av = available_date if available_date is not None else (row["available_date"] if row["available_date"] else None)
-        eff_due = due_date if due_date is not None else (row["due_date"] if row["due_date"] else None)
+        # Effective dates: new value if updating, else current (None means clear)
+        eff_av = available_date if available_date is not _UNSET else (row["available_date"] if row["available_date"] else None)
+        eff_due = due_date if due_date is not _UNSET else (row["due_date"] if row["due_date"] else None)
         _validate_available_due(eff_av, eff_due)
         now = _now_iso()
         # Always touch updated_at; set completed_at when marking complete
@@ -318,9 +321,9 @@ def update_task(
                 updates.append("completed_at = ?"); params.append(now)
         if priority is not None:
             updates.append("priority = ?"); params.append(priority)
-        if available_date is not None:
+        if available_date is not _UNSET:
             updates.append("available_date = ?"); params.append(available_date)
-        if due_date is not None:
+        if due_date is not _UNSET:
             updates.append("due_date = ?"); params.append(due_date)
         if flagged is not None:
             updates.append("flagged = ?"); params.append(1 if flagged else 0)

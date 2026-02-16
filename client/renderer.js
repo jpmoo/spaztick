@@ -12,12 +12,15 @@
   const MIN_LEFT_PANEL_WIDTH = 180;
   const MAX_LEFT_PANEL_WIDTH = 480;
   const DEFAULT_LEFT_PANEL_WIDTH = 320;
+  const RIGHT_PANEL_WIDTH_KEY = 'spaztick_right_panel_width';
+  const MIN_RIGHT_PANEL_WIDTH = 220;
+  const MAX_RIGHT_PANEL_WIDTH = 560;
+  const DEFAULT_RIGHT_PANEL_WIDTH = 320;
   const DATE_FORMAT_KEY = 'spaztick_date_format';
   const DATE_FORMAT_CUSTOM_KEY = 'spaztick_date_format_custom';
 
-  const TASK_PROPERTY_KEYS = ['number', 'due_date', 'available_date', 'priority', 'description', 'projects', 'tags'];
+  const TASK_PROPERTY_KEYS = ['due_date', 'available_date', 'priority', 'description', 'projects', 'tags'];
   const TASK_PROPERTY_LABELS = {
-    number: 'Number',
     due_date: 'Due date',
     available_date: 'Available date',
     priority: 'Priority',
@@ -66,12 +69,22 @@
   const settingsApiBase = document.getElementById('settings-api-base');
   const settingsApiKey = document.getElementById('settings-api-key');
   const settingsDateFormat = document.getElementById('settings-date-format');
+  const customFormatEditBtn = document.getElementById('custom-format-edit-btn');
   const customFormatOverlay = document.getElementById('custom-date-format-overlay');
   const customFormatInput = document.getElementById('custom-format-input');
   const customFormatPreview = document.getElementById('custom-format-preview');
   const customFormatClose = document.getElementById('custom-format-close');
   const customFormatCancel = document.getElementById('custom-format-cancel');
   const customFormatSave = document.getElementById('custom-format-save');
+  const descriptionModalOverlay = document.getElementById('description-modal-overlay');
+  const descriptionModalClose = document.getElementById('description-modal-close');
+  const descriptionEditTextarea = document.getElementById('description-edit-textarea');
+  const descriptionEditPane = document.getElementById('description-edit-pane');
+  const descriptionPreviewPane = document.getElementById('description-preview-pane');
+  const descriptionTabEdit = document.getElementById('description-tab-edit');
+  const descriptionTabPreview = document.getElementById('description-tab-preview');
+  const descriptionModalCancel = document.getElementById('description-modal-cancel');
+  const descriptionModalSave = document.getElementById('description-modal-save');
   const connectionIndicator = document.getElementById('connection-indicator');
   const themeBtn = document.getElementById('theme-btn');
   const inboxItem = document.getElementById('inbox-item');
@@ -135,6 +148,19 @@
       .replace('DD', String(day).padStart(2, '0'))
       .replace('D', String(day));
     return out;
+  }
+
+  function renderMarkdown(text) {
+    if (!text || typeof text !== 'string') return '';
+    const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    let out = escape(text);
+    out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
+    out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    out = out.replace(/\n\n/g, '</p><p>');
+    out = out.replace(/\n/g, '<br>');
+    return '<p>' + out + '</p>';
   }
 
   function formatDate(dateStr) {
@@ -214,6 +240,7 @@
     settingsApiBase.value = getApiBase();
     settingsApiKey.value = getApiKey();
     if (settingsDateFormat) settingsDateFormat.value = getDateFormat();
+    if (customFormatEditBtn) customFormatEditBtn.classList.toggle('hidden', settingsDateFormat?.value !== 'custom');
     settingsOverlay.classList.remove('hidden');
     settingsOverlay.setAttribute('aria-hidden', 'false');
   }
@@ -263,14 +290,15 @@
   settingsClose.addEventListener('click', closeSettings);
   settingsSave.addEventListener('click', saveSettings);
   if (settingsDateFormat) {
-    settingsDateFormat.addEventListener('mousedown', (e) => {
-      if (settingsDateFormat.value === 'custom') {
-        e.preventDefault();
-        openCustomDateFormatModal();
-      }
-    });
     settingsDateFormat.addEventListener('change', () => {
       if (settingsDateFormat.value === 'custom') openCustomDateFormatModal();
+      if (customFormatEditBtn) customFormatEditBtn.classList.toggle('hidden', settingsDateFormat.value !== 'custom');
+    });
+  }
+  if (customFormatEditBtn) {
+    customFormatEditBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      openCustomDateFormatModal();
     });
   }
   settingsOverlay.addEventListener('click', (e) => {
@@ -278,7 +306,8 @@
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-      if (customFormatOverlay && !customFormatOverlay.classList.contains('hidden')) closeCustomDateFormatModal();
+      if (descriptionModalOverlay && !descriptionModalOverlay.classList.contains('hidden')) closeDescriptionModal();
+      else if (customFormatOverlay && !customFormatOverlay.classList.contains('hidden')) closeCustomDateFormatModal();
       else if (!settingsOverlay.classList.contains('hidden')) closeSettings();
     }
   });
@@ -301,6 +330,30 @@
     customFormatInput.addEventListener('input', updateCustomFormatPreview);
     customFormatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') customFormatSave && customFormatSave.click(); });
   }
+
+  if (descriptionModalOverlay) {
+    descriptionModalOverlay.addEventListener('click', (e) => { if (e.target === descriptionModalOverlay) closeDescriptionModal(); });
+  }
+  if (descriptionModalClose) descriptionModalClose.addEventListener('click', closeDescriptionModal);
+  if (descriptionModalCancel) descriptionModalCancel.addEventListener('click', closeDescriptionModal);
+  if (descriptionModalSave) {
+    descriptionModalSave.addEventListener('click', async () => {
+      if (!descriptionModalTaskId) return;
+      const text = descriptionEditTextarea ? descriptionEditTextarea.value : '';
+      try {
+        const updated = await updateTask(descriptionModalTaskId, { description: text });
+        updateTaskInLists(updated);
+        const row = document.querySelector(`.task-row[data-id="${descriptionModalTaskId}"]`);
+        if (row && row.classList.contains('selected')) loadTaskDetails(descriptionModalTaskId);
+        closeDescriptionModal();
+      } catch (e) {
+        console.error('Failed to update description:', e);
+        alert(e.message || 'Failed to save description.');
+      }
+    });
+  }
+  if (descriptionTabEdit) descriptionTabEdit.addEventListener('click', () => switchDescriptionTab(false));
+  if (descriptionTabPreview) descriptionTabPreview.addEventListener('click', () => switchDescriptionTab(true));
 
   // --- Theme cycle ---
   function getTheme() {
@@ -376,7 +429,7 @@
         }
       }
     } catch (_) {}
-    const order = ['number', 'due_date', 'priority'];
+    const order = ['due_date', 'priority'];
     return { order, visible: new Set(order), showFlagged: true, showCompleted: true };
   }
 
@@ -732,6 +785,43 @@
     if (projectsDropdownEl && !projectsDropdownEl.contains(ev.target) && !ev.target.closest('.projects-cell')) closeProjectsDropdown();
   }
 
+  let descriptionModalTaskId = null;
+  function openDescriptionModal(ev, cell) {
+    ev.stopPropagation();
+    const taskId = cell && cell.dataset.descriptionTaskId;
+    if (!taskId) return;
+    const task = getTaskById(taskId);
+    const desc = (task && (task.description != null)) ? String(task.description) : '';
+    descriptionModalTaskId = taskId;
+    if (descriptionEditTextarea) descriptionEditTextarea.value = desc;
+    if (descriptionPreviewPane) descriptionPreviewPane.innerHTML = renderMarkdown(desc);
+    if (descriptionEditPane) descriptionEditPane.classList.remove('hidden');
+    if (descriptionPreviewPane) descriptionPreviewPane.classList.add('hidden');
+    if (descriptionTabEdit) { descriptionTabEdit.classList.add('active'); descriptionTabEdit.setAttribute('aria-pressed', 'true'); }
+    if (descriptionTabPreview) { descriptionTabPreview.classList.remove('active'); descriptionTabPreview.setAttribute('aria-pressed', 'false'); }
+    if (descriptionModalOverlay) {
+      descriptionModalOverlay.classList.remove('hidden');
+      descriptionModalOverlay.setAttribute('aria-hidden', 'false');
+      if (descriptionEditTextarea) setTimeout(() => descriptionEditTextarea.focus(), 50);
+    }
+  }
+  function closeDescriptionModal() {
+    descriptionModalTaskId = null;
+    if (descriptionModalOverlay) {
+      descriptionModalOverlay.classList.add('hidden');
+      descriptionModalOverlay.setAttribute('aria-hidden', 'true');
+    }
+  }
+  function switchDescriptionTab(toPreview) {
+    if (toPreview && descriptionEditTextarea && descriptionPreviewPane) {
+      descriptionPreviewPane.innerHTML = renderMarkdown(descriptionEditTextarea.value);
+    }
+    if (descriptionEditPane) descriptionEditPane.classList.toggle('hidden', toPreview);
+    if (descriptionPreviewPane) descriptionPreviewPane.classList.toggle('hidden', !toPreview);
+    if (descriptionTabEdit) { descriptionTabEdit.classList.toggle('active', !toPreview); descriptionTabEdit.setAttribute('aria-pressed', !toPreview ? 'true' : 'false'); }
+    if (descriptionTabPreview) { descriptionTabPreview.classList.toggle('active', toPreview); descriptionTabPreview.setAttribute('aria-pressed', toPreview ? 'true' : 'false'); }
+  }
+
   async function applyTaskProjects(taskId, projectIds) {
     if (!taskId) return;
     try {
@@ -766,7 +856,12 @@
     currentSection.appendChild(currentTitle);
     const currentList = document.createElement('div');
     currentList.className = 'task-projects-current-list';
-    currentIds.forEach((pid) => {
+    const projectLabel = (pid) => {
+      const p = projectListCache.find((x) => String(x.id) === String(pid));
+      return (p ? (p.short_id || p.name || pid) : pid).toString().toLowerCase();
+    };
+    const sortedCurrentIds = [...currentIds].sort((a, b) => projectLabel(a).localeCompare(projectLabel(b), undefined, { numeric: true }));
+    sortedCurrentIds.forEach((pid) => {
       const p = projectListCache.find((x) => String(x.id) === String(pid));
       const label = p ? (p.short_id || p.name || pid) : pid;
       const item = document.createElement('div');
@@ -805,11 +900,16 @@
       resultsDiv.innerHTML = '';
       if (!q) return;
       const attachedSet = new Set(currentIds.map((id) => String(id)));
-      const matches = projectListCache.filter((p) => {
+      let matches = projectListCache.filter((p) => {
         if (attachedSet.has(String(p.id))) return false;
         const name = (p.name || '').toLowerCase();
         const short = (p.short_id || '').toLowerCase();
         return name.includes(q) || short.includes(q);
+      });
+      matches = matches.sort((a, b) => {
+        const labelA = (a.short_id || a.name || a.id || '').toString().toLowerCase();
+        const labelB = (b.short_id || b.name || b.id || '').toString().toLowerCase();
+        return labelA.localeCompare(labelB, undefined, { numeric: true });
       });
       if (matches.length) {
         matches.forEach((p) => {
@@ -885,9 +985,10 @@
     const circleOpenSvg = '<svg class="status-icon" viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 16q0 3.264 1.28 6.208t3.392 5.12 5.12 3.424 6.208 1.248 6.208-1.248 5.12-3.424 3.392-5.12 1.28-6.208-1.28-6.208-3.392-5.12-5.088-3.392-6.24-1.28q-3.264 0-6.208 1.28t-5.12 3.392-3.392 5.12-1.28 6.208zM4 16q0-3.264 1.6-6.016t4.384-4.352 6.016-1.632 6.016 1.632 4.384 4.352 1.6 6.016-1.6 6.048-4.384 4.352-6.016 1.6-6.016-1.6-4.384-4.352-1.6-6.048z"/></svg>';
     const circleTickSvg = '<svg class="status-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 8c0 4.418 3.59 8 8 8 4.418 0 8-3.59 8-8 0-4.418-3.59-8-8-8-4.418 0-8 3.59-8 8zm2 0c0-3.307 2.686-6 6-6 3.307 0 6 2.686 6 6 0 3.307-2.686 6-6 6-3.307 0-6-2.686-6-6zm9.778-1.672l-1.414-1.414L6.828 8.45 5.414 7.036 4 8.45l2.828 2.828 3.182-3.182 1.768-1.768z" fill-rule="evenodd"/></svg>';
     const folderOpenSvg = '<svg class="project-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>';
+    const documentIconSvg = '<svg class="description-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.29289 1.29289C9.48043 1.10536 9.73478 1 10 1H18C19.6569 1 21 2.34315 21 4V20C21 21.6569 19.6569 23 18 23H6C4.34315 23 3 21.6569 3 20V8C3 7.73478 3.10536 7.48043 3.29289 7.29289L9.29289 1.29289ZM18 3H11V8C11 8.55228 10.5523 9 10 9H5V20C5 20.5523 5.44772 21 6 21H18C18.5523 21 19 20.5523 19 20V4C19 3.44772 18.5523 3 18 3ZM6.41421 7H9V4.41421L6.41421 7ZM7 13C7 12.4477 7.44772 12 8 12H16C16.5523 12 17 12.4477 17 13C17 13.5523 16.5523 14 16 14H8C7.44772 14 7 13.4477 7 13ZM7 17C7 16.4477 7.44772 16 8 16H16C16.5523 16 17 16.4477 17 17C17 17.5523 16.5523 18 16 18H8C7.44772 18 7 17.5523 7 17Z"/></svg>';
 
     function addCell(key, html, opts) {
-      if (!html) return;
+      if (!html && !(opts && opts.descriptionTaskId != null)) return;
       const cell = document.createElement('div');
       cell.className = 'task-cell ' + key + '-cell';
       cell.innerHTML = html;
@@ -906,6 +1007,9 @@
         cell.dataset.flaggedTaskId = opts.flaggedTaskId;
         cell.dataset.flagged = opts.flaggedValue ? '1' : '0';
       }
+      if (opts && opts.descriptionTaskId != null) {
+        cell.dataset.descriptionTaskId = opts.descriptionTaskId;
+      }
       row.appendChild(cell);
     }
 
@@ -919,44 +1023,55 @@
     order.forEach((key) => {
       if (!visible.has(key)) return;
       let html = '';
-      if (key === 'number') {
-        if (t.number == null) return;
-        html = `<span class="cell-value">#${t.number}</span>`;
-      } else if (key === 'available_date') {
-        if (!t.available_date) return;
+      if (key === 'available_date') {
         const dateVal = (t.available_date || '').toString().trim().substring(0, 10);
-        const calEventSvg = '<svg class="date-icon calendar-event-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M11.75 16C11.8881 16 12 15.8881 12 15.75V12.25C12 12.1119 11.8881 12 8.25 12V15.75C8 15.8881 8.11193 16 8.25 16H11.75Z"/></svg>';
-        html = calEventSvg + `<span class="cell-value">${formatDate(t.available_date)}</span>`;
-        addCell(key, html, { dateField: 'available_date', dateValue: dateVal });
+        const hasVal = /^\d{4}-\d{2}-\d{2}$/.test(dateVal);
+        const muteClass = hasVal ? '' : ' empty';
+        const calEventSvg = '<svg class="date-icon calendar-event-icon' + muteClass + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M11.75 16C11.8881 16 12 15.8881 12 15.75V12.25C12 12.1119 11.8881 12 8.25 12V15.75C8 15.8881 8.11193 16 8.25 16H11.75Z"/></svg>';
+        html = calEventSvg + (hasVal ? `<span class="cell-value">${formatDate(t.available_date)}</span>` : `<span class="cell-value empty" title="Click to set date">—</span>`);
+        addCell(key, html, { dateField: 'available_date', dateValue: dateVal || '' });
         return;
       } else if (key === 'due_date') {
-        if (!t.due_date) return;
         const dateVal = (t.due_date || '').toString().trim().substring(0, 10);
-        const today = isToday(t.due_date);
-        const overdue = isOverdue(t.due_date);
+        const hasVal = /^\d{4}-\d{2}-\d{2}$/.test(dateVal);
+        const today = hasVal && isToday(t.due_date);
+        const overdue = hasVal && isOverdue(t.due_date);
         const stateClass = overdue ? 'due-overdue' : (today ? 'due-today' : '');
-        const calCheckSvg = '<svg class="date-icon calendar-check-icon ' + stateClass + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M15 12L11 16L9 14"/></svg>';
-        html = calCheckSvg + `<span class="cell-value ${stateClass}">${formatDate(t.due_date)}</span>`;
-        addCell(key, html, { dateField: 'due_date', dateValue: dateVal });
+        const muteClass = hasVal ? '' : ' empty';
+        const calCheckSvg = '<svg class="date-icon calendar-check-icon ' + stateClass + muteClass + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M15 12L11 16L9 14"/></svg>';
+        html = calCheckSvg + (hasVal ? `<span class="cell-value ${stateClass}">${formatDate(t.due_date)}</span>` : `<span class="cell-value empty" title="Click to set date">—</span>`);
+        addCell(key, html, { dateField: 'due_date', dateValue: dateVal || '' });
         return;
       } else if (key === 'priority') {
-        if (t.priority == null) return;
-        html = `<span class="cell-value">${t.priority}</span>`;
+        const hasVal = t.priority != null;
+        html = hasVal ? `<span class="cell-value">${t.priority}</span>` : `<span class="cell-value empty" title="No priority">—</span>`;
+        addCell(key, html);
+        return;
       } else if (key === 'description') {
         const d = (t.description || '').trim();
-        if (!d) return;
-        html = `<span class="cell-value" title="${d.replace(/"/g, '&quot;').substring(0, 200)}">${d.substring(0, 50).replace(/</g, '&lt;')}${d.length > 50 ? '…' : ''}</span>`;
+        let tooltip = d ? d.replace(/"/g, '&quot;').replace(/</g, '&lt;') : 'No description (click to add)';
+        if (tooltip.length > 500) tooltip = tooltip.substring(0, 500) + '…';
+        const iconClass = 'description-icon-wrap ' + (d ? '' : 'empty');
+        html = `<span class="${iconClass}" title="${tooltip}">${documentIconSvg}</span>`;
+        addCell(key, html, { descriptionTaskId: t.id });
+        return;
       } else if (key === 'projects') {
         const p = (t.projects || []).map((id) => String(id));
-        if (!p.length) return;
-        const names = p.map((id) => projectIdToShortName(id)).map((s) => String(s).replace(/</g, '&lt;')).join(', ');
-        html = folderOpenSvg + '<span class="cell-value">' + names + '</span>';
+        const hasVal = p.length > 0;
+        const emptyClass = hasVal ? '' : ' empty';
+        if (hasVal) {
+          const labels = p.map((id) => projectIdToShortName(id)).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+          const names = labels.map((s) => String(s).replace(/</g, '&lt;')).join(', ');
+          html = folderOpenSvg + '<span class="cell-value">' + names + '</span>';
+        } else {
+          html = '<span class="project-icon-wrap empty">' + folderOpenSvg + '</span><span class="cell-value empty" title="Click to add projects">—</span>';
+        }
         addCell(key, html, { projectsTaskId: t.id, projectsJson: JSON.stringify(p) });
         return;
       } else if (key === 'tags') {
         const tg = (t.tags || []);
-        if (!tg.length) return;
-        html = `<span class="cell-value">${tg.join(', ').replace(/</g, '&lt;')}</span>`;
+        const hasVal = tg.length > 0;
+        html = hasVal ? `<span class="cell-value">${tg.join(', ').replace(/</g, '&lt;')}</span>` : `<span class="cell-value empty" title="No tags">—</span>`;
       }
       addCell(key, html);
     });
@@ -979,6 +1094,11 @@
     if (projectsCell && projectsCell.dataset.projectsTaskId) {
       projectsCell.classList.add('task-cell-clickable');
       projectsCell.addEventListener('click', (ev) => openProjectsDropdown(ev, projectsCell));
+    }
+    const descriptionCell = row.querySelector('.description-cell');
+    if (descriptionCell && descriptionCell.dataset.descriptionTaskId) {
+      descriptionCell.classList.add('task-cell-clickable');
+      descriptionCell.addEventListener('click', (ev) => openDescriptionModal(ev, descriptionCell));
     }
     const titleCell = row.querySelector('.title-cell');
     if (titleCell && titleCell.dataset.titleTaskId) {
@@ -1409,6 +1529,43 @@
         const px = parseInt(saved, 10);
         if (Number.isFinite(px) && px >= MIN_LEFT_PANEL_WIDTH && px <= MAX_LEFT_PANEL_WIDTH) {
           mainArea.style.setProperty('--left-panel-width', `${px}px`);
+        }
+      }
+    } catch (_) {}
+  }
+
+  // --- Right panel width resize (drag vertical border) + persist ---
+  const rightPanelResizeHandle = document.getElementById('right-panel-resize-handle');
+  if (rightPanelResizeHandle && rightPanel && mainArea) {
+    rightPanelResizeHandle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = rightPanel.getBoundingClientRect().width;
+      const onMove = (e2) => {
+        const dx = e2.clientX - startX;
+        let newW = Math.round(startWidth - dx);
+        newW = Math.max(MIN_RIGHT_PANEL_WIDTH, Math.min(MAX_RIGHT_PANEL_WIDTH, newW));
+        mainArea.style.setProperty('--right-panel-width', `${newW}px`);
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        const w = rightPanel.getBoundingClientRect().width;
+        if (Number.isFinite(w) && w >= MIN_RIGHT_PANEL_WIDTH) {
+          try { localStorage.setItem(RIGHT_PANEL_WIDTH_KEY, String(Math.round(w))); } catch (_) {}
+        }
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+  if (mainArea) {
+    try {
+      const saved = localStorage.getItem(RIGHT_PANEL_WIDTH_KEY);
+      if (saved != null && saved !== '') {
+        const px = parseInt(saved, 10);
+        if (Number.isFinite(px) && px >= MIN_RIGHT_PANEL_WIDTH && px <= MAX_RIGHT_PANEL_WIDTH) {
+          mainArea.style.setProperty('--right-panel-width', `${px}px`);
         }
       }
     } catch (_) {}

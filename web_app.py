@@ -166,6 +166,7 @@ def api_update_task(task_id: str, body: dict):
     if t is None:
         raise HTTPException(status_code=404, detail="Task not found")
     try:
+        from task_service import _UNSET
         update_task(
             task_id,
             title=body.get("title"),
@@ -173,8 +174,8 @@ def api_update_task(task_id: str, body: dict):
             notes=body.get("notes"),
             status=body.get("status"),
             priority=body.get("priority") if body.get("priority") is not None else None,
-            available_date=body.get("available_date") or None,
-            due_date=body.get("due_date") or None,
+            available_date=(body.get("available_date") or None) if "available_date" in body else _UNSET,
+            due_date=(body.get("due_date") or None) if "due_date" in body else _UNSET,
             flagged=body.get("flagged") if "flagged" in body else None,
         )
     except ValueError as e:
@@ -345,6 +346,7 @@ def external_update_task(task_id: str, body: dict):
         raise HTTPException(status_code=404, detail="Task not found")
     tid = t["id"]
     try:
+        from task_service import _UNSET
         update_task(
             tid,
             title=body.get("title"),
@@ -352,8 +354,8 @@ def external_update_task(task_id: str, body: dict):
             notes=body.get("notes"),
             status=body.get("status"),
             priority=body.get("priority") if body.get("priority") is not None else None,
-            available_date=body.get("available_date") or None,
-            due_date=body.get("due_date") or None,
+            available_date=(body["available_date"] or None) if "available_date" in body else _UNSET,
+            due_date=(body["due_date"] or None) if "due_date" in body else _UNSET,
             flagged=body.get("flagged") if "flagged" in body else None,
         )
     except ValueError as e:

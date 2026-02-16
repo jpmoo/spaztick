@@ -234,13 +234,15 @@ body {
 }
 
 .right-panel {
-  width: var(--panel-max-width);
-  min-width: var(--panel-max-width);
+  width: var(--right-panel-width, var(--panel-max-width));
+  min-width: var(--right-panel-width, var(--panel-max-width));
+  max-width: var(--right-panel-width, var(--panel-max-width));
   z-index: 5;
 }
 .right-panel.collapsed {
   width: 0;
   min-width: 0;
+  max-width: 0;
   border-width: 0;
   overflow: hidden;
 }
@@ -315,8 +317,8 @@ body {
 .display-dropdown {
   position: absolute;
   top: 100%;
-  left: 0;
-  right: auto;
+  right: 0;
+  left: auto;
   margin-top: 6px;
   min-width: 220px;
   background: var(--surface);
@@ -439,6 +441,18 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.task-list .task-row .task-cell .cell-value.empty {
+  color: var(--text-muted);
+}
+.task-list .task-row .task-cell .date-icon.empty {
+  color: var(--text-muted);
+}
+.task-list .task-row .task-cell .project-icon-wrap.empty {
+  color: var(--text-muted);
+}
+.task-list .task-row .task-cell .project-icon-wrap.empty .project-icon {
+  color: inherit;
+}
 .task-list .task-row .task-cell.title-cell .task-title-edit-input {
   width: 100%;
   min-width: 0;
@@ -496,6 +510,20 @@ body {
   height: 16px;
   flex-shrink: 0;
   color: var(--text-muted);
+}
+.task-list .task-row .task-cell .description-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.task-list .task-row .task-cell .description-icon-wrap:not(.empty) {
+  color: var(--text);
+}
+.task-list .task-row .task-cell .description-icon-wrap .description-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
 }
 .task-list .task-row .task-cell.due_date-cell .due-today,
 .task-list .task-row .task-cell.due_date-cell .cell-value.due-today {
@@ -1024,6 +1052,94 @@ body {
 .modal.modal-small {
   max-width: 360px;
 }
+.modal.modal-description {
+  max-width: 560px;
+  width: 90vw;
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+.description-modal-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.description-modal-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+.description-tab {
+  padding: 6px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-muted);
+  font-size: 13px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.description-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.description-pane {
+  flex: 1;
+  min-height: 200px;
+  overflow: auto;
+}
+.description-pane.hidden {
+  display: none;
+}
+#description-edit-textarea {
+  width: 100%;
+  min-height: 200px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-family: inherit;
+  resize: vertical;
+  background: var(--surface);
+  color: var(--text);
+  box-sizing: border-box;
+}
+#description-edit-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.description-preview-content {
+  padding: 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--text);
+}
+.description-preview-content p {
+  margin: 0 0 0.75em;
+}
+.description-preview-content p:last-child {
+  margin-bottom: 0;
+}
+.description-preview-content strong {
+  font-weight: 700;
+}
+.description-preview-content em {
+  font-style: italic;
+}
+.description-preview-content code {
+  font-family: ui-monospace, monospace;
+  font-size: 0.9em;
+  padding: 2px 6px;
+  background: var(--bg);
+  border-radius: 4px;
+}
+.description-preview-content a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.description-preview-content a:hover {
+  text-decoration: underline;
+}
 .setting-hint {
   margin: 0 0 12px;
   font-size: 12px;
@@ -1033,6 +1149,15 @@ body {
 .setting-hint.example {
   margin-top: 8px;
   margin-bottom: 0;
+}
+.date-format-setting {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.date-format-setting select {
+  flex: 1;
+  min-width: 0;
 }
 .setting-row select {
   width: 100%;
