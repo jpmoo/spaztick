@@ -5,7 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -247,6 +247,7 @@ def api_update_task(task_id: str, body: dict):
             available_date=(body.get("available_date") or None) if "available_date" in body else _UNSET,
             due_date=(body.get("due_date") or None) if "due_date" in body else _UNSET,
             flagged=body.get("flagged") if "flagged" in body else None,
+            recurrence=body["recurrence"] if "recurrence" in body else _UNSET,
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -426,7 +427,7 @@ def external_create_task(body: dict):
 
 
 @app.put("/api/external/tasks/{task_id}", dependencies=[Depends(_require_api_key)])
-def external_update_task(task_id: str, body: dict):
+def external_update_task(task_id: str, body: dict = Body(...)):
     from task_service import get_task, get_task_by_number, update_task, remove_task_project, remove_task_tag, add_task_project, add_task_tag
     t = get_task(task_id)
     if t is None and task_id.isdigit():
