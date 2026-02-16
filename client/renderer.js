@@ -771,11 +771,17 @@
     redrawDisplayedTasks();
   }
 
+  const DISPLAY_SETTINGS_ICON = '<svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8L15 8M15 8C15 9.65686 16.3431 11 18 11C19.6569 11 21 9.65685 21 8C21 6.34315 19.6569 5 18 5C16.3431 5 15 6.34315 15 8ZM9 16L21 16M9 16C9 17.6569 7.65685 19 6 19C4.34315 19 3 17.6569 3 16C3 14.3431 4.34315 13 6 13C7.65685 13 9 14.3431 9 16Z"/></svg>';
+  const LIST_SETTINGS_ICON = '<svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
   function updateCenterHeaderForSource() {
-    const listFilterBtn = document.getElementById('list-filter-btn');
+    const displaySettingsBtn = document.getElementById('display-settings-btn');
     const displayDropdown = document.getElementById('display-settings-dropdown');
     const isList = lastTaskSource && lastTaskSource.startsWith('list:');
-    if (listFilterBtn) listFilterBtn.classList.toggle('hidden', !isList);
+    if (displaySettingsBtn) {
+      displaySettingsBtn.innerHTML = isList ? LIST_SETTINGS_ICON : DISPLAY_SETTINGS_ICON;
+      displaySettingsBtn.title = isList ? 'List filter & sort' : 'Display settings';
+      displaySettingsBtn.setAttribute('aria-label', isList ? 'List filter and sort' : 'Display settings');
+    }
     if (displayDropdown && isList) displayDropdown.classList.add('hidden');
   }
 
@@ -2363,12 +2369,18 @@
     } catch (_) {}
   }
 
-  // --- Display settings button & dropdown ---
+  // --- Display settings button & dropdown (or list filter/sort modal when viewing a list) ---
   const displaySettingsBtn = document.getElementById('display-settings-btn');
   const displayDropdown = document.getElementById('display-settings-dropdown');
   if (displaySettingsBtn && displayDropdown) {
     displaySettingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      const isList = lastTaskSource && lastTaskSource.startsWith('list:');
+      if (isList) {
+        const listId = lastTaskSource.slice(5);
+        if (listId) openListSettingsModal(listId);
+        return;
+      }
       const isOpen = !displayDropdown.classList.toggle('hidden');
       displaySettingsBtn.setAttribute('aria-expanded', isOpen);
       if (isOpen) renderDisplayDropdown();
@@ -2433,6 +2445,31 @@
     </div>`;
   }
 
+  function renderFilterGroup(groupNode, isRoot) {
+    const operator = (groupNode && groupNode.operator) || 'AND';
+    const children = (groupNode && groupNode.children) || [];
+    const childrenHtml = children.map((c) => {
+      if (c && c.type === 'group') return renderFilterGroup(c, false);
+      return listSettingsConditionToRow(c && c.type === 'condition' ? c : {});
+    }).join('');
+    const removeBtn = isRoot ? '' : '<button type="button" class="list-settings-remove list-settings-group-remove" aria-label="Remove group">×</button>';
+    return `<div class="list-settings-filter-group" data-operator="${operator}">
+      <div class="list-settings-group-header">
+        <select class="list-settings-group-operator" aria-label="Combine with">
+          <option value="AND" ${operator === 'AND' ? 'selected' : ''}>and</option>
+          <option value="OR" ${operator === 'OR' ? 'selected' : ''}>or</option>
+        </select>
+        <span class="muted" style="font-size:12px;">${isRoot ? 'Match all of the following' : 'group'}</span>
+        ${removeBtn}
+      </div>
+      <div class="list-settings-group-children">${childrenHtml}</div>
+      <div class="list-settings-group-actions">
+        <button type="button" class="btn-secondary btn-sm list-settings-add-condition" aria-label="Add condition">Add condition</button>
+        <button type="button" class="btn-secondary btn-sm list-settings-add-group" aria-label="Add group">Add group</button>
+      </div>
+    </div>`;
+  }
+
   function listSettingsSortToRow(s) {
     const field = (s && s.field) || 'due_date';
     const direction = (s && s.direction) || 'asc';
@@ -2458,13 +2495,21 @@
         const list = await api(`/api/external/lists/${encodeURIComponent(listId)}`);
         const qd = list && list.query_definition;
         const sd = list && list.sort_definition;
-        const children = (qd && qd.type === 'group' && Array.isArray(qd.children)) ? qd.children : (qd && qd.type === 'condition') ? [qd] : [];
-        const conditions = children.filter((c) => c && c.type === 'condition');
-        filtersEl.innerHTML = conditions.length ? conditions.map((c) => listSettingsConditionToRow(c)).join('') : listSettingsConditionToRow({});
+        let rootGroup;
+        if (qd && qd.type === 'group' && Array.isArray(qd.children)) {
+          rootGroup = qd;
+        } else if (qd && qd.type === 'condition') {
+          rootGroup = { type: 'group', operator: 'AND', children: [qd] };
+        } else if (qd && qd.type === 'group') {
+          rootGroup = { type: 'group', operator: qd.operator || 'AND', children: qd.children || [] };
+        } else {
+          rootGroup = { type: 'group', operator: 'AND', children: [] };
+        }
+        filtersEl.innerHTML = renderFilterGroup(rootGroup, true);
         const sortWithin = (sd && Array.isArray(sd.sort_within_group)) ? sd.sort_within_group : [];
         sortEl.innerHTML = sortWithin.length ? sortWithin.map((s) => listSettingsSortToRow(s)).join('') : listSettingsSortToRow({});
       } catch (_) {
-        filtersEl.innerHTML = listSettingsConditionToRow({});
+        filtersEl.innerHTML = renderFilterGroup({ type: 'group', operator: 'AND', children: [] }, true);
         sortEl.innerHTML = listSettingsSortToRow({});
       }
       setupListSettingsModalHandlers();
@@ -2476,40 +2521,8 @@
   function setupListSettingsModalHandlers() {
     const filtersEl = document.getElementById('list-settings-filters');
     const sortEl = document.getElementById('list-settings-sort');
-    const addFilterBtn = document.getElementById('list-settings-add-filter');
     const addSortBtn = document.getElementById('list-settings-add-sort');
     if (!filtersEl || !sortEl) return;
-    filtersEl.querySelectorAll('.list-settings-remove').forEach((btn) => {
-      btn.onclick = () => { btn.closest('.list-settings-filter-row').remove(); };
-    });
-    filtersEl.querySelectorAll('.list-filter-field').forEach((select) => {
-      select.onchange = () => {
-        const row = select.closest('.list-settings-filter-row');
-        const f = LIST_FILTER_FIELDS.find((x) => x.field === select.value);
-        const valueWrap = row.querySelector('.filter-value-wrap');
-        const opSelect = row.querySelector('.list-filter-op');
-        if (!valueWrap || !opSelect || !f) return;
-        const opOpts = f.operators.map((o) => `<option value="${o.op}">${o.label}</option>`).join('');
-        opSelect.innerHTML = opOpts;
-        const isDate = f.valueType === 'date';
-        const newValueHtml = isDate
-          ? `<input type="text" class="list-filter-value" placeholder="e.g. today, today+3" /><input type="date" class="list-filter-date-picker" style="max-width:120px;" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button>`
-          : f.valueType === 'status'
-            ? `<select class="list-filter-value"><option value="incomplete">Incomplete</option><option value="complete">Complete</option></select>`
-            : f.valueType === 'flagged'
-              ? `<select class="list-filter-value"><option value="false">No</option><option value="true">Yes</option></select>`
-              : `<input type="text" class="list-filter-value" placeholder="${f.valueType === 'tags' ? 'comma-separated tags' : f.valueType === 'number' ? '0-3' : 'value'}" />`;
-        valueWrap.innerHTML = newValueHtml;
-        const valEl = valueWrap.querySelector('.list-filter-value');
-        if (valEl) valEl.focus();
-        bindDatePickerInRow(row);
-      };
-    });
-    filtersEl.querySelectorAll('.list-filter-date-picker, .date-picker-btn').forEach((el) => {});
-    filtersEl.querySelectorAll('.list-settings-filter-row').forEach((row) => bindDatePickerInRow(row));
-    sortEl.querySelectorAll('.list-settings-remove').forEach((btn) => {
-      btn.onclick = () => { btn.closest('.list-settings-sort-row').remove(); };
-    });
     function bindDatePickerInRow(row) {
       const dateInput = row && row.querySelector('.list-filter-date-picker');
       const textInput = row && row.querySelector('.list-filter-value');
@@ -2519,12 +2532,60 @@
         if (dateBtn) dateBtn.onclick = () => { dateInput.showPicker ? dateInput.showPicker() : dateInput.focus(); };
       }
     }
-    if (addFilterBtn) addFilterBtn.onclick = () => {
-      const div = document.createElement('div');
-      div.innerHTML = listSettingsConditionToRow({});
-      filtersEl.appendChild(div.firstElementChild);
-      setupListSettingsModalHandlers();
-    };
+    filtersEl.querySelectorAll('.list-settings-filter-row').forEach((row) => {
+      const removeBtn = row.querySelector('.list-settings-remove:not(.list-settings-group-remove)');
+      if (removeBtn) removeBtn.onclick = () => row.remove();
+      const fieldSelect = row.querySelector('.list-filter-field');
+      if (fieldSelect) {
+        fieldSelect.onchange = () => {
+          const f = LIST_FILTER_FIELDS.find((x) => x.field === fieldSelect.value);
+          const valueWrap = row.querySelector('.filter-value-wrap');
+          const opSelect = row.querySelector('.list-filter-op');
+          if (!valueWrap || !opSelect || !f) return;
+          const opOpts = f.operators.map((o) => `<option value="${o.op}">${o.label}</option>`).join('');
+          opSelect.innerHTML = opOpts;
+          const isDate = f.valueType === 'date';
+          const newValueHtml = isDate
+            ? `<input type="text" class="list-filter-value" placeholder="e.g. today, today+3" /><input type="date" class="list-filter-date-picker" style="max-width:120px;" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button>`
+            : f.valueType === 'status'
+              ? `<select class="list-filter-value"><option value="incomplete">Incomplete</option><option value="complete">Complete</option></select>`
+              : f.valueType === 'flagged'
+                ? `<select class="list-filter-value"><option value="false">No</option><option value="true">Yes</option></select>`
+                : `<input type="text" class="list-filter-value" placeholder="${f.valueType === 'tags' ? 'comma-separated tags' : f.valueType === 'number' ? '0-3' : 'value'}" />`;
+          valueWrap.innerHTML = newValueHtml;
+          bindDatePickerInRow(row);
+        };
+      }
+      bindDatePickerInRow(row);
+    });
+    filtersEl.querySelectorAll('.list-settings-group-remove').forEach((btn) => {
+      btn.onclick = () => btn.closest('.list-settings-filter-group').remove();
+    });
+    filtersEl.querySelectorAll('.list-settings-add-condition').forEach((btn) => {
+      btn.onclick = () => {
+        const group = btn.closest('.list-settings-filter-group');
+        const children = group && group.querySelector('.list-settings-group-children');
+        if (!children) return;
+        const div = document.createElement('div');
+        div.innerHTML = listSettingsConditionToRow({});
+        children.appendChild(div.firstElementChild);
+        setupListSettingsModalHandlers();
+      };
+    });
+    filtersEl.querySelectorAll('.list-settings-add-group').forEach((btn) => {
+      btn.onclick = () => {
+        const group = btn.closest('.list-settings-filter-group');
+        const children = group && group.querySelector('.list-settings-group-children');
+        if (!children) return;
+        const div = document.createElement('div');
+        div.innerHTML = renderFilterGroup({ type: 'group', operator: 'AND', children: [] }, false);
+        children.appendChild(div.firstElementChild);
+        setupListSettingsModalHandlers();
+      };
+    });
+    sortEl.querySelectorAll('.list-settings-remove').forEach((btn) => {
+      btn.onclick = () => { btn.closest('.list-settings-sort-row').remove(); };
+    });
     if (addSortBtn) addSortBtn.onclick = () => {
       const div = document.createElement('div');
       div.innerHTML = listSettingsSortToRow({});
@@ -2533,33 +2594,52 @@
     };
   }
 
+  function collectConditionFromRow(row) {
+    const fieldSelect = row.querySelector('.list-filter-field');
+    const opSelect = row.querySelector('.list-filter-op');
+    const valueEl = row.querySelector('.list-filter-value');
+    const field = fieldSelect && fieldSelect.value;
+    const op = opSelect && opSelect.value;
+    const f = LIST_FILTER_FIELDS.find((x) => x.field === field);
+    if (!field || !op || !f) return null;
+    let value = valueEl && (valueEl.tagName === 'SELECT' ? valueEl.value : valueEl.value.trim());
+    if (f.valueType === 'number' && value !== '') value = parseInt(value, 10);
+    if (f.valueType === 'tags' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
+    if (f.valueType === 'projects' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
+    if (f.valueType === 'flagged') value = value === 'true' || value === '1';
+    if (op === 'is_empty') value = null;
+    return { type: 'condition', field, operator: op, value };
+  }
+
+  function collectGroupFromEl(groupEl) {
+    const headerSelect = groupEl.querySelector(':scope > .list-settings-group-header .list-settings-group-operator');
+    const operator = (headerSelect && headerSelect.value) || 'AND';
+    const childrenEl = groupEl.querySelector(':scope > .list-settings-group-children');
+    const children = [];
+    if (childrenEl) {
+      childrenEl.querySelectorAll(':scope > .list-settings-filter-row, :scope > .list-settings-filter-group').forEach((el) => {
+        if (el.classList.contains('list-settings-filter-row')) {
+          const c = collectConditionFromRow(el);
+          if (c) children.push(c);
+        } else if (el.classList.contains('list-settings-filter-group')) {
+          children.push(collectGroupFromEl(el));
+        }
+      });
+    }
+    return { type: 'group', operator, children };
+  }
+
   function collectListSettingsPayload() {
     const filtersEl = document.getElementById('list-settings-filters');
     const sortEl = document.getElementById('list-settings-sort');
-    const conditions = [];
-    (filtersEl && filtersEl.querySelectorAll('.list-settings-filter-row')).forEach((row) => {
-      const fieldSelect = row.querySelector('.list-filter-field');
-      const opSelect = row.querySelector('.list-filter-op');
-      const valueEl = row.querySelector('.list-filter-value');
-      const field = fieldSelect && fieldSelect.value;
-      const op = opSelect && opSelect.value;
-      const f = LIST_FILTER_FIELDS.find((x) => x.field === field);
-      if (!field || !op || !f) return;
-      let value = valueEl && (valueEl.tagName === 'SELECT' ? valueEl.value : valueEl.value.trim());
-      if (f.valueType === 'number' && value !== '') value = parseInt(value, 10);
-      if (f.valueType === 'tags' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
-      if (f.valueType === 'projects' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
-      if (f.valueType === 'flagged') value = value === 'true' || value === '1';
-      if (op === 'is_empty') value = null;
-      conditions.push({ type: 'condition', field, operator: op, value });
-    });
+    const rootGroupEl = filtersEl && filtersEl.querySelector(':scope > .list-settings-filter-group');
+    const query_definition = rootGroupEl ? collectGroupFromEl(rootGroupEl) : { type: 'group', operator: 'AND', children: [] };
     const sortWithin = [];
     (sortEl && sortEl.querySelectorAll('.list-settings-sort-row')).forEach((row) => {
       const fieldSelect = row.querySelector('.list-sort-field');
       const dirSelect = row.querySelector('.list-sort-dir');
       if (fieldSelect && dirSelect) sortWithin.push({ field: fieldSelect.value, direction: dirSelect.value });
     });
-    const query_definition = conditions.length ? { type: 'group', operator: 'AND', children: conditions } : { type: 'group', operator: 'AND', children: [] };
     const sort_definition = { group_by: [], sort_within_group: sortWithin };
     return { query_definition, sort_definition };
   }
@@ -2573,14 +2653,6 @@
     currentListSettingsListId = null;
   }
 
-  const listFilterBtn = document.getElementById('list-filter-btn');
-  if (listFilterBtn) {
-    listFilterBtn.addEventListener('click', () => {
-      if (!lastTaskSource || !lastTaskSource.startsWith('list:')) return;
-      const listId = lastTaskSource.slice(5);
-      if (listId) openListSettingsModal(listId);
-    });
-  }
   const listSettingsClose = document.getElementById('list-settings-close');
   const listSettingsCancel = document.getElementById('list-settings-cancel');
   const listSettingsSave = document.getElementById('list-settings-save');

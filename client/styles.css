@@ -938,7 +938,6 @@ body {
 .left-panel-footer {
   flex-shrink: 0;
   padding: 10px 16px;
-  border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1679,6 +1678,40 @@ body {
 .list-settings-remove:hover {
   color: var(--text);
   background: var(--bg);
+}
+.list-settings-filter-group {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  background: var(--bg);
+}
+.list-settings-filter-group .list-settings-filter-group {
+  margin-left: 12px;
+  margin-bottom: 6px;
+}
+.list-settings-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.list-settings-group-header select {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+.list-settings-group-children {
+  margin-bottom: 8px;
+}
+.list-settings-group-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .modal.modal-description {
   max-width: 560px;

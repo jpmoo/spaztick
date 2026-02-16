@@ -468,6 +468,31 @@ def _parse_tool_call(response_text: str) -> tuple[str, dict[str, Any]] | None:
     return (str(name).strip(), params if isinstance(params, dict) else {})
 
 
+def _extract_list_identifier_from_message(user_message: str) -> str | None:
+    """Extract a list name or short_id from phrases like 'view test list', 'view list test', 'show me my tasks on list test'. Returns the identifier (e.g. 'test') or None."""
+    if not user_message or not isinstance(user_message, str):
+        return None
+    msg = user_message.strip()
+    if not msg:
+        return None
+    # view X list / view list X / show X list / show list X (X = word or short_id)
+    m = re.search(r"\b(?:view|show)\s+(?:list\s+)?([a-z0-9_-]+)\s+list\b", msg, re.I)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"\b(?:view|show)\s+list\s+([a-z0-9_-]+)\b", msg, re.I)
+    if m:
+        return m.group(1).strip()
+    # show me my tasks on list X / tasks on list X
+    m = re.search(r"\b(?:tasks?\s+)?on\s+list\s+([a-z0-9_-]+)\b", msg, re.I)
+    if m:
+        return m.group(1).strip()
+    # open/display list X
+    m = re.search(r"\b(?:open|display)\s+list\s+([a-z0-9_-]+)\b", msg, re.I)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
 def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any]] | None:
     """If the user message is clearly a list/show tasks or list/show projects command, return (tool_name, params) so we can run the tool even when the model replied conversationally. Conservative: only list/show tasks/projects (bare or with trailing filter words)."""
     if not user_message or not isinstance(user_message, str):
@@ -475,6 +500,10 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
     msg = user_message.strip().lower()
     if not msg:
         return None
+    # View/show a specific list by name or short_id (must come before generic "show lists")
+    list_id = _extract_list_identifier_from_message(user_message)
+    if list_id:
+        return ("list_view", {"list_id": list_id})
     # List/show tasks — match at start (allows "list tasks", "list tasks due today", "gimme tasks in 1off")
     if re.match(r"^(list|show|get|gimme|display|what are my|give me)\s+(my\s+)?tasks?\b", msg):
         return ("task_list", {"status": "incomplete"})
@@ -956,7 +985,12 @@ def run_orchestrator(
         list_id = (params.get("list_id") or "").strip()
         list_name = (params.get("name") or "").strip()
         if not list_id and not list_name:
-            return ("list_view requires list_id or name (the saved list's id or name).", False, None)
+            # Try to extract list identifier from user message (e.g. "View test list", "show me my tasks on list test")
+            extracted = _extract_list_identifier_from_message(user_message)
+            if extracted:
+                list_id = extracted
+            else:
+                return ("list_view requires list_id or name (the saved list's id or name).", False, None)
         try:
             from list_service import get_list, list_lists, run_list
         except Exception as e:
