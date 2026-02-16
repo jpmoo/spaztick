@@ -5,6 +5,7 @@ Deterministic writes only; no direct AI-driven DB writes. Used by orchestration/
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -19,6 +20,8 @@ except ImportError:
         return str(uuid.uuid4())
 
 from database import get_connection, get_db_path, has_number_column, init_database
+
+logger = logging.getLogger("task_service")
 
 # Valid task statuses: only two
 STATUSES = frozenset({"incomplete", "complete"})
@@ -348,7 +351,9 @@ def update_task(
             updates.append("flagged = ?"); params.append(1 if flagged else 0)
         if recurrence is not _UNSET:
             updates.append("recurrence = ?")
-            params.append(json.dumps(recurrence) if recurrence else None)
+            rec_json = json.dumps(recurrence) if recurrence else None
+            params.append(rec_json)
+            logger.info("[task_service] update_task %s writing recurrence: %s", task_id, (rec_json[:200] + "..." if rec_json and len(rec_json) > 200 else rec_json))
         params.append(task_id)
         conn.execute(f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?", params)
         _record_history(conn, task_id, "updated", {"updated_at": now})

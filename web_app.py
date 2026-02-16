@@ -460,6 +460,9 @@ async def external_update_task(task_id: str, request: Request):
         raise HTTPException(status_code=400, detail=f"Invalid JSON body: {e}") from e
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Body must be a JSON object")
+    # Always log PUT body for recurrence debugging (INFO so it appears in default logs)
+    logger.info("[API] PUT /api/external/tasks/%s body_keys=%s recurrence_in_body=%s recurrence=%s",
+                task_id, list(body.keys()), "recurrence" in body, body.get("recurrence"))
     if getattr(load_config(), "debug", False):
         logger.warning("[API] PUT /api/external/tasks/%s body keys: %s, recurrence in body: %s, body: %s",
                        task_id, list(body.keys()), "recurrence" in body, body)
