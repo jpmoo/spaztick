@@ -11,8 +11,11 @@
   <div id="app">
     <div class="main-area">
     <aside id="left-panel" class="panel left-panel">
-      <div class="panel-header">
-        <h2>Projects &amp; lists</h2>
+      <div class="panel-header navigator-header">
+        <button type="button" id="navigator-refresh-btn" class="icon-btn" title="Refresh" aria-label="Refresh navigator">
+          <svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4.06189 13C4.02104 12.6724 4 12.3387 4 12C4 7.58172 7.58172 4 12 4C14.5006 4 16.7332 5.14727 18.2002 6.94416M19.9381 11C19.979 11.3276 20 11.6613 20 12C20 16.4183 16.4183 20 12 20C9.61061 20 7.46589 18.9525 6 17.2916M9 17H6V17.2916M18.2002 4V6.94416M18.2002 6.94416V6.99993L15.2002 7M6 20V17.2916"/></svg>
+        </button>
+        <h2>Navigator</h2>
       </div>
       <nav class="panel-content">
         <section class="nav-section">
@@ -89,7 +92,12 @@
       </div>
       <div class="resize-handle" id="chat-resize-handle" title="Drag to resize" aria-label="Resize chat"></div>
       <div class="chat-region" id="chat-region">
-        <h3>Chat</h3>
+        <div class="chat-header-row">
+          <button type="button" id="chat-clear" class="chat-clear-btn" title="Clear chat" aria-label="Clear chat">
+            <svg class="chat-clear-icon" viewBox="0 0 1024 1024" width="16" height="16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M899.1 869.6l-53-305.6H864c14.4 0 26-11.6 26-26V346c0-14.4-11.6-26-26-26H618V138c0-14.4-11.6-26-26-26H432c-14.4 0-26 11.6-26 26v182H160c-14.4 0-26 11.6-26 26v192c0 14.4 11.6 26 26 26h17.9l-53 305.6c-0.3 1.5-0.4 3-0.4 4.4 0 14.4 11.6 26 26 26h723c1.5 0 3-0.1 4.4-0.4 14.2-2.4 23.7-15.9 21.2-30zM204 390h272V182h72v208h272v104H204V390z m468 440V674c0-4.4-3.6-8-8-8h-48c-4.4 0-8 3.6-8 8v156H416V674c0-4.4-3.6-8-8-8h-48c-4.4 0-8 3.6-8 8v156H202.8l45.1-260H776l45.1 260H672z"/></svg>
+          </button>
+          <h3>Chat</h3>
+        </div>
         <div class="chat-messages-wrap">
           <div class="chat-messages" id="chat-messages"></div>
           <div class="chat-typing" id="chat-typing" aria-live="polite">

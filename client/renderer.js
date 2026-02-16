@@ -735,6 +735,34 @@
     return `${y}-${m}-${day}`;
   }
 
+  function todayDateStr() {
+    const t = new Date();
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  }
+
+  /** weekday: 0 = Sunday, 1 = Monday, ... 6 = Saturday. Returns next occurrence (or same day + 7 if today is that weekday). */
+  function nextWeekdayDate(weekday) {
+    const t = new Date();
+    const todayDow = t.getDay();
+    let daysAhead = (weekday - todayDow + 7) % 7;
+    if (daysAhead === 0) daysAhead = 7;
+    t.setDate(t.getDate() + daysAhead);
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`;
+  }
+
+  const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  const PRIORITY_CIRCLE_SVG = '<svg class="priority-circle-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="8"/></svg>';
+  function priorityClass(p) {
+    if (p == null || p === '' || p === undefined) return 'priority-empty';
+    const n = Number(p);
+    if (n === 0) return 'priority-0';
+    if (n === 1) return 'priority-1';
+    if (n === 2) return 'priority-2';
+    if (n === 3) return 'priority-3';
+    return 'priority-empty';
+  }
+
   async function updateTaskFlag(taskId, ev) {
     ev.stopPropagation();
     if (!taskId) return;
@@ -769,6 +797,70 @@
     } catch (e) {
       console.error('Failed to update status:', e);
     }
+  }
+
+  async function applyTaskPriority(taskId, value) {
+    if (!taskId) return;
+    try {
+      const body = { priority: value };
+      const updated = await updateTask(taskId, body);
+      updateTaskInLists(updated);
+      const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
+      if (row && row.classList.contains('selected')) loadTaskDetails(taskId);
+    } catch (e) {
+      console.error('Failed to update priority:', e);
+      alert(e.message || 'Failed to update priority.');
+    }
+  }
+
+  let priorityDropdownEl = null;
+  function closePriorityDropdown() {
+    if (priorityDropdownEl && priorityDropdownEl.parentNode) priorityDropdownEl.parentNode.removeChild(priorityDropdownEl);
+    priorityDropdownEl = null;
+    document.removeEventListener('click', priorityDropdownOutside);
+  }
+  function priorityDropdownOutside(ev) {
+    if (!priorityDropdownEl) return;
+    if (priorityDropdownEl.contains(ev.target)) return;
+    closePriorityDropdown();
+  }
+
+  function openPriorityDropdown(ev, cell) {
+    ev.stopPropagation();
+    closePriorityDropdown();
+    const row = cell.closest('.task-row');
+    const taskId = cell.dataset.priorityTaskId;
+    if (!taskId) return;
+    const dropdown = document.createElement('div');
+    dropdown.className = 'task-priority-dropdown';
+    dropdown.setAttribute('role', 'menu');
+    const options = [
+      { value: 3, label: '3', cls: 'priority-3' },
+      { value: 2, label: '2', cls: 'priority-2' },
+      { value: 1, label: '1', cls: 'priority-1' },
+      { value: 0, label: '0', cls: 'priority-0' },
+      { value: null, label: 'No priority', cls: 'priority-empty' },
+    ];
+    options.forEach(({ value, label, cls }) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'task-priority-dropdown-item';
+      btn.innerHTML = `<span class="priority-circle-wrap ${cls}">${PRIORITY_CIRCLE_SVG}</span><span class="task-priority-dropdown-label">${label}</span>`;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        applyTaskPriority(taskId, value);
+        closePriorityDropdown();
+      });
+      dropdown.appendChild(btn);
+    });
+    document.body.appendChild(dropdown);
+    priorityDropdownEl = dropdown;
+    const cellRect = cell.getBoundingClientRect();
+    dropdown.style.position = 'fixed';
+    dropdown.style.left = `${cellRect.left}px`;
+    dropdown.style.top = `${cellRect.bottom + 4}px`;
+    dropdown.style.minWidth = `${Math.max(cellRect.width, 140)}px`;
+    requestAnimationFrame(() => document.addEventListener('click', priorityDropdownOutside));
   }
 
   let dateDropdownEl = null;
@@ -843,6 +935,30 @@
     const dropdown = document.createElement('div');
     dropdown.className = 'task-date-dropdown';
     dropdown.setAttribute('role', 'menu');
+
+    function addDateButton(label, dateStr) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'task-date-dropdown-item';
+      btn.textContent = label;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        applyTaskDate(taskId, field, dateStr);
+        closeDateDropdown();
+      });
+      dropdown.appendChild(btn);
+    }
+
+    addDateButton('Today', todayDateStr());
+    addDateButton('Tomorrow', dateAddDays(todayDateStr(), 1));
+
+    const weekdaysTitle = document.createElement('div');
+    weekdaysTitle.className = 'task-date-dropdown-section-title';
+    weekdaysTitle.textContent = 'Days of the Week';
+    dropdown.appendChild(weekdaysTitle);
+    WEEKDAY_NAMES.forEach((name, i) => {
+      addDateButton(name, nextWeekdayDate(i));
+    });
 
     const choices = [
       { label: '+1 day', fn: () => dateAddDays(currentVal, 1) },
@@ -1152,6 +1268,10 @@
       if (opts && opts.descriptionTaskId != null) {
         cell.dataset.descriptionTaskId = opts.descriptionTaskId;
       }
+      if (opts && opts.priorityTaskId != null) {
+        cell.dataset.priorityTaskId = opts.priorityTaskId;
+        cell.dataset.priorityValue = opts.priorityValue != null ? String(opts.priorityValue) : '';
+      }
       row.appendChild(cell);
     }
 
@@ -1185,9 +1305,11 @@
         addCell(key, html, { dateField: 'due_date', dateValue: dateVal || '' });
         return;
       } else if (key === 'priority') {
-        const hasVal = t.priority != null;
-        html = hasVal ? `<span class="cell-value">${t.priority}</span>` : `<span class="cell-value empty" title="No priority">—</span>`;
-        addCell(key, html);
+        const p = t.priority;
+        const cls = priorityClass(p);
+        const title = p != null ? `Priority ${p} (click to change)` : 'No priority (click to set)';
+        html = `<span class="priority-circle-wrap ${cls}" title="${title}">${PRIORITY_CIRCLE_SVG}</span>`;
+        addCell(key, html, { priorityTaskId: t.id, priorityValue: p });
         return;
       } else if (key === 'description') {
         const d = (t.description || '').trim();
@@ -1241,6 +1363,11 @@
     if (descriptionCell && descriptionCell.dataset.descriptionTaskId) {
       descriptionCell.classList.add('task-cell-clickable');
       descriptionCell.addEventListener('click', (ev) => openDescriptionModal(ev, descriptionCell));
+    }
+    const priorityCell = row.querySelector('.priority-cell');
+    if (priorityCell && priorityCell.dataset.priorityTaskId) {
+      priorityCell.classList.add('task-cell-clickable');
+      priorityCell.addEventListener('click', (ev) => openPriorityDropdown(ev, priorityCell));
     }
     const titleCell = row.querySelector('.title-cell');
     if (titleCell && titleCell.dataset.titleTaskId) {
@@ -1605,6 +1732,14 @@
     }
   }
 
+  const chatClear = document.getElementById('chat-clear');
+  if (chatClear) {
+    chatClear.addEventListener('click', () => {
+      if (chatMessages) chatMessages.innerHTML = '';
+      hideTypingIndicator();
+    });
+  }
+
   chatSend.addEventListener('click', sendChat);
   chatInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -1778,6 +1913,13 @@
 
   const centerRefreshBtn = document.getElementById('center-refresh-btn');
   if (centerRefreshBtn) centerRefreshBtn.addEventListener('click', refreshCenterView);
+
+  function refreshNavigator() {
+    loadProjects();
+    refreshCenterView();
+  }
+  const navigatorRefreshBtn = document.getElementById('navigator-refresh-btn');
+  if (navigatorRefreshBtn) navigatorRefreshBtn.addEventListener('click', refreshNavigator);
 
   // --- Init ---
   if (inboxItem) inboxItem.addEventListener('click', onInboxClick);

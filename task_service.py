@@ -208,12 +208,14 @@ def list_tasks(
     title_contains: str | None = None,
     sort_by: str | None = None,
     flagged: bool | None = None,
+    priority: int | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """List tasks with optional filters. Returns minimal task dicts (no projects/tags/deps).
     due_by, available_by, available_or_due_by, completed_by, completed_after are ISO date strings (YYYY-MM-DD).
     title_contains: substring match on title (case-insensitive).
     sort_by: due_date, available_date, created_at, completed_at, title (default created_at DESC).
+    priority: 0-3 to filter by exact priority (3 = highest).
     """
     conn = get_connection()
     try:
@@ -250,6 +252,9 @@ def list_tasks(
         if flagged is not None:
             sql += " AND flagged = ?"
             params.append(1 if flagged else 0)
+        if priority is not None and PRIORITY_MIN <= priority <= PRIORITY_MAX:
+            sql += " AND priority = ?"
+            params.append(priority)
         order = "ORDER BY created_at DESC"
         if sort_by:
             sort_by_lower = sort_by.strip().lower()
@@ -286,15 +291,15 @@ def update_task(
     description: str | None = None,
     notes: str | None = None,
     status: str | None = None,
-    priority: int | None = None,
+    priority: int | None = _UNSET,
     available_date: str | None = _UNSET,
     due_date: str | None = _UNSET,
     flagged: bool | None = None,
 ) -> dict[str, Any] | None:
-    """Update task fields. Only provided fields are changed. Pass None for available_date/due_date to clear."""
+    """Update task fields. Only provided fields are changed. Pass _UNSET to leave priority unchanged, None to clear priority. Pass None for available_date/due_date to clear."""
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
-    if priority is not None and (priority < PRIORITY_MIN or priority > PRIORITY_MAX):
+    if priority is not _UNSET and priority is not None and (priority < PRIORITY_MIN or priority > PRIORITY_MAX):
         raise ValueError(f"priority must be {PRIORITY_MIN}-{PRIORITY_MAX}")
     conn = get_connection()
     try:
@@ -319,7 +324,7 @@ def update_task(
             updates.append("status = ?"); params.append(status)
             if status == "complete":
                 updates.append("completed_at = ?"); params.append(now)
-        if priority is not None:
+        if priority is not _UNSET:
             updates.append("priority = ?"); params.append(priority)
         if available_date is not _UNSET:
             updates.append("available_date = ?"); params.append(available_date)

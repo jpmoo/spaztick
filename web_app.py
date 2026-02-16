@@ -230,7 +230,7 @@ def api_update_task(task_id: str, body: dict):
             description=body.get("description"),
             notes=body.get("notes"),
             status=body.get("status"),
-            priority=body.get("priority") if body.get("priority") is not None else None,
+            priority=body["priority"] if "priority" in body else _UNSET,
             available_date=(body.get("available_date") or None) if "available_date" in body else _UNSET,
             due_date=(body.get("due_date") or None) if "due_date" in body else _UNSET,
             flagged=body.get("flagged") if "flagged" in body else None,
@@ -339,6 +339,7 @@ def external_list_tasks(
     title_contains: str | None = None,
     sort_by: str | None = None,
     flagged: bool | None = None,
+    priority: int | None = None,
     limit: int = 500,
 ):
     from task_service import list_tasks
@@ -352,6 +353,7 @@ def external_list_tasks(
             title_contains=title_contains,
             sort_by=sort_by,
             flagged=flagged,
+            priority=priority,
             limit=min(limit, 1000),
         )
         return [dict(t) for t in tasks]
@@ -410,7 +412,7 @@ def external_update_task(task_id: str, body: dict):
             description=body.get("description"),
             notes=body.get("notes"),
             status=body.get("status"),
-            priority=body.get("priority") if body.get("priority") is not None else None,
+            priority=body["priority"] if "priority" in body else _UNSET,
             available_date=(body["available_date"] or None) if "available_date" in body else _UNSET,
             due_date=(body["due_date"] or None) if "due_date" in body else _UNSET,
             flagged=body.get("flagged") if "flagged" in body else None,

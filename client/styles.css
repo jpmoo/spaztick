@@ -262,6 +262,30 @@ body {
 .right-panel .panel-header {
   background: transparent;
 }
+.navigator-header {
+  gap: 8px;
+}
+.navigator-header .icon-btn {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.navigator-header .icon-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.navigator-header .header-icon {
+  width: 18px;
+  height: 18px;
+}
 .panel-header h2 {
   margin: 0;
   font-size: 13px;
@@ -636,6 +660,62 @@ body {
   opacity: 0.9;
 }
 
+/* Priority circle in task row and dropdown */
+.priority-circle-wrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.priority-circle-wrap.priority-0 { color: #22c55e; }
+.priority-circle-wrap.priority-1 { color: #eab308; }
+.priority-circle-wrap.priority-2 { color: #f97316; }
+.priority-circle-wrap.priority-3 { color: #ef4444; }
+.priority-circle-wrap .priority-circle-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+/* Task panel priority dropdown */
+.task-priority-dropdown {
+  z-index: 1000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.task-priority-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.task-priority-dropdown-item:hover {
+  background: var(--bg);
+}
+.task-priority-dropdown-item .priority-circle-wrap {
+  flex-shrink: 0;
+}
+.task-priority-dropdown-item .priority-circle-icon {
+  width: 14px;
+  height: 14px;
+}
+.task-priority-dropdown-label {
+  flex: 1;
+}
+
 /* Task panel date dropdown (fixed, below cell) */
 .task-date-dropdown {
   z-index: 1000;
@@ -661,6 +741,21 @@ body {
 }
 .task-date-dropdown-item:hover {
   background: var(--bg);
+}
+.task-date-dropdown-section-title {
+  padding: 6px 14px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border-subtle);
+  margin-top: 4px;
+}
+.task-date-dropdown-section-title:first-child {
+  border-top: none;
+  margin-top: 0;
+  padding-top: 0;
 }
 .task-date-dropdown-picker-wrap {
   padding: 8px 14px;
@@ -940,15 +1035,45 @@ body {
   flex-direction: column;
   overflow: hidden;
 }
+.chat-header-row {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: var(--chat-header-height);
+  gap: 6px;
+}
+.chat-clear-btn {
+  margin: 0 0 0 10px;
+  padding: 6px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.chat-clear-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+.chat-clear-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.chat-clear-icon {
+  display: block;
+  fill: currentColor;
+}
 .chat-region h3 {
   margin: 0;
-  padding: 10px 14px;
+  padding: 10px 14px 10px 0;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-muted);
-  height: var(--chat-header-height);
   line-height: calc(var(--chat-header-height) - 16px);
   flex-shrink: 0;
 }
