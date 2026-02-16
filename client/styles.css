@@ -1450,16 +1450,22 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   flex: 0 0 auto;
   height: var(--inspector-height);
   min-height: 100px;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-bottom: 1px solid var(--border);
-  padding: 14px 16px;
 }
-.inspector-content p {
+.inspector-content-inner {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 14px 16px 12px;
+}
+.inspector-content-inner p {
   margin: 0 0 0.6em;
   font-size: 13px;
   line-height: 1.5;
 }
-.inspector-content .inspector-block {
+.inspector-content-inner .inspector-block {
   white-space: pre-wrap;
   word-break: break-word;
   margin-bottom: 0.85em;
@@ -1478,10 +1484,44 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   resize: vertical;
 }
 .inspector-content .inspector-project-actions {
+  flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
+  justify-content: center;
+  align-items: center;
+  gap: 20px;
+  padding: 12px 16px 16px;
+}
+.inspector-content .inspector-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.inspector-content .inspector-action-btn:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.inspector-content .inspector-action-btn.btn-primary:hover {
+  color: var(--accent);
+}
+.inspector-content .inspector-action-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.inspector-content .inspector-action-btn img {
+  width: 18px;
+  height: 18px;
+  pointer-events: none;
+}
+.inspector-content .inspector-action-btn.btn-primary img {
+  filter: brightness(0) saturate(100%) invert(32%) sepia(98%) saturate(1500%) hue-rotate(211deg) brightness(95%) contrast(101%);
 }
 .archived-projects-list {
   display: flex;
@@ -1889,10 +1929,6 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
 .modal.modal-small {
   max-width: 360px;
 }
-.modal.modal-small #new-project-description {
-  width: 100%;
-  box-sizing: border-box;
-}
 .modal.modal-medium {
   max-width: 520px;
   width: 92vw;
@@ -1906,6 +1942,11 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   min-height: 0;
   overflow-y: auto;
   flex: 1;
+  padding: 20px;
+  box-sizing: border-box;
+}
+.modal.modal-recurrence #recurrence-form-body {
+  overflow: visible;
 }
 .modal.modal-recurrence .setting-row {
   margin-bottom: 12px;
@@ -1966,31 +2007,105 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   outline: none !important;
   box-shadow: none !important;
 }
-.modal.modal-recurrence .recurrence-monthly-choices .setting-row,
+.modal.modal-recurrence .recurrence-monthly-choices,
 .modal.modal-recurrence .recurrence-end-choices {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  align-items: flex-start;
+  justify-content: flex-start;
 }
+.modal.modal-recurrence .recurrence-monthly-choices .setting-row,
 .modal.modal-recurrence .recurrence-end-choices .setting-row {
   margin-bottom: 0;
 }
-.modal.modal-recurrence .recurrence-end-row {
+.modal.modal-recurrence .recurrence-monthly-choices {
+  padding-left: 0;
+  overflow: visible;
+}
+.modal.modal-recurrence #recurrence-monthly-options.recurrence-freq-options {
+  padding-left: 0;
+  margin-left: 0;
+}
+.modal.modal-recurrence .recurrence-monthly-choices .recurrence-monthly-row,
+.modal.modal-recurrence .recurrence-end-choices .recurrence-end-row {
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 8px;
+  gap: 18px;
+  justify-content: flex-start;
+  width: 100%;
+  box-sizing: border-box;
 }
-.modal.modal-recurrence .recurrence-end-row .recurrence-radio-label {
+.modal.modal-recurrence .recurrence-monthly-row .recurrence-radio-label {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
   white-space: nowrap;
   flex-shrink: 0;
   font-size: 12px;
   line-height: 1.2;
   margin: 0;
+  margin-right: 12px;
   cursor: pointer;
+  position: relative;
+  z-index: 1;
+}
+.modal.modal-recurrence .recurrence-monthly-row .recurrence-radio-label input[type="radio"] {
+  width: 54px;
+  height: 13px;
+  margin: 0;
+  vertical-align: middle;
+  outline: none !important;
+  box-shadow: none !important;
+}
+.modal.modal-recurrence .recurrence-monthly-row .recurrence-radio-label input[type="radio"]:focus,
+.modal.modal-recurrence .recurrence-monthly-row .recurrence-radio-label input[type="radio"]:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+.modal.modal-recurrence .recurrence-monthly-label-text {
+  display: inline-block;
+  min-width: 3.25em;
+}
+.modal.modal-recurrence .recurrence-monthly-label-date {
+  min-width: 5.5em;
+}
+.modal.modal-recurrence .recurrence-monthly-day-input {
+  width: 4em;
+  min-width: 4em;
+  flex-shrink: 0;
+  flex-grow: 0;
+  box-sizing: border-box;
+  margin-left: -40px;
+}
+.modal.modal-recurrence .recurrence-monthly-picker {
+  width: auto;
+  flex-shrink: 0;
+  flex-grow: 0;
+  min-width: 6em;
+  margin-left: -50px;
+}
+.modal.modal-recurrence #recurrence-monthly-week {
+  margin-left: -40px;
+}
+.modal.modal-recurrence #recurrence-monthly-weekday {
+  margin-left: -10px;
+}
+.modal.modal-recurrence .recurrence-end-row .recurrence-radio-label,
+.modal.modal-recurrence .recurrence-monthly-row .recurrence-radio-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1.2;
+  margin: 0;
+  margin-right: 12px;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
 }
 /* Fixed-width label text so "Never", "After", "On" column aligns and inputs start at same position */
 .modal.modal-recurrence .recurrence-end-label-text {
@@ -2012,24 +2127,50 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   width: 4em;
   min-width: 4em;
   flex-shrink: 0;
+  flex-grow: 0;
+  box-sizing: border-box;
+  margin-left: 8px;
+}
+.modal.modal-recurrence .recurrence-end-date-input {
+  width: 10.5em;
+  min-width: 10.5em;
+  flex-shrink: 0;
+  flex-grow: 0;
   box-sizing: border-box;
 }
 .modal.modal-recurrence .recurrence-end-suffix {
   white-space: nowrap;
   font-size: 12px;
   color: var(--text);
+  margin-left: -8px;
 }
-.modal.modal-recurrence .recurrence-end-date-input {
-  width: 10.5em;
-  min-width: 10.5em;
-  flex-shrink: 0;
+.modal.modal-recurrence #recurrence-yearly-options .recurrence-row-inline {
+  flex-wrap: nowrap;
 }
 .modal.modal-recurrence .recurrence-yearly-label {
   font-size: 13px;
   color: var(--text);
+  white-space: nowrap;
+}
+.modal.modal-recurrence #recurrence-yearly-options select,
+.modal.modal-recurrence #recurrence-yearly-options input[type="number"] {
+  flex-shrink: 0;
+  width: auto;
+  min-width: 0;
+}
+.modal.modal-recurrence #recurrence-yearly-month {
+  min-width: 7em;
+}
+.modal.modal-recurrence #recurrence-yearly-day {
+  width: 4em;
+  min-width: 4em;
 }
 .modal.modal-recurrence .recurrence-freq-options {
   margin-bottom: 12px;
+}
+.modal.modal-recurrence #recurrence-monthly-options {
+  padding-left: 0;
+  margin-left: 0;
 }
 .modal.modal-recurrence .recurrence-freq-options.hidden {
   display: none;
@@ -2063,8 +2204,14 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
 .modal.modal-recurrence .recurrence-end-section {
   margin-top: 16px;
   padding-top: 12px;
+  padding-left: 0;
+  padding-right: 0;
   border-top: 1px solid var(--border);
   font-size: 12px;
+  overflow: visible;
+}
+.modal.modal-recurrence .recurrence-end-choices {
+  overflow: visible;
 }
 .modal.modal-recurrence .recurrence-section-title {
   margin: 0 0 10px;

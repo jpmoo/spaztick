@@ -2521,7 +2521,6 @@
   const PROJECT_INSPECTOR_KEYS = [
     ['name', 'Name'],
     ['short_id', 'Short ID'],
-    ['status', 'Status'],
     ['description', 'Description'],
     ['created_at', 'Created'],
     ['updated_at', 'Updated'],
@@ -2612,26 +2611,26 @@
       const nameVal = escapeAttr(p.name ?? '');
       const descVal = String(p.description ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
       const shortId = escapeAttr(p.short_id ?? '');
-      const statusVal = escapeAttr(p.status ?? 'active');
       const createdVal = p.created_at ? formatDateTimeForInspector(p.created_at) : '—';
       const updatedVal = p.updated_at ? formatDateTimeForInspector(p.updated_at) : '—';
       div.innerHTML = `
-        <p><strong>Short ID:</strong> ${shortId || '—'}</p>
-        <p><strong>Status:</strong> ${statusVal}</p>
-        <p><strong>Created:</strong> ${createdVal}</p>
-        <p><strong>Updated:</strong> ${updatedVal}</p>
-        <div class="setting-row">
-          <label for="inspector-project-name">Name</label>
-          <input type="text" id="inspector-project-name" value="${nameVal}" class="inspector-edit-input" />
-        </div>
-        <div class="setting-row">
-          <label for="inspector-project-description">Description</label>
-          <textarea id="inspector-project-description" rows="3" class="inspector-edit-textarea">${descVal}</textarea>
+        <div class="inspector-content-inner">
+          <p><strong>Short ID:</strong> ${shortId || '—'}</p>
+          <p><strong>Created:</strong> ${createdVal}</p>
+          <p><strong>Updated:</strong> ${updatedVal}</p>
+          <div class="setting-row">
+            <label for="inspector-project-name">Name</label>
+            <input type="text" id="inspector-project-name" value="${nameVal}" class="inspector-edit-input" />
+          </div>
+          <div class="setting-row">
+            <label for="inspector-project-description">Description</label>
+            <textarea id="inspector-project-description" rows="3" class="inspector-edit-textarea">${descVal}</textarea>
+          </div>
         </div>
         <div class="inspector-project-actions">
-          <button type="button" id="inspector-project-archive" class="btn-secondary btn-sm">Archive</button>
-          <button type="button" id="inspector-project-delete" class="btn-secondary btn-sm">Delete</button>
-          <button type="button" id="inspector-project-save" class="btn-primary btn-sm">Save</button>
+          <button type="button" id="inspector-project-archive" class="inspector-action-btn" title="Archive" aria-label="Archive"><img src="assets/archive-down-svgrepo-com.svg" alt="" /></button>
+          <button type="button" id="inspector-project-delete" class="inspector-action-btn" title="Delete" aria-label="Delete"><img src="assets/trash-alt-svgrepo-com.svg" alt="" /></button>
+          <button type="button" id="inspector-project-save" class="inspector-action-btn btn-primary" title="Save" aria-label="Save"><img src="assets/save-svgrepo-com.svg" alt="" /></button>
         </div>
       `;
       const pid = p.id;
@@ -2698,18 +2697,75 @@
       const div = document.getElementById('inspector-content');
       const titleEl = document.getElementById('inspector-title');
       titleEl.textContent = (lst.name || '(no name)').trim();
-      let html = '';
-      LIST_INSPECTOR_KEYS.forEach(([key, label]) => {
-        if (!(key in lst)) return;
-        const val = formatInspectorValue(key, lst[key]);
-        if (val === null && key !== 'description') return;
-        if (key === 'description') {
-          html += `<p><strong>${label}</strong></p><p class="inspector-block">${val || '—'}</p>`;
-        } else {
-          html += `<p><strong>${label}:</strong> ${val !== null ? val : '—'}</p>`;
+      div.dataset.inspectorListId = lst.id || listId;
+      const shortId = escapeAttr(lst.short_id ?? '');
+      const createdVal = lst.created_at ? formatDateTimeForInspector(lst.created_at) : '—';
+      const updatedVal = lst.updated_at ? formatDateTimeForInspector(lst.updated_at) : '—';
+      const nameVal = escapeAttr(lst.name ?? '');
+      const descVal = String(lst.description ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      div.innerHTML = `
+        <div class="inspector-content-inner">
+          <p><strong>Short ID:</strong> ${shortId || '—'}</p>
+          <p><strong>Created:</strong> ${createdVal}</p>
+          <p><strong>Updated:</strong> ${updatedVal}</p>
+          <div class="setting-row">
+            <label for="inspector-list-name">Name</label>
+            <input type="text" id="inspector-list-name" value="${nameVal}" class="inspector-edit-input" />
+          </div>
+          <div class="setting-row">
+            <label for="inspector-list-description">Description</label>
+            <textarea id="inspector-list-description" rows="3" class="inspector-edit-textarea">${descVal}</textarea>
+          </div>
+        </div>
+        <div class="inspector-project-actions">
+          <button type="button" id="inspector-list-duplicate" class="inspector-action-btn" title="Duplicate" aria-label="Duplicate"><img src="assets/duplicate-document-svgrepo-com.svg" alt="" /></button>
+          <button type="button" id="inspector-list-delete" class="inspector-action-btn" title="Delete" aria-label="Delete"><img src="assets/trash-alt-svgrepo-com.svg" alt="" /></button>
+          <button type="button" id="inspector-list-save" class="inspector-action-btn btn-primary" title="Save" aria-label="Save"><img src="assets/save-svgrepo-com.svg" alt="" /></button>
+        </div>
+      `;
+      const lid = lst.id || listId;
+      const nameInput = document.getElementById('inspector-list-name');
+      const descInput = document.getElementById('inspector-list-description');
+      document.getElementById('inspector-list-save').addEventListener('click', async () => {
+        try {
+          await api(`/api/external/lists/${encodeURIComponent(lid)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              name: (nameInput && nameInput.value) ? nameInput.value.trim() : undefined,
+              description: (descInput && descInput.value) ? descInput.value.trim() : undefined,
+            }),
+          });
+          if (titleEl) titleEl.textContent = (nameInput && nameInput.value) ? nameInput.value.trim() : '(no name)';
+          loadListDetails(lid);
+          refreshTaskList();
+        } catch (err) {
+          alert(err.message || 'Failed to save list.');
         }
       });
-      div.innerHTML = html || '<p class="placeholder">No details.</p>';
+      document.getElementById('inspector-list-delete').addEventListener('click', async () => {
+        if (!confirm('Delete this list? This cannot be undone.')) return;
+        try {
+          await api(`/api/external/lists/${encodeURIComponent(lid)}`, { method: 'DELETE' });
+          loadLists();
+          document.getElementById('inspector-title').textContent = 'Inspector';
+          document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+          lastTaskSource = null;
+          document.getElementById('center-title').textContent = '';
+          document.getElementById('center-content').innerHTML = '<p class="placeholder">Select a project or list.</p>';
+        } catch (err) {
+          alert(err.message || 'Failed to delete list.');
+        }
+      });
+      document.getElementById('inspector-list-duplicate').addEventListener('click', () => {
+        duplicateListSource = lst;
+        if (duplicateListName) duplicateListName.value = (lst.name ? `Copy of ${lst.name}` : 'Copy of list').trim();
+        if (duplicateListOverlay) {
+          duplicateListOverlay.classList.remove('hidden');
+          duplicateListOverlay.setAttribute('aria-hidden', 'false');
+          setTimeout(() => duplicateListName && duplicateListName.focus(), 50);
+        }
+      });
     } catch (e) {
       document.getElementById('inspector-title').textContent = 'Inspector';
       document.getElementById('inspector-content').innerHTML = `<p class="placeholder">${e.message || 'Error loading list.'}</p>`;
@@ -2753,12 +2809,12 @@
           html += `<p><strong>${label}:</strong> ${val !== null ? val : '—'}</p>`;
         }
       });
-      div.innerHTML = html || '<p class="placeholder">No details.</p>';
+      div.innerHTML = '<div class="inspector-content-inner">' + (html || '<p class="placeholder">No details.</p>') + '</div>';
       div.querySelectorAll('.inspector-edit-recurrence').forEach((btn) => {
         btn.addEventListener('click', () => openRecurrenceModal(btn.dataset.taskId));
       });
     } catch (e) {
-      document.getElementById('inspector-content').innerHTML = `<p class="placeholder">${e.message || 'Error'}</p>`;
+      document.getElementById('inspector-content').innerHTML = `<div class="inspector-content-inner"><p class="placeholder">${e.message || 'Error'}</p></div>`;
     }
   }
 
@@ -3504,13 +3560,17 @@
   // --- Navigator add (plus) button: popover → Project or List → modals ---
   const newProjectOverlay = document.getElementById('new-project-overlay');
   const newProjectName = document.getElementById('new-project-name');
-  const newProjectDescription = document.getElementById('new-project-description');
   const newProjectClose = document.getElementById('new-project-close');
   const newProjectCreate = document.getElementById('new-project-create');
   const newListOverlay = document.getElementById('new-list-overlay');
   const newListName = document.getElementById('new-list-name');
   const newListClose = document.getElementById('new-list-close');
   const newListCreate = document.getElementById('new-list-create');
+  const duplicateListOverlay = document.getElementById('duplicate-list-overlay');
+  const duplicateListName = document.getElementById('duplicate-list-name');
+  const duplicateListClose = document.getElementById('duplicate-list-close');
+  const duplicateListCreate = document.getElementById('duplicate-list-create');
+  let duplicateListSource = null;
 
   function closeAddPopover() {
     if (navigatorAddPopover) {
@@ -3534,7 +3594,6 @@
         if (choice === 'project') {
           if (newProjectOverlay) {
             if (newProjectName) newProjectName.value = '';
-            if (newProjectDescription) newProjectDescription.value = '';
             newProjectOverlay.classList.remove('hidden');
             newProjectOverlay.setAttribute('aria-hidden', 'false');
             setTimeout(() => newProjectName && newProjectName.focus(), 50);
@@ -3561,12 +3620,11 @@
     newProjectCreate.addEventListener('click', async () => {
       const name = newProjectName && newProjectName.value.trim();
       if (!name) return;
-      const description = newProjectDescription ? newProjectDescription.value.trim() : '';
       try {
         await api('/api/external/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, description: description || undefined }),
+          body: JSON.stringify({ name }),
         });
         closeNewProjectModal();
         loadProjects();
@@ -3609,6 +3667,53 @@
   if (newListClose) newListClose.addEventListener('click', closeNewListModal);
   if (newListOverlay) {
     newListOverlay.addEventListener('click', (e) => { if (e.target === newListOverlay) closeNewListModal(); });
+  }
+
+  function closeDuplicateListModal() {
+    if (duplicateListOverlay) {
+      duplicateListOverlay.classList.add('hidden');
+      duplicateListOverlay.setAttribute('aria-hidden', 'true');
+    }
+    duplicateListSource = null;
+  }
+  if (duplicateListCreate) {
+    duplicateListCreate.addEventListener('click', async () => {
+      const name = duplicateListName && duplicateListName.value.trim();
+      if (!name) {
+        alert('Name is required.');
+        return;
+      }
+      if (!duplicateListSource) {
+        alert('No list to duplicate.');
+        return;
+      }
+      const qd = duplicateListSource.query_definition;
+      const sd = duplicateListSource.sort_definition;
+      const query_definition = (qd != null && (typeof qd !== 'object' || Object.keys(qd).length > 0))
+        ? qd
+        : { type: 'group', operator: 'AND', children: [] };
+      try {
+        const created = await api('/api/external/lists', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            query_definition,
+            sort_definition: sd != null ? sd : undefined,
+          }),
+        });
+        closeDuplicateListModal();
+        await loadListsFromApi();
+        if (created && created.id) openListInCenter(created.id);
+      } catch (e) {
+        console.error('Failed to duplicate list:', e);
+        alert(e.message || 'Failed to duplicate list.');
+      }
+    });
+  }
+  if (duplicateListClose) duplicateListClose.addEventListener('click', closeDuplicateListModal);
+  if (duplicateListOverlay) {
+    duplicateListOverlay.addEventListener('click', (e) => { if (e.target === duplicateListOverlay) closeDuplicateListModal(); });
   }
 
   // --- Init ---

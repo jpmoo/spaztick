@@ -269,10 +269,6 @@
           <label for="new-project-name">Name</label>
           <input type="text" id="new-project-name" placeholder="Project name" />
         </div>
-        <div class="setting-row">
-          <label for="new-project-description">Description</label>
-          <textarea id="new-project-description" placeholder="Optional description" rows="3"></textarea>
-        </div>
       </div>
       <div class="modal-footer">
         <button type="button" id="new-project-create" class="btn-primary">Create</button>
@@ -294,6 +290,24 @@
       </div>
       <div class="modal-footer">
         <button type="button" id="new-list-create" class="btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="duplicate-list-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-small" role="dialog" aria-labelledby="duplicate-list-title">
+      <div class="modal-header">
+        <h2 id="duplicate-list-title">Duplicate list</h2>
+        <button type="button" id="duplicate-list-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-row">
+          <label for="duplicate-list-name">Name</label>
+          <input type="text" id="duplicate-list-name" placeholder="List name" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="duplicate-list-create" class="btn-primary">Create</button>
       </div>
     </div>
   </div>
@@ -384,20 +398,26 @@
         </div>
         <div id="recurrence-monthly-options" class="recurrence-freq-options hidden">
           <div class="recurrence-monthly-choices">
-            <div class="setting-row recurrence-row-inline">
-              <label class="recurrence-radio-label"><input type="radio" name="recurrence-monthly-rule" value="day_of_month" /> On specific date</label>
-              <input type="number" id="recurrence-monthly-day" min="1" max="31" value="1" />
+            <div class="setting-row recurrence-monthly-row">
+              <label class="recurrence-radio-label">
+                <input type="radio" name="recurrence-monthly-rule" value="day_of_month" />
+                <span class="recurrence-monthly-label-text recurrence-monthly-label-date">On date:</span>
+              </label>
+              <input type="number" id="recurrence-monthly-day" min="1" max="31" value="1" class="recurrence-monthly-day-input" aria-label="Day of month" />
             </div>
-            <div class="setting-row recurrence-row-inline">
-              <label class="recurrence-radio-label"><input type="radio" name="recurrence-monthly-rule" value="weekday_of_month" /> On</label>
-              <select id="recurrence-monthly-week">
+            <div class="setting-row recurrence-monthly-row">
+              <label class="recurrence-radio-label">
+                <input type="radio" name="recurrence-monthly-rule" value="weekday_of_month" />
+                <span class="recurrence-monthly-label-text">On</span>
+              </label>
+              <select id="recurrence-monthly-week" class="recurrence-monthly-picker" aria-label="Week of month">
                 <option value="1">First</option>
                 <option value="2">Second</option>
                 <option value="3">Third</option>
                 <option value="4">Fourth</option>
                 <option value="5">Last</option>
               </select>
-              <select id="recurrence-monthly-weekday">
+              <select id="recurrence-monthly-weekday" class="recurrence-monthly-picker" aria-label="Day of week">
                 <option value="0">Sunday</option>
                 <option value="1">Monday</option>
                 <option value="2">Tuesday</option>
