@@ -53,13 +53,24 @@
             <div class="display-dropdown-title">Visible columns</div>
             <div class="display-dropdown-flagged">
               <input type="checkbox" id="display-show-flagged" />
-              <label for="display-show-flagged">Show flag</label>
+              <label for="display-show-flagged">Show focused</label>
             </div>
             <div class="display-dropdown-flagged">
               <input type="checkbox" id="display-show-completed" />
               <label for="display-show-completed">Show completed</label>
             </div>
+            <div class="display-dropdown-flagged">
+              <input type="checkbox" id="display-show-highlight-due" />
+              <label for="display-show-highlight-due">Highlight due/overdue</label>
+            </div>
             <ul id="display-properties-list" class="display-properties-list"></ul>
+            <div class="display-dropdown-title">Sort</div>
+            <div id="display-sort-ladder" class="display-sort-ladder"></div>
+            <button type="button" id="display-sort-add" class="display-sort-add">Add sort level</button>
+            <div class="display-dropdown-flagged">
+              <input type="checkbox" id="display-manual-sort" />
+              <label for="display-manual-sort">Manual sort</label>
+            </div>
           </div>
         </div>
       </div>

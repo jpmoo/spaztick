@@ -701,10 +701,10 @@ def run_orchestrator(
     model: str,
     system_prefix: str,
     history: list[dict[str, str]] | None = None,
-) -> tuple[str, bool]:
+) -> tuple[str, bool, dict[str, Any] | None]:
     """
-    Run the orchestrator. Returns (response_text, tool_used).
-    Two-call flow: (1) Intent router classifies TOOL vs CHAT. (2) CHAT -> conversational LLM; TOOL -> tool-orchestrator LLM, then execute tool.
+    Run the orchestrator. Returns (response_text, tool_used, pending_confirm).
+    pending_confirm is set when delete_task/delete_project was run without confirm (caller can execute it when user says "yes").
     tool_used is True when a mutating tool was successfully executed (caller should clear history). For delete_* without confirm, tool_used is False.
     """
     url = f"{ollama_base_url.rstrip('/')}/api/generate"
@@ -726,7 +726,7 @@ def run_orchestrator(
         intent = _parse_intent(intent_response)
     except Exception as e:
         logger.exception("Intent router call failed")
-        return (f"Error calling the model: {e}", False)
+        return (f"Error calling the model: {e}", False, None)
     logger.info("Intent router classified as: %s", intent)
 
     if intent == "CHAT":
@@ -735,9 +735,9 @@ def run_orchestrator(
             response_text = _call_ollama(CHAT_MODE_PROMPT, chat_prompt, url, model)
         except Exception as e:
             logger.exception("Chat mode call failed")
-            return (f"Error calling the model: {e}", False)
+            return (f"Error calling the model: {e}", False, None)
         text = response_text.strip() or "I didn't understand. You can ask me to list or create tasks and projects."
-        return (text, False)
+        return (text, False, None)
 
     # Step 2: TOOL — get tool call from orchestrator, then execute
     full_system = (system_prefix.strip() + "\n\n" + TOOL_ORCHESTRATOR_PROMPT).strip() if system_prefix else TOOL_ORCHESTRATOR_PROMPT
@@ -747,7 +747,7 @@ def run_orchestrator(
         response_text = _call_ollama(full_system, tool_prompt, url, model)
     except Exception as e:
         logger.exception("Tool orchestrator call failed")
-        return (f"Error calling the model: {e}", False)
+        return (f"Error calling the model: {e}", False, None)
 
     parsed = _parse_tool_call(response_text)
     if parsed:
@@ -762,42 +762,42 @@ def run_orchestrator(
     if not parsed:
         text = response_text.strip() or "I didn't understand. You can ask me to create or list tasks or projects."
         if _looks_like_json(text):
-            return ("I didn't understand. Try: \"Create a task: [title]\", \"List my tasks\", \"Delete task 1\", \"Create a project: [name]\", \"List my projects\", or \"Delete project 1off\".", False)
-        return (text, False)
+            return ("I didn't understand. Try: \"Create a task: [title]\", \"List my tasks\", \"Delete task 1\", \"Create a project: [name]\", \"List my projects\", or \"Delete project 1off\".", False, None)
+        return (text, False, None)
 
     name, params = parsed
     if name == "project_info":
         short_id = (params.get("short_id") or params.get("project_id") or "").strip()
         if not short_id:
-            return ("project_info requires short_id (the project's friendly id, e.g. 1off or work).", False)
+            return ("project_info requires short_id (the project's friendly id, e.g. 1off or work).", False, None)
         try:
             from project_service import get_project_by_short_id
             from task_service import list_tasks as svc_list_tasks, get_tasks_that_depend_on
             project = get_project_by_short_id(short_id)
         except Exception as e:
-            return (f"Error loading project: {e}", False)
+            return (f"Error loading project: {e}", False, None)
         if not project:
-            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False)
+            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None)
         try:
             tasks = svc_list_tasks(project_id=project["id"], limit=500)
             tasks_with_subtasks: list[tuple[dict[str, Any], list[dict[str, Any]]]] = [
                 (t, get_tasks_that_depend_on(t["id"])) for t in tasks
             ]
-            return (_format_project_info_text(project, tasks_with_subtasks), True)
+            return (_format_project_info_text(project, tasks_with_subtasks), True, None)
         except Exception as e:
-            return (f"Error loading project tasks: {e}", False)
+            return (f"Error loading project tasks: {e}", False, None)
     if name == "project_list":
         try:
             from project_service import list_projects
             projects = list_projects()
         except Exception as e:
-            return (f"Error listing projects: {e}", False)
-        return (_format_project_list_for_telegram(projects), True)
+            return (f"Error listing projects: {e}", False, None)
+        return (_format_project_list_for_telegram(projects), True, None)
     if name == "project_create":
         try:
             validated = _validate_project_create(params)
         except ValueError as e:
-            return (f"Invalid project_create parameters: {e}", False)
+            return (f"Invalid project_create parameters: {e}", False, None)
         try:
             from project_service import create_project
             project = create_project(
@@ -806,61 +806,62 @@ def run_orchestrator(
                 status=validated.get("status", "active"),
             )
         except Exception as e:
-            return (f"Error creating project: {e}", False)
-        return (_format_project_created_for_telegram(project), True)
+            return (f"Error creating project: {e}", False, None)
+        return (_format_project_created_for_telegram(project), True, None)
     if name == "delete_project":
         short_id = (params.get("short_id") or params.get("project_id") or "").strip()
         if not short_id:
-            return ("delete_project requires short_id (the project's friendly id, e.g. 1off or work).", False)
+            return ("delete_project requires short_id (the project's friendly id, e.g. 1off or work).", False, None)
         try:
             from project_service import get_project_by_short_id, delete_project
             project = get_project_by_short_id(short_id)
         except Exception as e:
-            return (f"Error looking up project: {e}", False)
+            return (f"Error looking up project: {e}", False, None)
         if not project:
-            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False)
+            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None)
         if not _parse_confirm(params):
             name_str = (project.get("name") or "").strip() or short_id
             return (
                 f"Delete project {short_id} ({name_str})? It will be removed from all tasks that use it; "
                 "some tasks may end up with no project assignments. Reply \"yes\" to confirm.",
                 False,
+                {"tool": "delete_project", "short_id": short_id},
             )
         try:
             delete_project(project["id"])
         except Exception as e:
-            return (f"Error deleting project: {e}", False)
-        return (f"Project {short_id} deleted. It has been removed from all tasks.", True)
+            return (f"Error deleting project: {e}", False, None)
+        return (f"Project {short_id} deleted. It has been removed from all tasks.", True, None)
     if name == "delete_task":
         num = _parse_task_number(params)
         if num is None:
-            return ("delete_task requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False)
+            return ("delete_task requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None)
         try:
             from task_service import get_task_by_number, delete_task
             task = get_task_by_number(num)
         except Exception as e:
-            return (f"Error looking up task: {e}", False)
+            return (f"Error looking up task: {e}", False, None)
         if not task:
-            return (f"No task {num}. List tasks to see numbers.", False)
+            return (f"No task {num}. List tasks to see numbers.", False, None)
         if not _parse_confirm(params):
             title = (task.get("title") or "").strip() or "(no title)"
-            return (f"Delete task {num} ({title})? This cannot be undone. Reply \"yes\" to confirm.", False)
+            return (f"Delete task {num} ({title})? This cannot be undone. Reply \"yes\" to confirm.", False, {"tool": "delete_task", "number": num})
         try:
             delete_task(task["id"])
         except Exception as e:
-            return (f"Error deleting task: {e}", False)
-        return (f"Task {num} deleted.", True)
+            return (f"Error deleting task: {e}", False, None)
+        return (f"Task {num} deleted.", True, None)
     if name == "task_info":
         num = _parse_task_number(params)
         if num is None:
-            return ("task_info requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False)
+            return ("task_info requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None)
         try:
             from task_service import get_task_by_number, get_task, get_tasks_that_depend_on
             task = get_task_by_number(num)
         except Exception as e:
-            return (f"Error loading task: {e}", False)
+            return (f"Error loading task: {e}", False, None)
         if not task:
-            return (f"No task {num}. List tasks to see numbers.", False)
+            return (f"No task {num}. List tasks to see numbers.", False, None)
         try:
             from project_service import get_project
             parent_tasks: list[dict[str, Any]] = []
@@ -876,9 +877,9 @@ def run_orchestrator(
                     short_id = (p.get("short_id") or "").strip() or p.get("id", "")[:8]
                     name = (p.get("name") or "").strip() or "(no name)"
                     project_labels.append(f"{short_id}: {name}")
-            return (_format_task_info_text(task, parent_tasks, subtasks, project_labels), True)
+            return (_format_task_info_text(task, parent_tasks, subtasks, project_labels), True, None)
         except Exception as e:
-            return (f"Error loading task details: {e}", False)
+            return (f"Error loading task details: {e}", False, None)
     if name == "task_list":
         tz_name = "UTC"
         try:
@@ -904,8 +905,8 @@ def run_orchestrator(
                 flagged=validated.get("flagged"),
             )
         except Exception as e:
-            return (f"Error listing tasks: {e}", False)
-        return (_format_task_list_for_telegram(tasks, 50, tz_name), True)
+            return (f"Error listing tasks: {e}", False, None)
+        return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None)
     if name == "task_update":
         tz_name = "UTC"
         try:
@@ -916,7 +917,7 @@ def run_orchestrator(
         try:
             validated = _validate_task_update(params, tz_name)
         except ValueError as e:
-            return (str(e), False)
+            return (str(e), False, None)
         from date_utils import resolve_task_dates
         validated = resolve_task_dates(validated, tz_name)
         num = validated.pop("number")
@@ -924,9 +925,9 @@ def run_orchestrator(
             from task_service import get_task_by_number, update_task, remove_task_project, add_task_project, remove_task_tag, add_task_tag
             task = get_task_by_number(num)
         except Exception as e:
-            return (f"Error looking up task: {e}", False)
+            return (f"Error looking up task: {e}", False, None)
         if not task:
-            return (f"No task {num}. List tasks to see numbers.", False)
+            return (f"No task {num}. List tasks to see numbers.", False, None)
         task_id = task["id"]
         scalar_keys = ("status", "flagged", "due_date", "available_date", "title", "description", "notes", "priority")
         kwargs = {k: v for k, v in validated.items() if k in scalar_keys and v is not None}
@@ -934,14 +935,14 @@ def run_orchestrator(
         has_remove_projects = "remove_projects" in validated and validated["remove_projects"]
         has_tags = "tags" in validated
         if not kwargs and not has_projects and not has_remove_projects and not has_tags:
-            return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", False)
+            return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", False, None)
         if kwargs:
             try:
                 updated = update_task(task_id, **kwargs)
             except Exception as e:
-                return (f"Error updating task: {e}", False)
+                return (f"Error updating task: {e}", False, None)
             if not updated:
-                return (f"Task {num} not found.", False)
+                return (f"Task {num} not found.", False, None)
         if has_projects:
             try:
                 from project_service import get_project_by_short_id
@@ -954,7 +955,7 @@ def run_orchestrator(
                     project_id = p["id"] if p else ref
                     add_task_project(task_id, str(project_id))
             except Exception as e:
-                return (f"Error updating task projects: {e}", False)
+                return (f"Error updating task projects: {e}", False, None)
         elif has_remove_projects:
             try:
                 from project_service import get_project_by_short_id
@@ -972,7 +973,7 @@ def run_orchestrator(
                 for pid in new_ids:
                     add_task_project(task_id, str(pid))
             except Exception as e:
-                return (f"Error removing task from project(s): {e}", False)
+                return (f"Error removing task from project(s): {e}", False, None)
         if has_tags:
             try:
                 for tag in task.get("tags") or []:
@@ -981,7 +982,7 @@ def run_orchestrator(
                     if tag:
                         add_task_tag(task_id, tag)
             except Exception as e:
-                return (f"Error updating task tags: {e}", False)
+                return (f"Error updating task tags: {e}", False, None)
         parts = []
         if "status" in kwargs:
             parts.append("complete" if kwargs["status"] == "complete" else "reopened")
@@ -1002,16 +1003,16 @@ def run_orchestrator(
         if has_tags:
             parts.append("tags updated")
         msg = f"Task {num} " + (", ".join(parts) if parts else "updated") + "."
-        return (msg, True)
+        return (msg, True, None)
     if name != "task_create":
         fallback = f"Tool '{name}' is not implemented yet. You can create, list, info, update, or delete tasks and projects."
         text = response_text.strip() or fallback
-        return (fallback if _looks_like_json(text) else text, False)
+        return (fallback if _looks_like_json(text) else text, False, None)
 
     try:
         validated = _validate_task_create(params)
     except ValueError as e:
-        return (f"Invalid task_create parameters: {e}", False)
+        return (f"Invalid task_create parameters: {e}", False, None)
 
     tz_name = "UTC"
     try:
@@ -1034,9 +1035,9 @@ def run_orchestrator(
             due_date=validated.get("due_date"),
             projects=validated.get("projects"),
             tags=validated.get("tags"),
-            flagged=validated.get("flagged", False),
+            flagged=validated.get("flagged", False, None),
         )
     except Exception as e:
-        return (f"Error creating task: {e}", False)
+        return (f"Error creating task: {e}", False, None)
 
-    return (_format_task_created_for_telegram(task), True)
+    return (_format_task_created_for_telegram(task), True, None)

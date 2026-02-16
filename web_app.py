@@ -136,6 +136,50 @@ def telegram_status() -> dict[str, bool | int | None]:
     return {"running": True, "pid": _telegram_process.pid}
 
 
+class PendingConfirmBody(BaseModel):
+    """Payload for executing a pending delete confirmation (e.g. from Telegram when history is off)."""
+    tool: str  # "delete_task" | "delete_project"
+    number: int | None = None
+    short_id: str | None = None
+
+
+@app.post("/api/execute-pending-confirm")
+def execute_pending_confirm(body: PendingConfirmBody) -> dict[str, bool | str]:
+    """Execute a pending delete (task or project). Used by Telegram bot when user replies 'yes' and history is disabled."""
+    if body.tool == "delete_task":
+        if body.number is None:
+            return {"ok": False, "message": "delete_task requires number."}
+        try:
+            from task_service import get_task_by_number, delete_task
+            task = get_task_by_number(body.number)
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+        if not task:
+            return {"ok": False, "message": f"No task {body.number}."}
+        try:
+            delete_task(task["id"])
+            return {"ok": True, "message": f"Task {body.number} deleted."}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+    if body.tool == "delete_project":
+        short_id = (body.short_id or "").strip()
+        if not short_id:
+            return {"ok": False, "message": "delete_project requires short_id."}
+        try:
+            from project_service import get_project_by_short_id, delete_project
+            project = get_project_by_short_id(short_id)
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+        if not project:
+            return {"ok": False, "message": f"No project \"{short_id}\"."}
+        try:
+            delete_project(project["id"])
+            return {"ok": True, "message": f"Project {short_id} deleted. It has been removed from all tasks."}
+        except Exception as e:
+            return {"ok": False, "message": str(e)}
+    return {"ok": False, "message": f"Unknown tool: {body.tool}. Use delete_task or delete_project."}
+
+
 # --- Tasks API (for web app list / edit / delete) ---
 
 @app.get("/api/tasks")
@@ -479,7 +523,7 @@ def external_chat(body: ChatRequest):
     else:
         system_prefix = f"{date_line}\n\n{system_prefix}".strip()
     try:
-        response_text, tool_used = run_orchestrator(body.message.strip(), base_url, model, system_prefix, history=[])
+        response_text, tool_used, _ = run_orchestrator(body.message.strip(), base_url, model, system_prefix, history=[])
         return {"response": response_text or "", "tool_used": tool_used}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -2,8 +2,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 try:
@@ -36,6 +39,9 @@ logger = logging.getLogger(__name__)
 # Per-chat conversation history; cleared after successful tool (task_create / task_list)
 _chat_histories: dict[int, list[dict[str, str]]] = {}
 
+# When history is disabled: pending delete confirmation (chat_id -> {"tool": "delete_task", "number": N} or {"tool": "delete_project", "short_id": "x"})
+_pending_confirm: dict[int, dict] = {}
+
 
 def _is_user_allowed(update: Update) -> bool:
     """True if no whitelist is set, or if the message sender's @username is in the whitelist."""
@@ -66,6 +72,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     chat_id = update.message.chat.id
     _chat_histories[chat_id] = []
+    _pending_confirm.pop(chat_id, None)
     logger.info("Telegram /reset from allowed user chat_id=%s", chat_id)
     await update.message.reply_text("Conversation history cleared. Starting fresh.")
 
@@ -110,14 +117,33 @@ def _run_orchestrator(
     model: str,
     system_prefix: str,
     history: list[dict[str, str]],
-) -> tuple[str, bool]:
-    """Sync orchestrator call (run in executor). Returns (response_text, tool_used)."""
+) -> tuple[str, bool, dict | None]:
+    """Sync orchestrator call (run in executor). Returns (response_text, tool_used, pending_confirm)."""
     from orchestrator import run_orchestrator
     return run_orchestrator(user_message, base_url, model, system_prefix, history=history)
 
 
+def _execute_pending_confirm_http(web_base_url: str, payload: dict) -> tuple[bool, str]:
+    """POST to web app execute-pending-confirm. Returns (ok, message)."""
+    url = f"{web_base_url.rstrip('/')}/api/execute-pending-confirm"
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST", headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            out = json.loads(resp.read().decode())
+            return (bool(out.get("ok")), str(out.get("message", "")))
+    except urllib.error.HTTPError as e:
+        try:
+            body = e.read().decode()
+        except Exception:
+            body = str(e)
+        return (False, body or str(e))
+    except Exception as e:
+        return (False, str(e))
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle incoming message: run orchestrator with history; clear history after successful tool."""
+    """Handle incoming message: run orchestrator; when history is off, use pending_confirm for delete confirmations."""
     if not update.message or not update.message.text:
         return
     config = load_config()
@@ -133,8 +159,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Send a message to get a response. You can ask to create a task (e.g. \"Create a task: Buy milk\").")
         return
     chat_id = update.message.chat.id
-    # History disabled: set USE_HISTORY = True below to reinstate conversation history.
     USE_HISTORY = False
+    # When history is off: if user says yes/confirm and we have a pending delete, execute it via web app API
+    if not USE_HISTORY:
+        pending = _pending_confirm.get(chat_id)
+        if pending and text.lower() in ("yes", "confirm", "y"):
+            await update.message.chat.send_action("typing")
+            web_base = f"http://127.0.0.1:{getattr(config, 'web_ui_port', 8081)}"
+            loop = asyncio.get_event_loop()
+            ok, msg = await loop.run_in_executor(None, lambda: _execute_pending_confirm_http(web_base, pending))
+            _pending_confirm.pop(chat_id, None)
+            await update.message.reply_text(msg)
+            return
+        if pending and text.lower() in ("no", "n", "cancel"):
+            _pending_confirm.pop(chat_id, None)
+            await update.message.reply_text("Cancelled.")
+            return
     history = _chat_histories.get(chat_id, []) if USE_HISTORY else []
     if USE_HISTORY:
         history = list(history)
@@ -161,10 +201,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     effective_history = history if USE_HISTORY else []
     try:
         loop = asyncio.get_event_loop()
-        response, tool_used = await loop.run_in_executor(
+        response, tool_used, pending_confirm = await loop.run_in_executor(
             None,
             lambda: _run_orchestrator(text, base_url, model, system_prefix, effective_history),
         )
+        if pending_confirm:
+            _pending_confirm[chat_id] = pending_confirm
+        if tool_used:
+            _pending_confirm.pop(chat_id, None)
         if not response:
             response = "(No response)"
         await update.message.reply_text(response)

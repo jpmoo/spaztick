@@ -28,6 +28,14 @@
     projects: 'Projects',
     tags: 'Tags',
   };
+  const SORT_FIELD_KEYS = ['title', 'available_date', 'due_date', 'priority', 'status'];
+  const SORT_FIELD_LABELS = {
+    title: 'Name',
+    available_date: 'Available date',
+    due_date: 'Due date',
+    priority: 'Priority',
+    status: 'Status',
+  };
   let projectListCache = [];
 
   function parseDateOnly(str) {
@@ -425,15 +433,19 @@
           const order = o.order.filter((k) => TASK_PROPERTY_KEYS.includes(k));
           const showFlagged = o.showFlagged !== false;
           const showCompleted = o.showCompleted !== false;
-          return { order, visible, showFlagged, showCompleted };
+          const showHighlightDue = o.showHighlightDue !== false;
+          const sortBy = Array.isArray(o.sortBy) ? o.sortBy.filter((s) => s && SORT_FIELD_KEYS.includes(s.key)) : [];
+          const manualSort = o.manualSort === true;
+          const manualOrder = Array.isArray(o.manualOrder) ? o.manualOrder.filter((id) => id != null) : [];
+          return { order, visible, showFlagged, showCompleted, showHighlightDue, sortBy, manualSort, manualOrder };
         }
       }
     } catch (_) {}
     const order = ['due_date', 'priority'];
-    return { order, visible: new Set(order), showFlagged: true, showCompleted: true };
+    return { order, visible: new Set(order), showFlagged: true, showCompleted: true, showHighlightDue: true, sortBy: [], manualSort: false, manualOrder: [] };
   }
 
-  function saveDisplayProperties(source, order, visible, showFlagged, showCompleted) {
+  function saveDisplayProperties(source, order, visible, showFlagged, showCompleted, showHighlightDue, sortBy, manualSort, manualOrder) {
     const key = displayKey(source != null ? source : 'project');
     let all = {};
     try {
@@ -446,6 +458,10 @@
       visible: visible != null ? Array.from(visible) : Array.from(current.visible),
       showFlagged: showFlagged !== undefined ? showFlagged : current.showFlagged,
       showCompleted: showCompleted !== undefined ? showCompleted : current.showCompleted,
+      showHighlightDue: showHighlightDue !== undefined ? showHighlightDue : current.showHighlightDue,
+      sortBy: sortBy !== undefined ? sortBy : current.sortBy,
+      manualSort: manualSort !== undefined ? manualSort : current.manualSort,
+      manualOrder: manualOrder !== undefined ? manualOrder : current.manualOrder,
     };
     localStorage.setItem(DISPLAY_PROPERTIES_KEY, JSON.stringify(all));
   }
@@ -454,22 +470,51 @@
     const listEl = document.getElementById('display-properties-list');
     const flaggedCb = document.getElementById('display-show-flagged');
     const completedCb = document.getElementById('display-show-completed');
+    const highlightDueCb = document.getElementById('display-show-highlight-due');
+    const manualSortCb = document.getElementById('display-manual-sort');
     if (!listEl) return;
     const source = lastTaskSource != null ? lastTaskSource : 'project';
-    const { order, visible, showFlagged, showCompleted } = getDisplayProperties(source);
+    const { order, visible, showFlagged, showCompleted, showHighlightDue, sortBy, manualSort, manualOrder } = getDisplayProperties(source);
     if (flaggedCb) {
       flaggedCb.checked = showFlagged;
       flaggedCb.onchange = () => {
-        const { order: o, visible: v, showCompleted: sc } = getDisplayProperties(source);
-        saveDisplayProperties(source, o, v, flaggedCb.checked, sc);
+        const { order: o, visible: v, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, flaggedCb.checked, sc, sh);
         refreshTaskList();
       };
     }
     if (completedCb) {
       completedCb.checked = showCompleted;
       completedCb.onchange = () => {
-        const { order: o, visible: v, showFlagged: sf } = getDisplayProperties(source);
-        saveDisplayProperties(source, o, v, sf, completedCb.checked);
+        const { order: o, visible: v, showFlagged: sf, showHighlightDue: sh } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, completedCb.checked, sh);
+        refreshTaskList();
+      };
+    }
+    if (highlightDueCb) {
+      highlightDueCb.checked = showHighlightDue;
+      highlightDueCb.onchange = () => {
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, sc, highlightDueCb.checked);
+        refreshTaskList();
+      };
+    }
+    if (manualSortCb) {
+      manualSortCb.checked = manualSort;
+      manualSortCb.onchange = () => {
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, sortBy: sb } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, sc, sh, sb, manualSortCb.checked);
+        refreshTaskList();
+      };
+    }
+    renderSortLadder(source);
+    const addSortBtn = document.getElementById('display-sort-add');
+    if (addSortBtn) {
+      addSortBtn.onclick = () => {
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, sortBy: sb } = getDisplayProperties(source);
+        const next = [...sb, { key: 'due_date', dir: 'asc' }];
+        saveDisplayProperties(source, o, v, sf, sc, sh, next);
+        renderSortLadder(source);
         refreshTaskList();
       };
     }
@@ -491,12 +536,52 @@
         if (e.target.checked) v.add(key);
         else v.delete(key);
         if (!o.includes(key)) o.push(key);
-        const { showFlagged: sf, showCompleted: sc } = getDisplayProperties(source);
-        saveDisplayProperties(source, o, v, sf, sc);
+        const { showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, sc, sh);
         refreshTaskList();
       });
     });
     setupDisplayListDrag(listEl, source);
+  }
+
+  function renderSortLadder(source) {
+    const ladderEl = document.getElementById('display-sort-ladder');
+    if (!ladderEl) return;
+    const { sortBy } = getDisplayProperties(source);
+    const rows = sortBy.length ? sortBy.map((s) => ({ key: s.key || 'due_date', dir: s.dir || 'asc' })) : [];
+    ladderEl.innerHTML = rows.map((s, i) => {
+      const fieldOpts = SORT_FIELD_KEYS.map((k) => `<option value="${k}" ${s.key === k ? 'selected' : ''}>${SORT_FIELD_LABELS[k] || k}</option>`).join('');
+      return `<div class="display-sort-row" data-index="${i}">
+        <select class="display-sort-field" aria-label="Sort by">${fieldOpts}</select>
+        <select class="display-sort-dir" aria-label="Direction">
+          <option value="asc" ${s.dir === 'asc' ? 'selected' : ''}>Asc</option>
+          <option value="desc" ${s.dir === 'desc' ? 'selected' : ''}>Desc</option>
+        </select>
+        <button type="button" class="display-sort-remove" aria-label="Remove sort level">×</button>
+      </div>`;
+    }).join('');
+    const syncSortBy = () => {
+      const rows = ladderEl.querySelectorAll('.display-sort-row');
+      const sb = Array.from(rows).map((row) => ({
+        key: row.querySelector('.display-sort-field').value,
+        dir: row.querySelector('.display-sort-dir').value,
+      }));
+      const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(source);
+      saveDisplayProperties(source, o, v, sf, sc, sh, sb);
+      refreshTaskList();
+    };
+    ladderEl.querySelectorAll('.display-sort-field, .display-sort-dir').forEach((el) => {
+      el.addEventListener('change', syncSortBy);
+    });
+    ladderEl.querySelectorAll('.display-sort-remove').forEach((btn, i) => {
+      btn.addEventListener('click', () => {
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, sortBy: sb } = getDisplayProperties(source);
+        const next = sb.filter((_, j) => j !== i);
+        saveDisplayProperties(source, o, v, sf, sc, sh, next);
+        renderSortLadder(source);
+        refreshTaskList();
+      });
+    });
   }
 
   function setupDisplayListDrag(listEl, source) {
@@ -528,14 +613,60 @@
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           const order = Array.from(listEl.querySelectorAll('li')).map((el) => el.dataset.key);
-          const { visible, showFlagged: sf, showCompleted: sc } = getDisplayProperties(ctx);
-          saveDisplayProperties(ctx, order, visible, sf, sc);
+          const { visible, showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(ctx);
+          saveDisplayProperties(ctx, order, visible, sf, sc, sh);
           refreshTaskList();
         };
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
       });
     });
+  }
+
+  function orderTasksBySort(tasks, sortBy) {
+    if (!sortBy || !sortBy.length) return [...tasks];
+    const key = (t) => String(t.id ?? '');
+    return [...tasks].sort((a, b) => {
+      for (const { key: field, dir } of sortBy) {
+        let va = a[field];
+        let vb = b[field];
+        if (field === 'status') {
+          va = isTaskCompleted(a) ? 1 : 0;
+          vb = isTaskCompleted(b) ? 1 : 0;
+        } else if (field === 'title') {
+          va = (a.title || '').trim().toLowerCase();
+          vb = (b.title || '').trim().toLowerCase();
+        } else if (field === 'available_date' || field === 'due_date') {
+          va = (va || '').toString().trim().substring(0, 10);
+          vb = (vb || '').toString().trim().substring(0, 10);
+        }
+        const emptyA = va == null || va === '';
+        const emptyB = vb == null || vb === '';
+        if (emptyA && emptyB) continue;
+        if (emptyA) return dir === 'asc' ? 1 : -1;
+        if (emptyB) return dir === 'asc' ? -1 : 1;
+        let cmp = 0;
+        if (typeof va === 'string' && typeof vb === 'string') cmp = va.localeCompare(vb, undefined, { numeric: true });
+        else if (typeof va === 'number' && typeof vb === 'number') cmp = va - vb;
+        else cmp = String(va).localeCompare(String(vb), undefined, { numeric: true });
+        if (cmp !== 0) return dir === 'desc' ? -cmp : cmp;
+      }
+      return 0;
+    });
+  }
+
+  function orderTasksByManual(tasks, manualOrder) {
+    if (!manualOrder || !manualOrder.length) return [...tasks];
+    const idToTask = new Map(tasks.map((t) => [String(t.id), t]));
+    const ordered = [];
+    for (const id of manualOrder) {
+      const t = idToTask.get(id);
+      if (t) ordered.push(t);
+    }
+    tasks.forEach((t) => {
+      if (!ordered.includes(t)) ordered.push(t);
+    });
+    return ordered;
   }
 
   function refreshTaskList() {
@@ -546,6 +677,8 @@
     if (!displayedTasks.length || !lastTaskSource) return;
     const center = document.getElementById('center-content');
     if (!center) return;
+    const src = lastTaskSource;
+    const { manualSort } = getDisplayProperties(src);
     const selectedRow = center.querySelector('.task-row.selected');
     const selectedId = selectedRow && selectedRow.dataset.id;
     const ul = document.createElement('ul');
@@ -556,6 +689,7 @@
     displayedTasks.forEach((t) => ul.appendChild(buildTaskRow(t)));
     center.innerHTML = '';
     center.appendChild(ul);
+    if (manualSort) setupTaskListDrag(center, ul, src);
     if (selectedId) {
       const row = center.querySelector(`.task-row[data-id="${selectedId}"]`);
       if (row) {
@@ -973,7 +1107,7 @@
 
   function buildTaskRow(t) {
     const source = lastTaskSource != null ? lastTaskSource : 'project';
-    const { order, visible, showFlagged } = getDisplayProperties(source);
+    const { order, visible, showFlagged, showHighlightDue, manualSort } = getDisplayProperties(source);
     const row = document.createElement('div');
     row.className = 'task-row';
     row.dataset.type = 'task';
@@ -981,6 +1115,14 @@
     row.dataset.number = t.number != null ? String(t.number) : '';
     row.dataset.statusComplete = isTaskCompleted(t) ? '1' : '0';
     row.addEventListener('click', onTaskClick);
+    const moveHandleSvg = '<svg class="task-move-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
+    if (manualSort) {
+      const moveWrap = document.createElement('div');
+      moveWrap.className = 'task-row-move';
+      moveWrap.innerHTML = moveHandleSvg;
+      moveWrap.setAttribute('aria-label', 'Drag to reorder');
+      row.appendChild(moveWrap);
+    }
     const statusComplete = isTaskCompleted(t);
     const circleOpenSvg = '<svg class="status-icon" viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 16q0 3.264 1.28 6.208t3.392 5.12 5.12 3.424 6.208 1.248 6.208-1.248 5.12-3.424 3.392-5.12 1.28-6.208-1.28-6.208-3.392-5.12-5.088-3.392-6.24-1.28q-3.264 0-6.208 1.28t-5.12 3.392-3.392 5.12-1.28 6.208zM4 16q0-3.264 1.6-6.016t4.384-4.352 6.016-1.632 6.016 1.632 4.384 4.352 1.6 6.016-1.6 6.048-4.384 4.352-6.016 1.6-6.016-1.6-4.384-4.352-1.6-6.048z"/></svg>';
     const circleTickSvg = '<svg class="status-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 8c0 4.418 3.59 8 8 8 4.418 0 8-3.59 8-8 0-4.418-3.59-8-8-8-4.418 0-8 3.59-8 8zm2 0c0-3.307 2.686-6 6-6 3.307 0 6 2.686 6 6 0 3.307-2.686 6-6 6-3.307 0-6-2.686-6-6zm9.778-1.672l-1.414-1.414L6.828 8.45 5.414 7.036 4 8.45l2.828 2.828 3.182-3.182 1.768-1.768z" fill-rule="evenodd"/></svg>';
@@ -1036,7 +1178,7 @@
         const hasVal = /^\d{4}-\d{2}-\d{2}$/.test(dateVal);
         const today = hasVal && isToday(t.due_date);
         const overdue = hasVal && isOverdue(t.due_date);
-        const stateClass = overdue ? 'due-overdue' : (today ? 'due-today' : '');
+        const stateClass = showHighlightDue ? (overdue ? 'due-overdue' : (today ? 'due-today' : '')) : '';
         const muteClass = hasVal ? '' : ' empty';
         const calCheckSvg = '<svg class="date-icon calendar-check-icon ' + stateClass + muteClass + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M15 12L11 16L9 14"/></svg>';
         html = calCheckSvg + (hasVal ? `<span class="cell-value ${stateClass}">${formatDate(t.due_date)}</span>` : `<span class="cell-value empty" title="Click to set date">—</span>`);
@@ -1173,8 +1315,13 @@
       return;
     }
     const src = source != null ? source : 'project';
-    const { showCompleted } = getDisplayProperties(src);
-    const toShow = showCompleted ? tasks : tasks.filter((t) => !isTaskCompleted(t));
+    const { showCompleted, sortBy, manualSort, manualOrder } = getDisplayProperties(src);
+    let toShow = showCompleted ? tasks : tasks.filter((t) => !isTaskCompleted(t));
+    if (manualSort && manualOrder && manualOrder.length) {
+      toShow = orderTasksByManual(toShow, manualOrder);
+    } else if (sortBy && sortBy.length) {
+      toShow = orderTasksBySort(toShow, sortBy);
+    }
     displayedTasks = [...toShow];
     if (!toShow.length) {
       center.innerHTML = '<p class="placeholder">No tasks.</p>';
@@ -1188,6 +1335,45 @@
     toShow.forEach((t) => ul.appendChild(buildTaskRow(t)));
     center.innerHTML = '';
     center.appendChild(ul);
+    if (manualSort) setupTaskListDrag(center, ul, src);
+  }
+
+  function setupTaskListDrag(center, listEl, source) {
+    const ctx = source != null ? source : 'project';
+    listEl.querySelectorAll('.task-row').forEach((row) => {
+      const handle = row.querySelector('.task-row-move');
+      if (!handle) return;
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        let dragged = row;
+        row.classList.add('dragging');
+        const onMove = (e2) => {
+          if (!dragged) return;
+          const items = Array.from(listEl.querySelectorAll('.task-row'));
+          const y = e2.clientY;
+          let idx = items.findIndex((item) => item.getBoundingClientRect().top + item.offsetHeight / 2 > y);
+          if (idx < 0) idx = items.length;
+          const curIdx = items.indexOf(dragged);
+          if (curIdx !== idx && idx !== curIdx + 1) {
+            if (idx > curIdx) idx--;
+            listEl.insertBefore(dragged, listEl.children[idx]);
+          }
+        };
+        const onUp = () => {
+          if (dragged) dragged.classList.remove('dragging');
+          dragged = null;
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          const newOrder = Array.from(listEl.querySelectorAll('.task-row')).map((r) => r.dataset.id).filter(Boolean);
+          const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, sortBy: sb } = getDisplayProperties(ctx);
+          saveDisplayProperties(ctx, o, v, sf, sc, sh, sb, true, newOrder);
+          refreshTaskList();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    });
   }
 
   function onTaskClick(ev) {

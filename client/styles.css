@@ -383,6 +383,66 @@ body {
   font-size: 13px;
 }
 
+/* Sort section in display dropdown */
+.display-sort-ladder {
+  padding: 0 14px 8px;
+}
+.display-sort-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.display-sort-row .display-sort-field {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+}
+.display-sort-row .display-sort-dir {
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+}
+.display-sort-row .display-sort-remove {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+.display-sort-row .display-sort-remove:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.display-sort-add {
+  margin: 0 14px 10px;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px dashed var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.display-sort-add:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
 /* Task list in center: rows with columns */
 .task-list {
   list-style: none;
@@ -409,6 +469,27 @@ body {
 }
 .task-list .task-row .task-cell:first-child {
   margin-left: 0;
+}
+.task-list .task-row .task-row-move {
+  flex-shrink: 0;
+  cursor: grab;
+  padding: 2px 4px 2px 0;
+  margin-right: 4px;
+  color: var(--text-muted);
+}
+.task-list .task-row .task-row-move + .task-cell {
+  margin-left: 0;
+}
+.task-list .task-row .task-row-move:active {
+  cursor: grabbing;
+}
+.task-list .task-row .task-row-move .task-move-icon {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+.task-list .task-row.dragging {
+  opacity: 0.6;
 }
 .task-list .task-row .task-cell.title-cell {
   margin-left: 8px;
@@ -443,15 +524,21 @@ body {
 }
 .task-list .task-row .task-cell .cell-value.empty {
   color: var(--text-muted);
+  opacity: 0.22;
 }
 .task-list .task-row .task-cell .date-icon.empty {
   color: var(--text-muted);
+  opacity: 0.22;
 }
 .task-list .task-row .task-cell .project-icon-wrap.empty {
   color: var(--text-muted);
+  opacity: 0.22;
 }
 .task-list .task-row .task-cell .project-icon-wrap.empty .project-icon {
   color: inherit;
+}
+.task-list .task-row .task-cell .description-icon-wrap.empty {
+  opacity: 0.22;
 }
 .task-list .task-row .task-cell.title-cell .task-title-edit-input {
   width: 100%;
