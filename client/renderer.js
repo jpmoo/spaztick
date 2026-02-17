@@ -986,10 +986,11 @@
     });
   }
 
-  // --- Display settings (task properties & order) by context: inbox, project, list:<id> ---
+  // --- Display settings (task properties & order) by context: inbox, project, list:<id>, tag:<name> ---
   function displayKey(source) {
     if (source === 'inbox') return 'inbox';
     if (typeof source === 'string' && source.startsWith('list:')) return source;
+    if (typeof source === 'string' && source.startsWith('tag:')) return source;
     return 'project';
   }
 
@@ -1328,6 +1329,9 @@
     else if (lastTaskSource && lastTaskSource.startsWith('list:')) {
       const listId = lastTaskSource.slice(5);
       if (listId) loadListTasks(listId);
+    } else if (lastTaskSource && lastTaskSource.startsWith('tag:')) {
+      const tagName = lastTaskSource.slice(4);
+      if (tagName) loadTagTasks(tagName);
     } else if (lastTaskSource) loadProjectTasks(lastTaskSource);
   }
 
@@ -1347,6 +1351,19 @@
       renderTaskList(Array.isArray(tasks) ? tasks : [], list);
     } catch (e) {
       center.innerHTML = `<p class="placeholder">${e.message || 'Failed to load list tasks.'}</p>`;
+    }
+  }
+
+  async function loadTagTasks(tagName) {
+    const center = document.getElementById('center-content');
+    if (!center) return;
+    center.innerHTML = '<p class="placeholder">Loading…</p>';
+    try {
+      const tasks = await api(`/api/external/tasks?tag=${encodeURIComponent(tagName)}&limit=500`);
+      const source = lastTaskSource && lastTaskSource.startsWith('tag:') ? lastTaskSource : 'tag:' + tagName;
+      renderTaskList(Array.isArray(tasks) ? tasks : [], source);
+    } catch (e) {
+      center.innerHTML = `<p class="placeholder">${e.message || 'Failed to load tasks for tag.'}</p>`;
     }
   }
 
@@ -2105,6 +2122,12 @@
     });
   }
 
+  function formatTitleWithTagPills(titleText) {
+    if (!titleText) return '';
+    const escaped = titleText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return escaped.replace(/(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
+  }
+
   function buildTaskRow(t) {
     const source = lastTaskSource != null ? lastTaskSource : 'project';
     const { order, visible, showFlagged, showHighlightDue, showPriority, manualSort } = getDisplayProperties(source);
@@ -2130,12 +2153,6 @@
     const documentIconSvg = '<svg class="description-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.29289 1.29289C9.48043 1.10536 9.73478 1 10 1H18C19.6569 1 21 2.34315 21 4V20C21 21.6569 19.6569 23 18 23H6C4.34315 23 3 21.6569 3 20V8C3 7.73478 3.10536 7.48043 3.29289 7.29289L9.29289 1.29289ZM18 3H11V8C11 8.55228 10.5523 9 10 9H5V20C5 20.5523 5.44772 21 6 21H18C18.5523 21 19 20.5523 19 20V4C19 3.44772 18.5523 3 18 3ZM6.41421 7H9V4.41421L6.41421 7ZM7 13C7 12.4477 7.44772 12 8 12H16C16.5523 12 17 12.4477 17 13C17 13.5523 16.5523 14 16 14H8C7.44772 14 7 13.4477 7 13ZM7 17C7 16.4477 7.44772 16 8 16H16C16.5523 16 17 16.4477 17 17C17 17.5523 16.5523 18 16 18H8C7.44772 18 7 17.5523 7 17Z"/></svg>';
     const tagIconSvg = '<svg class="tags-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C4 4.44772 4.44772 4 5 4H11.1716C11.4368 4 11.6911 4.10536 11.8787 4.29289L19.8787 12.2929C20.2692 12.6834 20.2692 13.3166 19.8787 13.7071L13.7071 19.8787C13.3166 20.2692 12.6834 20.2692 12.2929 19.8787L4.29289 11.8787C4.10536 11.6911 4 11.4368 4 11.1716V5ZM5 2C3.34315 2 2 3.34315 2 5L2 11.1716C2 11.9672 2.31607 12.7303 2.87868 13.2929L10.8787 21.2929C12.0503 22.4645 13.9497 22.4645 15.1213 21.2929L21.2929 15.1213C22.4645 13.9497 22.4645 12.0503 21.2929 10.8787L13.2929 2.87868C12.7303 2.31607 11.9672 2 11.1716 2H5ZM8 10C9.10457 10 10 9.10457 10 8C10 6.89543 9.10457 6 8 6C6.89543 6 6 6.89543 6 8C6 9.10457 6.89543 10 8 10Z"/></svg>';
     const refreshIconSvg = '<svg class="recurrence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4.06 13C4.02 12.67 4 12.34 4 12c0-4.42 3.58-8 8-8 2.5 0 4.73 1.15 6.2 2.94M19.94 11C19.98 11.33 20 11.66 20 12c0 4.42-3.58 8-8 8-2.5 0-4.73-1.15-6.2-2.94M9 17H6v.29M18.2 4v2.94M18.2 6.94V7L15.2 7M6 20v-2.71"/></svg>';
-
-    function formatTitleWithTagPills(titleText) {
-      if (!titleText) return '';
-      const escaped = titleText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      return escaped.replace(/(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
-    }
 
     function addCell(key, html, opts) {
       if (!html && !(opts && opts.descriptionTaskId != null)) return;
@@ -3152,8 +3169,16 @@
     if (tagsListEl) tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     li.classList.add('selected');
+    lastTaskSource = 'tag:' + tag;
+    updateCenterHeaderForSource();
+    const centerTitle = document.getElementById('center-title');
+    if (centerTitle) centerTitle.textContent = '#' + tag;
+    const centerDesc = document.getElementById('center-description');
+    if (centerDesc) centerDesc.textContent = '';
+    document.getElementById('center-content').innerHTML = '<p class="placeholder">Loading…</p>';
     document.getElementById('inspector-title').textContent = 'Tag';
     loadTagDetails(tag);
+    loadTagTasks(tag);
   }
 
   function loadTagDetails(tagName) {
@@ -3199,7 +3224,12 @@
             loadTags();
             titleEl.textContent = 'Inspector';
             div.innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
-            if (lastTaskSource) refreshTaskList();
+            if (lastTaskSource === 'tag:' + tagName) {
+              lastTaskSource = 'inbox';
+              const centerTitle = document.getElementById('center-title');
+              if (centerTitle) centerTitle.textContent = 'Inbox';
+              loadInboxTasks();
+            } else if (lastTaskSource) refreshTaskList();
           } else {
             alert(data.message || 'Delete failed.');
           }
@@ -3228,7 +3258,12 @@
             currentInspectorTag = newName;
             loadTags();
             loadTagDetails(newName);
-            if (lastTaskSource) refreshTaskList();
+            if (lastTaskSource === 'tag:' + tagName) {
+              lastTaskSource = 'tag:' + newName;
+              const centerTitle = document.getElementById('center-title');
+              if (centerTitle) centerTitle.textContent = '#' + newName;
+              loadTagTasks(newName);
+            } else if (lastTaskSource) refreshTaskList();
             const tagLi = tagsListEl && tagsListEl.querySelector(`.nav-item[data-tag="${newName.replace(/"/g, '\\"')}"]`);
             if (tagLi) {
               tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));

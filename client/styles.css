@@ -1732,7 +1732,7 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   padding: 14px 16px 12px;
 }
 .inspector-immediate-note {
-  margin: -5px 0 calc(0.85em + 5px) 0;
+  margin: -10px 0 calc(0.85em + 10px) 0;
   padding: 0.5em 0 0;
   font-size: 11px;
   line-height: 1.4;
