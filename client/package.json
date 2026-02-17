@@ -2,10 +2,12 @@
   "name": "Spaztick",
   "version": "0.1.0",
   "description": "Spaztick desktop client — tasks and projects with an AI assistant",
+  "author": "J. P. Moore, with Cursor AI",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build": "electron-builder"
+    "build": "electron-builder",
+    "build:unsigned": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder"
   },
   "devDependencies": {
     "electron": "^28.0.0",
@@ -16,6 +18,9 @@
     "productName": "Spaztick",
     "directories": {
       "output": "dist"
+    },
+    "mac": {
+      "identity": null
     }
   }
 }

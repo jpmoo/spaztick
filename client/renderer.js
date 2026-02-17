@@ -142,6 +142,10 @@
   const descriptionEditTextarea = document.getElementById('description-edit-textarea');
   const descriptionNotesLines = document.getElementById('description-notes-lines');
   const descriptionModalSave = document.getElementById('description-modal-save');
+  const descriptionTabEdit = document.getElementById('description-tab-edit');
+  const descriptionTabPreview = document.getElementById('description-tab-preview');
+  const descriptionEditPanel = document.getElementById('description-edit-panel');
+  const descriptionPreviewPanel = document.getElementById('description-preview-panel');
   const connectionIndicator = document.getElementById('connection-indicator');
   const themeBtn = document.getElementById('theme-btn');
   const inboxItem = document.getElementById('inbox-item');
@@ -686,13 +690,33 @@
       }
     });
   }
-  if (descriptionEditTextarea) {
-    attachHashtagAutocomplete(descriptionEditTextarea);
-    descriptionEditTextarea.addEventListener('input', scheduleDescriptionPreview);
-    descriptionEditTextarea.addEventListener('change', scheduleDescriptionPreview);
-  }
+  /* Notes textarea: no hashtag autocomplete — keeps typing/scrolling fast. Use # in text freely; autocomplete only on task title. */
   if (descriptionNotesLines) {
     descriptionNotesLines.addEventListener('change', onDescriptionPreviewCheckboxChange);
+  }
+  function switchDescriptionModalToEdit() {
+    if (descriptionTabEdit) descriptionTabEdit.classList.add('active');
+    if (descriptionTabPreview) descriptionTabPreview.classList.remove('active');
+    if (descriptionTabEdit) descriptionTabEdit.setAttribute('aria-selected', 'true');
+    if (descriptionTabPreview) descriptionTabPreview.setAttribute('aria-selected', 'false');
+    if (descriptionEditPanel) descriptionEditPanel.classList.remove('hidden');
+    if (descriptionPreviewPanel) descriptionPreviewPanel.classList.add('hidden');
+    if (descriptionEditTextarea) descriptionEditTextarea.focus();
+  }
+  function switchDescriptionModalToPreview() {
+    updateDescriptionPreview();
+    if (descriptionTabEdit) descriptionTabEdit.classList.remove('active');
+    if (descriptionTabPreview) descriptionTabPreview.classList.add('active');
+    if (descriptionTabEdit) descriptionTabEdit.setAttribute('aria-selected', 'false');
+    if (descriptionTabPreview) descriptionTabPreview.setAttribute('aria-selected', 'true');
+    if (descriptionEditPanel) descriptionEditPanel.classList.add('hidden');
+    if (descriptionPreviewPanel) descriptionPreviewPanel.classList.remove('hidden');
+  }
+  if (descriptionTabEdit) {
+    descriptionTabEdit.addEventListener('click', () => switchDescriptionModalToEdit());
+  }
+  if (descriptionTabPreview) {
+    descriptionTabPreview.addEventListener('click', () => switchDescriptionModalToPreview());
   }
 
   const TAG_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -1682,13 +1706,31 @@
       if (weekdaysSubmenu.classList.contains('visible')) hideWeekdaysSubmenu();
       else showWeekdaysSubmenu();
     }
+    let weekdaysSubmenuHideTimer = null;
+    function scheduleHideWeekdaysSubmenu() {
+      if (weekdaysSubmenuHideTimer) clearTimeout(weekdaysSubmenuHideTimer);
+      weekdaysSubmenuHideTimer = setTimeout(() => {
+        weekdaysSubmenuHideTimer = null;
+        hideWeekdaysSubmenu();
+      }, 200);
+    }
+    function cancelHideWeekdaysSubmenu() {
+      if (weekdaysSubmenuHideTimer) {
+        clearTimeout(weekdaysSubmenuHideTimer);
+        weekdaysSubmenuHideTimer = null;
+      }
+    }
     weekdaysTrigger.addEventListener('click', toggleWeekdaysSubmenu);
-    weekdaysWrap.addEventListener('mouseenter', showWeekdaysSubmenu);
-    weekdaysWrap.addEventListener('mouseleave', (e) => {
-      if (!weekdaysSubmenu.contains(e.relatedTarget)) hideWeekdaysSubmenu();
+    weekdaysWrap.addEventListener('mouseenter', () => {
+      cancelHideWeekdaysSubmenu();
+      showWeekdaysSubmenu();
     });
+    weekdaysWrap.addEventListener('mouseleave', (e) => {
+      if (!weekdaysSubmenu.contains(e.relatedTarget)) scheduleHideWeekdaysSubmenu();
+    });
+    weekdaysSubmenu.addEventListener('mouseenter', cancelHideWeekdaysSubmenu);
     weekdaysSubmenu.addEventListener('mouseleave', (e) => {
-      if (!weekdaysWrap.contains(e.relatedTarget)) hideWeekdaysSubmenu();
+      if (!weekdaysWrap.contains(e.relatedTarget)) scheduleHideWeekdaysSubmenu();
     });
     dropdown.appendChild(weekdaysWrap);
 
@@ -1967,18 +2009,8 @@
   function updateDescriptionPreview() {
     if (!descriptionNotesLines || !descriptionEditTextarea) return;
     const raw = descriptionEditTextarea.value;
-    descriptionNotesLines.innerHTML = raw.trim() ? renderMarkdown(raw) : '<p class="description-preview-empty">Type above to see a live preview of headings, checkboxes, and #tags.</p>';
+    descriptionNotesLines.innerHTML = raw.trim() ? renderMarkdown(raw) : '<p class="description-preview-empty">No content. Use the Edit tab to add notes.</p>';
     // Checkbox toggles are handled by a single delegated listener on descriptionNotesLines (see setup below).
-  }
-
-  /** Debounced preview for typing: avoids re-rendering on every keystroke. */
-  let descriptionPreviewDebounceTimer = null;
-  function scheduleDescriptionPreview() {
-    if (descriptionPreviewDebounceTimer != null) clearTimeout(descriptionPreviewDebounceTimer);
-    descriptionPreviewDebounceTimer = setTimeout(() => {
-      descriptionPreviewDebounceTimer = null;
-      updateDescriptionPreview();
-    }, 120);
   }
 
   /** Single delegated handler for checkbox toggles in the preview (no per-render listeners). */
@@ -2007,7 +2039,7 @@
     descriptionModalForNewTask = false;
     descriptionModalTaskId = taskId;
     if (descriptionEditTextarea) descriptionEditTextarea.value = desc;
-    updateDescriptionPreview();
+    switchDescriptionModalToEdit();
     if (descriptionModalOverlay) {
       descriptionModalOverlay.classList.remove('hidden');
       descriptionModalOverlay.setAttribute('aria-hidden', 'false');
@@ -2026,7 +2058,7 @@
     descriptionModalTaskId = null;
     descriptionModalForNewTask = true;
     if (descriptionEditTextarea) descriptionEditTextarea.value = newTaskState.description || '';
-    updateDescriptionPreview();
+    switchDescriptionModalToEdit();
     if (descriptionModalOverlay) {
       descriptionModalOverlay.classList.remove('hidden');
       descriptionModalOverlay.setAttribute('aria-hidden', 'false');
@@ -3206,6 +3238,7 @@
       renderBoardRegions(boardId);
       renderBoardCards(boardId);
       renderBoardConnections(boardId);
+      updateBoardAddTaskBadge(boardId);
     });
   }
 
@@ -3334,6 +3367,7 @@
       syncBoardCardsToQualifyingTasks(boardId);
       renderBoardRegions(boardId);
       renderBoardCards(boardId);
+      updateBoardAddTaskBadge(boardId);
     });
     renderBoardGrid();
     setupBoardCanvasPanZoom();
@@ -3556,12 +3590,26 @@
       renderBoardGrid();
     };
   }
+  function updateBoardAddTaskBadge(boardId) {
+    const badge = document.getElementById('board-add-task-badge');
+    if (!boardAddTaskBtn || !badge) return;
+    const cards = getBoardCards(boardId);
+    const placedIds = new Set(cards.map((c) => c.taskId));
+    (getBoardRegions(boardId) || []).forEach((r) => (r.lines || []).forEach((line) => placedIds.add(String(line.taskId))));
+    const tasks = boardTasksCache[boardId] || [];
+    const count = tasks.filter((t) => !placedIds.has(String(t.id))).length;
+    badge.textContent = String(count > 99 ? '99+' : count);
+    badge.classList.toggle('hidden', count === 0);
+    badge.setAttribute('aria-hidden', count === 0 ? 'true' : 'false');
+  }
+
   function setupBoardAddTask(boardId) {
     if (!boardAddTaskBtn || !boardAddTaskPopover || !boardAddTaskListEl) return;
     boardAddTaskBtn.onclick = (e) => {
       e.stopPropagation();
       const open = !boardAddTaskPopover.classList.toggle('hidden');
       if (open) {
+        updateBoardAddTaskBadge(boardId);
         const board = getBoards().find((b) => String(b.id) === String(boardId));
         const cards = getBoardCards(boardId);
         const placedIds = new Set(cards.map((c) => c.taskId));
@@ -3586,6 +3634,7 @@
             cards.push(newCard);
             setBoardCards(boardId, cards);
             renderBoardCards(boardId);
+            updateBoardAddTaskBadge(boardId);
             boardAddTaskPopover.classList.add('hidden');
           });
         });
@@ -4204,6 +4253,7 @@
         setBoardCards(boardId, cards);
         renderBoardCards(boardId);
         renderBoardConnections(boardId);
+        updateBoardAddTaskBadge(boardId);
       });
     }
     if (header) {
@@ -4560,6 +4610,7 @@
     dd.querySelectorAll('.hashtag-autocomplete-item').forEach((el, i) => el.classList.toggle('selected', i === 0));
   }
 
+  let hashtagAutocompleteInputTimeout = null;
   function attachHashtagAutocomplete(el) {
     if (!el || el.dataset.hashtagAutocomplete === 'true') return;
     el.dataset.hashtagAutocomplete = 'true';
@@ -4570,14 +4621,20 @@
       const textBefore = value.substring(0, start);
       const lastHash = textBefore.lastIndexOf('#');
       if (lastHash === -1) {
+        if (hashtagAutocompleteInputTimeout) clearTimeout(hashtagAutocompleteInputTimeout);
+        hashtagAutocompleteInputTimeout = null;
         hideHashtagAutocomplete();
         return;
       }
       const fragment = textBefore.substring(lastHash + 1);
       if (!/^[a-zA-Z0-9_-]*$/.test(fragment)) {
+        if (hashtagAutocompleteInputTimeout) clearTimeout(hashtagAutocompleteInputTimeout);
+        hashtagAutocompleteInputTimeout = null;
         hideHashtagAutocomplete();
         return;
       }
+      // Debounce dropdown show/update so we don't rebuild DOM on every keystroke (fixes slow typing/scroll).
+      if (hashtagAutocompleteInputTimeout) clearTimeout(hashtagAutocompleteInputTimeout);
       const tags = cachedTagNames.length ? cachedTagNames : [];
       const onSelect = (tag) => {
         const val = el.value || '';
@@ -4591,7 +4648,17 @@
         el.setSelectionRange(newPos, newPos);
         el.dispatchEvent(new Event('input', { bubbles: true }));
       };
-      showHashtagAutocomplete(el, fragment, tags, onSelect);
+      hashtagAutocompleteInputTimeout = setTimeout(() => {
+        hashtagAutocompleteInputTimeout = null;
+        const v = el.value || '';
+        const st = el.selectionStart != null ? el.selectionStart : v.length;
+        const textBefore = v.substring(0, st);
+        const lastHash = textBefore.lastIndexOf('#');
+        if (lastHash === -1) return;
+        const frag = textBefore.substring(lastHash + 1);
+        if (!/^[a-zA-Z0-9_-]*$/.test(frag)) return;
+        showHashtagAutocomplete(el, frag, tags, onSelect);
+      }, 100);
     });
 
     el.addEventListener('keydown', (e) => {
@@ -6566,8 +6633,113 @@
   const navigatorAddTaskBtn = document.getElementById('navigator-add-task-btn');
   const navigatorSearchInput = document.getElementById('navigator-search-input');
   const navigatorSearchBtn = document.getElementById('navigator-search-btn');
+  const navigatorFavoritesBtn = document.getElementById('navigator-favorites-btn');
+  const navigatorFavoritesPopover = document.getElementById('navigator-favorites-popover');
+  const navigatorFavoritesList = document.getElementById('navigator-favorites-list');
   if (navigatorAddTaskBtn) {
     navigatorAddTaskBtn.addEventListener('click', () => openNewTaskModal());
+  }
+  function closeNavigatorFavoritesPopover() {
+    if (navigatorFavoritesPopover) navigatorFavoritesPopover.classList.add('hidden');
+    if (navigatorFavoritesPopover) navigatorFavoritesPopover.setAttribute('aria-hidden', 'true');
+    if (navigatorFavoritesBtn) navigatorFavoritesBtn.setAttribute('aria-expanded', 'false');
+  }
+  function fillNavigatorFavoritesPopover() {
+    if (!navigatorFavoritesList) return;
+    const favs = getFavorites();
+    const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const iconSvg = (type) => type === 'list' ? NAV_LIST_ICON_SVG : type === 'tag' ? NAV_TAG_ICON_SVG : type === 'board' ? NAV_BOARD_ICON_SVG : NAV_PROJECT_ICON_SVG;
+    if (!favs.length) {
+      navigatorFavoritesList.innerHTML = '<li class="navigator-favorites-empty">No favorites yet. Add from the left panel.</li>';
+      return;
+    }
+    navigatorFavoritesList.innerHTML = favs.map((f) => {
+      const name = escape(f.label || f.id || '');
+      const idEsc = escape(f.id || '');
+      const icon = iconSvg(f.type);
+      return `<li class="navigator-favorites-item" data-type="${escape(f.type)}" data-id="${idEsc}" data-label="${name}"><span class="navigator-fav-icon">${icon}</span><span>${name}</span></li>`;
+    }).join('');
+    navigatorFavoritesList.querySelectorAll('.navigator-favorites-item').forEach((el) => {
+      el.addEventListener('click', () => {
+        const type = el.dataset.type;
+        const id = el.dataset.id;
+        const label = el.dataset.label || '';
+        closeNavigatorFavoritesPopover();
+        if (type === 'board' && id) {
+          openBoardView(id);
+          return;
+        }
+        if (type === 'tag' && id) {
+          currentInspectorTag = id;
+          document.getElementById('inspector-title').textContent = 'Tag';
+          loadTagDetails(id);
+          const tagLi = tagsListEl && tagsListEl.querySelector(`.nav-item[data-tag="${id.replace(/"/g, '\\"')}"]`);
+          if (tagLi) {
+            if (inboxItem) inboxItem.classList.remove('selected');
+            if (projectsList) projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+            if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+            if (tagsListEl) tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+            if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+            tagLi.classList.add('selected');
+          }
+          return;
+        }
+        if (type === 'project' && id) {
+          lastTaskSource = id;
+          document.getElementById('center-title').textContent = label;
+          const centerDesc = document.getElementById('center-description');
+          if (centerDesc) centerDesc.textContent = '';
+          document.getElementById('inspector-title').textContent = 'Project';
+          document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
+          updateCenterHeaderForSource();
+          loadProjectDetails(id);
+          loadProjectTasks(id);
+          if (inboxItem) inboxItem.classList.remove('selected');
+          if (projectsList) projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+          if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+          if (tagsListEl) tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+          if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+          const projLi = projectsList && projectsList.querySelector(`.nav-item[data-id="${id.replace(/"/g, '\\"')}"]`);
+          if (projLi) projLi.classList.add('selected');
+          return;
+        }
+        if (type === 'list' && id) {
+          lastTaskSource = 'list:' + id;
+          document.getElementById('center-title').textContent = label;
+          const centerDesc = document.getElementById('center-description');
+          if (centerDesc) centerDesc.textContent = '';
+          document.getElementById('inspector-title').textContent = 'List';
+          document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
+          updateCenterHeaderForSource();
+          loadListTasks(id);
+          loadListDetails(id);
+          if (inboxItem) inboxItem.classList.remove('selected');
+          if (projectsList) projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+          if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+          if (tagsListEl) tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+          if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+          const listLi = listsListEl && listsListEl.querySelector(`.nav-item[data-list-id="${id.replace(/"/g, '\\"')}"]`);
+          if (listLi) listLi.classList.add('selected');
+          return;
+        }
+      });
+    });
+  }
+  if (navigatorFavoritesBtn && navigatorFavoritesPopover) {
+    navigatorFavoritesBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const isOpen = !navigatorFavoritesPopover.classList.toggle('hidden');
+      navigatorFavoritesBtn.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      navigatorFavoritesPopover.setAttribute('aria-hidden', isOpen ? 'false' : 'true');
+      if (isOpen) fillNavigatorFavoritesPopover();
+    });
+    document.addEventListener('click', (e) => {
+      if (navigatorFavoritesPopover && !navigatorFavoritesPopover.classList.contains('hidden') &&
+          !navigatorFavoritesPopover.contains(e.target) && !navigatorFavoritesBtn.contains(e.target)) {
+        closeNavigatorFavoritesPopover();
+      }
+    });
+    if (navigatorFavoritesPopover) navigatorFavoritesPopover.addEventListener('click', (e) => e.stopPropagation());
   }
   if (navigatorSearchBtn) navigatorSearchBtn.addEventListener('click', () => runSearch(navigatorSearchInput && navigatorSearchInput.value));
   if (navigatorSearchInput) {
