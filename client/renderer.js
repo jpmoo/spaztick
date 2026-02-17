@@ -130,7 +130,6 @@
   const descriptionEditTextarea = document.getElementById('description-edit-textarea');
   const descriptionNotesLines = document.getElementById('description-notes-lines');
   const descriptionModalSave = document.getElementById('description-modal-save');
-  let descriptionActiveLineIndex = null;
   const connectionIndicator = document.getElementById('connection-indicator');
   const themeBtn = document.getElementById('theme-btn');
   const inboxItem = document.getElementById('inbox-item');
@@ -245,8 +244,8 @@
     out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
     return out;
   }
-  /** Render a single line for display: headings, task checkbox, or inline. Returns { html, isCheckbox, checked } for checkbox lines. */
-  function renderMarkdownLine(line) {
+  /** Render a single line for display: headings, task checkbox, or inline. lineIndex optional, for checkbox data-line-index. */
+  function renderMarkdownLine(line, lineIndex) {
     const s = line;
     const headingMatch = s.match(/^(#{1,6})\s+(.*)$/);
     if (headingMatch) {
@@ -258,8 +257,9 @@
     if (checkboxMatch) {
       const checked = checkboxMatch[3].toLowerCase() === 'x';
       const rest = renderMarkdownInline(checkboxMatch[5]);
+      const idx = lineIndex != null ? String(lineIndex) : '';
       return {
-        html: `<label class="description-line-checkbox"><input type="checkbox" ${checked ? 'checked' : ''} data-line-index /><span class="description-line-checkbox-text">${rest}</span></label>`,
+        html: `<label class="description-line-checkbox"><input type="checkbox" ${checked ? 'checked' : ''} data-line-index="${escapeHtml(idx)}" /><span class="description-line-checkbox-text">${rest}</span></label>`,
         isCheckbox: true,
         checked,
       };
@@ -273,7 +273,7 @@
     const lines = text.split('\n');
     const parts = [];
     for (let i = 0; i < lines.length; i++) {
-      const { html } = renderMarkdownLine(lines[i]);
+      const { html } = renderMarkdownLine(lines[i], i);
       parts.push(html);
     }
     return parts.join('');
@@ -718,6 +718,8 @@
   }
   if (descriptionEditTextarea) {
     attachHashtagAutocomplete(descriptionEditTextarea);
+    descriptionEditTextarea.addEventListener('input', updateDescriptionPreview);
+    descriptionEditTextarea.addEventListener('change', updateDescriptionPreview);
   }
 
   const TAG_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -1960,100 +1962,24 @@
   let descriptionModalTaskId = null;
   let descriptionModalForNewTask = false;
 
-  function getDescriptionLines() {
-    const raw = descriptionEditTextarea ? descriptionEditTextarea.value : '';
-    return raw.split('\n');
-  }
-  function setDescriptionLines(lines) {
-    if (descriptionEditTextarea) descriptionEditTextarea.value = lines.join('\n');
-  }
-
-  function buildDescriptionNotesView() {
+  function updateDescriptionPreview() {
     if (!descriptionNotesLines || !descriptionEditTextarea) return;
-    const lines = getDescriptionLines();
-    descriptionNotesLines.innerHTML = '';
-    for (let i = 0; i < lines.length; i++) {
-      const wrap = document.createElement('div');
-      wrap.className = 'description-line-wrap';
-      wrap.dataset.lineIndex = String(i);
-      if (i === descriptionActiveLineIndex) {
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.className = 'description-line-input';
-        input.value = lines[i];
-        input.dataset.lineIndex = String(i);
-        input.setAttribute('aria-label', 'Edit line ' + (i + 1));
-        wrap.appendChild(input);
-        input.addEventListener('blur', () => {
-          const idx = parseInt(input.dataset.lineIndex, 10);
-          const newLines = getDescriptionLines();
-          if (idx >= 0 && idx < newLines.length) newLines[idx] = input.value;
-          else if (idx === newLines.length) newLines.push(input.value);
-          setDescriptionLines(newLines);
-          descriptionActiveLineIndex = null;
-          buildDescriptionNotesView();
-        });
-        input.addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            input.blur();
-          }
-        });
-        attachHashtagAutocomplete(input);
-        descriptionNotesLines.appendChild(wrap);
-        setTimeout(() => input.focus(), 0);
-      } else {
-        const { html, isCheckbox } = renderMarkdownLine(lines[i]);
-        wrap.innerHTML = html;
-        const inner = wrap.firstElementChild;
-        if (inner) {
-          inner.dataset.lineIndex = String(i);
-          if (!isCheckbox) {
-            wrap.classList.add('description-line-clickable');
-            wrap.addEventListener('click', (e) => {
-              if (e.target.closest('a')) return;
-              descriptionActiveLineIndex = i;
-              buildDescriptionNotesView();
-            });
-          } else {
-            const cb = wrap.querySelector('input[type="checkbox"]');
-            if (cb) {
-              cb.dataset.lineIndex = String(i);
-              cb.addEventListener('click', (e) => e.stopPropagation());
-              cb.addEventListener('change', () => {
-                const idx = parseInt(cb.dataset.lineIndex, 10);
-                const newLines = getDescriptionLines();
-                const line = newLines[idx] || '';
-                const m = line.match(/^(\s*[-*])\s+\[([ xX])\]\s+(.*)$/);
-                if (m) {
-                  newLines[idx] = m[1] + ' [' + (m[2].toLowerCase() === 'x' ? ' ' : 'x') + '] ' + m[3];
-                  setDescriptionLines(newLines);
-                  buildDescriptionNotesView();
-                }
-              });
-            }
-            wrap.addEventListener('click', (e) => {
-              if (e.target.type === 'checkbox') return;
-              e.preventDefault();
-              descriptionActiveLineIndex = i;
-              buildDescriptionNotesView();
-            });
-          }
+    const raw = descriptionEditTextarea.value;
+    descriptionNotesLines.innerHTML = raw.trim() ? renderMarkdown(raw) : '<p class="description-preview-empty">Type above to see a live preview of headings, checkboxes, and #tags.</p>';
+    descriptionNotesLines.querySelectorAll('input[type="checkbox"][data-line-index]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const idx = parseInt(cb.getAttribute('data-line-index'), 10);
+        if (Number.isNaN(idx)) return;
+        const lines = descriptionEditTextarea.value.split('\n');
+        const line = lines[idx] || '';
+        const m = line.match(/^(\s*[-*])\s+\[([ xX])\]\s+(.*)$/);
+        if (m) {
+          lines[idx] = m[1] + ' [' + (m[2].toLowerCase() === 'x' ? ' ' : 'x') + '] ' + m[3];
+          descriptionEditTextarea.value = lines.join('\n');
+          updateDescriptionPreview();
         }
-        descriptionNotesLines.appendChild(wrap);
-      }
-    }
-    if (descriptionActiveLineIndex == null && lines.length === 0) {
-      const wrap = document.createElement('div');
-      wrap.className = 'description-line-wrap description-line-clickable description-line-placeholder';
-      wrap.textContent = 'Click to add notes (Markdown: # heading, - [ ] checkbox, **bold**, etc.)';
-      wrap.addEventListener('click', () => {
-        setDescriptionLines(['']);
-        descriptionActiveLineIndex = 0;
-        buildDescriptionNotesView();
       });
-      descriptionNotesLines.appendChild(wrap);
-    }
+    });
   }
 
   function openDescriptionModal(ev, cell) {
@@ -2065,17 +1991,16 @@
     descriptionModalForNewTask = false;
     descriptionModalTaskId = taskId;
     if (descriptionEditTextarea) descriptionEditTextarea.value = desc;
-    descriptionActiveLineIndex = null;
-    buildDescriptionNotesView();
+    updateDescriptionPreview();
     if (descriptionModalOverlay) {
       descriptionModalOverlay.classList.remove('hidden');
       descriptionModalOverlay.setAttribute('aria-hidden', 'false');
+      setTimeout(() => descriptionEditTextarea && descriptionEditTextarea.focus(), 50);
     }
   }
   function closeDescriptionModal() {
     descriptionModalTaskId = null;
     descriptionModalForNewTask = false;
-    descriptionActiveLineIndex = null;
     if (descriptionModalOverlay) {
       descriptionModalOverlay.classList.add('hidden');
       descriptionModalOverlay.setAttribute('aria-hidden', 'true');
@@ -2085,11 +2010,11 @@
     descriptionModalTaskId = null;
     descriptionModalForNewTask = true;
     if (descriptionEditTextarea) descriptionEditTextarea.value = newTaskState.description || '';
-    descriptionActiveLineIndex = null;
-    buildDescriptionNotesView();
+    updateDescriptionPreview();
     if (descriptionModalOverlay) {
       descriptionModalOverlay.classList.remove('hidden');
       descriptionModalOverlay.setAttribute('aria-hidden', 'false');
+      setTimeout(() => descriptionEditTextarea && descriptionEditTextarea.focus(), 50);
     }
   }
 
@@ -3699,7 +3624,7 @@
     ['recurrence', 'Recurrence'],
   ];
 
-  function escapeHtml(s) {
+  function escapeHtmlForInspector(s) {
     if (s == null) return '';
     return String(s).replace(/</g, '&lt;').replace(/\n/g, '<br>').replace(/"/g, '&quot;');
   }
@@ -3737,13 +3662,13 @@
   function formatInspectorValue(key, value) {
     if (value == null || value === '') return null;
     if (key === 'recurrence') return formatRecurrenceForDisplay(value);
-    if (key === 'description' || key === 'notes') return escapeHtml(value);
-    if (Array.isArray(value)) return value.length ? escapeHtml(value.join(', ')) : null;
-    if (typeof value === 'object') return escapeHtml(JSON.stringify(value));
+    if (key === 'description' || key === 'notes') return escapeHtmlForInspector(value);
+    if (Array.isArray(value)) return value.length ? escapeHtmlForInspector(value.join(', ')) : null;
+    if (typeof value === 'object') return escapeHtmlForInspector(JSON.stringify(value));
     if (key === 'flagged') return value ? 'Yes' : 'No';
     if (DATETIME_INSPECTOR_KEYS.includes(key)) return formatDateTimeForInspector(value);
     if (DATE_INSPECTOR_KEYS.includes(key)) return formatDate(value);
-    return escapeHtml(String(value));
+    return escapeHtmlForInspector(String(value));
   }
 
   function escapeAttr(s) {
