@@ -170,6 +170,29 @@ def get_task(task_id: str) -> dict[str, Any] | None:
         conn.close()
 
 
+def _tags_for_task(
+    conn: sqlite3.Connection,
+    task_id: str,
+    title: str | None = None,
+    description: str | None = None,
+    notes: str | None = None,
+) -> list[str]:
+    """Return tags for a task: from task_tags plus #word in title/description/notes (same semantics as tag_list)."""
+    from_tags = [r[0] for r in conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (task_id,))]
+    hashtag_re = re.compile(r"#([a-zA-Z0-9_-]+)")
+    seen = set(from_tags)
+    out = list(from_tags)
+    for text in (title or "", description or "", notes or ""):
+        if not text:
+            continue
+        for m in hashtag_re.finditer(text):
+            tagname = m.group(1)
+            if tagname not in seen:
+                seen.add(tagname)
+                out.append(tagname)
+    return out
+
+
 def _add_task_relations(conn: sqlite3.Connection, out: dict[str, Any]) -> None:
     tid = out["id"]
     # Only include projects that are active (archived projects hidden from task listing/inspector)
@@ -182,7 +205,10 @@ def _add_task_relations(conn: sqlite3.Connection, out: dict[str, Any]) -> None:
             (tid,),
         )
     ]
-    out["tags"] = [r[0] for r in conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (tid,))]
+    out["tags"] = _tags_for_task(
+        conn, tid,
+        out.get("title"), out.get("description"), out.get("notes"),
+    )
     out["depends_on"] = [r[0] for r in conn.execute("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?", (tid,))]
 
 
@@ -241,7 +267,7 @@ def list_tasks(
     due_by, available_by, available_or_due_by, completed_by, completed_after are ISO date strings (YYYY-MM-DD).
     title_contains: substring match on title (case-insensitive).
     search: substring match on title OR description (case-insensitive).
-    q: match tag exactly OR title OR description (substring). Use for combined/tag search.
+    q: match tag exactly OR title OR description OR notes (substring). Use for combined/tag search.
     sort_by: due_date, available_date, created_at, completed_at, title (default created_at DESC).
     priority: 0-3 to filter by exact priority (3 = highest).
     inbox: if True, only tasks that have no project (inbox = unassigned). Ignored if project_id/project_ids set.
@@ -272,17 +298,33 @@ def list_tasks(
             sql += " AND id IN (SELECT task_id FROM task_projects WHERE project_id = ?)"
             params.append(project_id)
         if use_tag_list:
+            tags = [((t or "").strip().lstrip("#").strip() or (t or "").strip()) for t in tags if (t or "").strip()]
             if (tag_mode or "any").strip().lower() == "all":
-                sql += f" AND (SELECT COUNT(DISTINCT tag) FROM task_tags WHERE task_id = tasks.id AND tag IN ({','.join('?' * len(tags))})) = ?"
-                params.extend(tags)
-                params.append(len(tags))
+                # Task must have each tag (in task_tags or #tag in title/description/notes)
+                for tname in tags:
+                    frag, p = _sql_hashtag_in_text_condition(tname)
+                    sql += f" AND (id IN (SELECT task_id FROM task_tags WHERE tag = ?) OR {frag})"
+                    params.append(tname)
+                    params.extend(p)
             else:
+                # Task has any of the tags (in task_tags or #tag in text)
                 placeholders = ",".join("?" * len(tags))
-                sql += f" AND id IN (SELECT task_id FROM task_tags WHERE tag IN ({placeholders}))"
+                tag_frag = f"id IN (SELECT task_id FROM task_tags WHERE tag IN ({placeholders}))"
+                text_frags = []
+                text_params: list[Any] = []
+                for tname in tags:
+                    frag, p = _sql_hashtag_in_text_condition(tname)
+                    text_frags.append(frag)
+                    text_params.extend(p)
+                sql += " AND (" + tag_frag + " OR " + " OR ".join(text_frags) + ")"
                 params.extend(tags)
+                params.extend(text_params)
         elif tag:
-            sql += " AND id IN (SELECT task_id FROM task_tags WHERE tag = ?)"
-            params.append(tag)
+            tag_val = (tag or "").strip().lstrip("#").strip() or (tag or "").strip()
+            frag, p = _sql_hashtag_in_text_condition(tag_val)
+            sql += f" AND (id IN (SELECT task_id FROM task_tags WHERE tag = ?) OR {frag})"
+            params.append(tag_val)
+            params.extend(p)
         if due_by:
             sql += " AND due_date IS NOT NULL AND date(due_date) <= date(?)"
             params.append(due_by)
@@ -309,8 +351,9 @@ def list_tasks(
             params.append(f"%{s}%")
         if q and q.strip():
             qv = q.strip()
-            sql += " AND (id IN (SELECT task_id FROM task_tags WHERE tag = ?) OR title LIKE ? OR description LIKE ?)"
+            sql += " AND (id IN (SELECT task_id FROM task_tags WHERE tag = ?) OR title LIKE ? OR description LIKE ? OR notes LIKE ?)"
             params.append(qv)
+            params.append(f"%{qv}%")
             params.append(f"%{qv}%")
             params.append(f"%{qv}%")
         if flagged is not None:
@@ -346,8 +389,13 @@ def list_tasks(
                     (tid,),
                 ).fetchall()
                 t["projects"] = [p[0] for p in projs]
+                t["tags"] = _tags_for_task(
+                    conn, tid,
+                    t.get("title"), t.get("description"), t.get("notes"),
+                )
             else:
                 t["projects"] = []
+                t["tags"] = []
         return out
     finally:
         conn.close()
@@ -495,6 +543,31 @@ def remove_task_tag(task_id: str, tag: str) -> None:
 def _hashtag_regex(tag: str) -> re.Pattern:
     """Match #tag as whole word (not #tagging or #tags)."""
     return re.compile(r"#" + re.escape(tag) + r"(?![a-zA-Z0-9_-])")
+
+
+def _like_escape(tag: str) -> str:
+    """Escape % and _ for use in SQLite LIKE (use ESCAPE '\\')."""
+    return tag.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _sql_hashtag_in_text_condition(tag: str) -> tuple[str, list[Any]]:
+    """
+    Return (sql_fragment, params) for "this task has #tag in title or description or notes" (whole-word).
+    Fragment is like: (title LIKE ? ESCAPE '\\' OR ... OR notes LIKE ? ESCAPE '\\') with 15 params.
+    """
+    t = (tag or "").strip()
+    if not t:
+        return ("0", [])
+    needle = "#" + _like_escape(t)
+    # Whole-word #tag: at start, after space, at end
+    pats = [needle, needle + " %", "% " + needle, "% " + needle + " %", "%" + needle]
+    frags: list[str] = []
+    params: list[Any] = []
+    for col in ("title", "description", "notes"):
+        for p in pats:
+            frags.append(f"{col} LIKE ? ESCAPE '\\'")
+            params.append(p)
+    return ("(" + " OR ".join(frags) + ")", params)
 
 
 def tag_list() -> list[dict[str, Any]]:
