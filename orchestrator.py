@@ -133,18 +133,18 @@ Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume th
 
 # Available tools section (unchanged from original)
 AVAILABLE_TOOLS_SECTION = """
-Available tools: task_create, task_list, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists.
+Available tools: task_create, task_list, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists, tag_list, tag_rename, tag_delete.
 
 task_create: Only "title" is required. Omit description, priority, dates, projects, tags, flagged if the user did not provide them. New tasks are incomplete and not flagged by default. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Optional "flagged": true to create a flagged task.
 Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (e.g. flagged, due_date).
 
 task_list: "List tasks", "list my tasks", "show tasks", "gimme tasks in X available tomorrow", etc. must be answered with the task_list JSON only. Any request that asks for tasks (optionally in a project, available/due on a date) is a task_list call. For project filter use short_id only (e.g. 1off), never full project name. Use project/short_id "inbox" when the user asks for inbox tasks—inbox means tasks that have no project (unassigned). User can filter and sort.
 Never include completed tasks unless the user explicitly asks for them (e.g. "completed", "done", "finished") or asks for "all" tasks. When no status is given, always use status "incomplete". Do not send status "complete" unless the user clearly asked for completed/done tasks or "all tasks".
-Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag or tags, project or short_id (use "inbox" for tasks with no project), due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false), priority (number 0-3, or label: "high"/"medium high"/"medium low"/"low", or color: "red"/"orange"/"yellow"/"green"; 3=high=red, 2=medium high=orange, 1=medium low=yellow, 0=low=green).
+Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag (single) or tags (array of tag names), tag_mode ("any" = task has any of the tags [OR], "all" = task has all tags [AND]; default "any"), project or short_id (single; use "inbox" for tasks with no project), projects or short_ids (array of short_ids), project_mode ("any" = task in any of the projects [OR], "all" = task in all [AND]; default "any"), due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false), priority (number 0-3, or label: "high"/"medium high"/"medium low"/"low", or color: "red"/"orange"/"yellow"/"green"; 3=high=red, 2=medium high=orange, 1=medium low=yellow, 0=low=green).
 Overdue semantics: A task due today is NOT overdue unless the user says "overdue tomorrow" or asks on a later date. Use overdue (not due_by) when the user asks for "overdue" or "overdue tasks". overdue: true or overdue: "today" → tasks due yesterday or earlier; overdue: "tomorrow" → tasks due today or earlier.
 Dates: "today", "tomorrow", "yesterday", "now" (use "today")—app resolves them.
 Examples: "list overdue tasks" -> {"name": "task_list", "parameters": {"overdue": true, "status": "incomplete"}}. "list inbox tasks" or "tasks in inbox" -> {"name": "task_list", "parameters": {"short_id": "inbox", "status": "incomplete"}}. "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "gimme tasks in 1off available tomorrow" -> {"name": "task_list", "parameters": {"short_id": "1off", "available_by": "tomorrow", "status": "incomplete"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}.
-Output format: {"name": "task_list", "parameters": {}} with any of status, tag, project/short_id (or "inbox"), due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged, priority. Priority: use 0-3, or "high"/"medium high"/"medium low"/"low", or "red"/"orange"/"yellow"/"green". E.g. "high priority tasks" -> priority "high" or 3; "red priority" -> 3; "priority 2" -> 2.
+Output format: {"name": "task_list", "parameters": {}} with any of status, tag, tags (array), tag_mode ("any"/"all"), project/short_id (or "inbox"), projects/short_ids (array), project_mode ("any"/"all"), due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged, priority. E.g. "tasks with tag work or urgent" -> {"tags": ["work", "urgent"], "tag_mode": "any"}. "tasks in 1off and work" -> {"short_ids": ["1off", "work"], "project_mode": "all"}. Priority: use 0-3, or "high"/"medium high"/"medium low"/"low", or "red"/"orange"/"yellow"/"green".
 
 task_find: Find tasks by a search term in title, description, or tag. Use when the user says "find tasks about X", "search for tasks with dogs", "tasks about meetings", "tasks tagged work", or similar. The term is matched in title, description, and tag (so one term finds all matching tasks).
 Required parameter: term (the search string, e.g. "dogs", "work", "meetings").
@@ -186,6 +186,17 @@ Output format: {"name": "list_view", "parameters": {"list_id": "test"}}.
 
 list_lists: List all saved lists with their short_ids. Use when the user asks to list saved lists, show lists, or see list short names (e.g. "list lists", "show my lists").
 Output format: {"name": "list_lists", "parameters": {}}.
+
+tag_list: List all tags with the number of tasks that have that tag (tag in task tags, or #tag in title, or #tag in notes). Each task counted once per tag. Use when the user asks to list tags, show tags, or see tag counts.
+Output format: {"name": "tag_list", "parameters": {}}.
+
+tag_rename: Rename a tag everywhere (task tags, and #tag in titles/notes). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true.
+Parameters: old_tag (string), new_tag (string).
+Output format: {"name": "tag_rename", "parameters": {"old_tag": "work", "new_tag": "workflow"}} or with "confirm": true.
+
+tag_delete: Remove a tag from all tasks (from task tags and remove #tag from titles/notes). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true.
+Parameters: tag (string).
+Output format: {"name": "tag_delete", "parameters": {"tag": "work"}} or with "confirm": true.
 
 In this chat we refer to: tasks by number only (e.g. 1, 2); projects by short_id only (e.g. 1off, work); lists by short_id only (e.g. test, inbox). Never use full display names for projects or lists. When the user asks about a task or project by number/short_id (e.g. "about 1", "about project 1off", "view list test"), output the corresponding tool JSON—do not answer with general knowledge.
 
@@ -267,13 +278,48 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
         out["status"] = raw_status
     else:
         out["status"] = "incomplete"
-    tag = params.get("tag") or (params.get("tags") or [])
-    if isinstance(tag, list):
-        tag = tag[0] if tag else None
-    if tag and str(tag).strip():
+    # Tags: single "tag" or list "tags" with optional "tag_mode" ("any" = OR, "all" = AND)
+    tag = params.get("tag")
+    tags_raw = params.get("tags") or []
+    if isinstance(tags_raw, str):
+        tags_raw = [tags_raw] if tags_raw.strip() else []
+    if tag is not None and str(tag).strip() and not tags_raw:
+        tags_raw = [str(tag).strip()]
+    if tags_raw:
+        out["tags"] = [str(t).strip() for t in tags_raw if str(t).strip()]
+        tag_mode = (params.get("tag_mode") or "any").strip().lower()
+        out["tag_mode"] = "all" if tag_mode == "all" else "any"
+    elif tag and str(tag).strip():
         out["tag"] = str(tag).strip()
+    # Projects: single "project"/"short_id" or list "projects"/"short_ids" with optional "project_mode" ("any" = OR, "all" = AND)
     project = params.get("project") or params.get("short_id")
-    if project and str(project).strip():
+    projects_raw = params.get("projects") or params.get("short_ids") or []
+    if isinstance(projects_raw, str):
+        projects_raw = [projects_raw] if projects_raw.strip() else []
+    if project is not None and str(project).strip() and not projects_raw:
+        projects_raw = [str(project).strip()]
+    if projects_raw:
+        resolved_ids: list[str] = []
+        for raw in projects_raw:
+            raw = str(raw).strip()
+            if not raw:
+                continue
+            if raw.lower() == "inbox":
+                out["inbox"] = True
+                resolved_ids = []
+                break
+            try:
+                from project_service import get_project_by_short_id
+                p = get_project_by_short_id(raw)
+                if p:
+                    resolved_ids.append(p["id"])
+            except Exception:
+                pass
+        if not out.get("inbox") and resolved_ids:
+            out["project_ids"] = resolved_ids
+            project_mode = (params.get("project_mode") or "any").strip().lower()
+            out["project_mode"] = "all" if project_mode == "all" else "any"
+    elif project and str(project).strip():
         raw = str(project).strip()
         if raw.lower() == "inbox":
             out["inbox"] = True
@@ -444,9 +490,12 @@ def _validate_task_update(params: dict[str, Any], tz_name: str = "UTC") -> dict[
             raise ValueError("remove_projects must be an array of project short_ids or ids")
         out["remove_projects"] = [str(x).strip() for x in params["remove_projects"] if str(x).strip()]
     if "tags" in params and params["tags"] is not None:
-        if not isinstance(params["tags"], list):
-            raise ValueError("tags must be an array of strings")
-        out["tags"] = [str(x).strip() for x in params["tags"] if str(x).strip()]
+        raw = params["tags"]
+        if isinstance(raw, str):
+            raw = [raw] if raw.strip() else []
+        if not isinstance(raw, list):
+            raise ValueError("tags must be an array of strings or a single string")
+        out["tags"] = [str(x).strip() for x in raw if str(x).strip()]
     return out
 
 
@@ -1168,8 +1217,12 @@ def run_orchestrator(
                 limit=500,
                 status=validated.get("status"),
                 project_id=validated.get("project_id"),
+                project_ids=validated.get("project_ids"),
+                project_mode=validated.get("project_mode") or "any",
                 inbox=validated.get("inbox") or False,
                 tag=validated.get("tag"),
+                tags=validated.get("tags"),
+                tag_mode=validated.get("tag_mode") or "any",
                 due_by=validated.get("due_by"),
                 available_by=validated.get("available_by"),
                 available_or_due_by=validated.get("available_or_due_by"),
@@ -1253,6 +1306,71 @@ def run_orchestrator(
             else:
                 lines.append(f"• {name_part}")
         return ("\n".join(lines), True, None)
+    if name == "tag_list":
+        try:
+            from task_service import tag_list as svc_tag_list
+            items = svc_tag_list()
+        except Exception as e:
+            return (f"Error listing tags: {e}", False, None)
+        if not items:
+            return ("No tags yet. Tags come from task tags or #tag in task titles/notes.", True, None)
+        lines = ["Tags (task count):"]
+        for item in items:
+            lines.append(f"• {item['tag']}: {item['count']} task(s)")
+        return ("\n".join(lines), True, None)
+    if name == "tag_rename":
+        old_tag = (params.get("old_tag") or "").strip()
+        new_tag = (params.get("new_tag") or "").strip()
+        if not old_tag:
+            return ("tag_rename requires old_tag.", False, None)
+        if not new_tag:
+            return ("tag_rename requires new_tag.", False, None)
+        if old_tag == new_tag:
+            return ("old_tag and new_tag are the same.", True, None)
+        try:
+            from task_service import tag_list
+            tags = tag_list()
+            count = next((x["count"] for x in tags if x["tag"] == old_tag), 0)
+        except Exception:
+            count = 0
+        if not _parse_confirm(params):
+            return (
+                f"Rename tag \"{old_tag}\" to \"{new_tag}\"? This will update task tags and any #{old_tag} in titles/notes ({count} task(s)). Reply \"yes\" to confirm.",
+                False,
+                {"tool": "tag_rename", "old_tag": old_tag, "new_tag": new_tag},
+            )
+        try:
+            from task_service import tag_rename as svc_tag_rename
+            n = svc_tag_rename(old_tag, new_tag)
+            return (f"Tag \"{old_tag}\" renamed to \"{new_tag}\". Updated {n} task(s).", True, None)
+        except ValueError as e:
+            return (str(e), False, None)
+        except Exception as e:
+            return (f"Error renaming tag: {e}", False, None)
+    if name == "tag_delete":
+        tag = (params.get("tag") or "").strip()
+        if not tag:
+            return ("tag_delete requires tag.", False, None)
+        try:
+            from task_service import tag_list
+            tags = tag_list()
+            count = next((x["count"] for x in tags if x["tag"] == tag), 0)
+        except Exception:
+            count = 0
+        if not _parse_confirm(params):
+            return (
+                f"Delete tag \"{tag}\"? It will be removed from all task tags and any #{tag} in titles/notes ({count} task(s)). Reply \"yes\" to confirm.",
+                False,
+                {"tool": "tag_delete", "tag": tag},
+            )
+        try:
+            from task_service import tag_delete as svc_tag_delete
+            svc_tag_delete(tag)
+            return (f"Tag \"{tag}\" removed from all tasks.", True, None)
+        except ValueError as e:
+            return (str(e), False, None)
+        except Exception as e:
+            return (f"Error deleting tag: {e}", False, None)
     if name == "task_update":
         tz_name = "UTC"
         try:

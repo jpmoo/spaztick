@@ -163,10 +163,13 @@ def telegram_status() -> dict[str, bool | int | None]:
 
 
 class PendingConfirmBody(BaseModel):
-    """Payload for executing a pending delete confirmation (e.g. from Telegram when history is off)."""
-    tool: str  # "delete_task" | "delete_project"
+    """Payload for executing a pending delete/rename confirmation (e.g. from Telegram when history is off)."""
+    tool: str  # "delete_task" | "delete_project" | "tag_rename" | "tag_delete" | ...
     number: int | None = None
     short_id: str | None = None
+    old_tag: str | None = None
+    new_tag: str | None = None
+    tag: str | None = None
 
 
 def _execute_pending_confirm_payload(payload: dict) -> tuple[bool, str]:
@@ -236,7 +239,34 @@ def _execute_pending_confirm_payload(payload: dict) -> tuple[bool, str]:
             return (True, f"Project {short_id} unarchived. It is back in the project list.")
         except Exception as e:
             return (False, str(e))
-    return (False, f"Unknown tool: {tool}. Use delete_task, delete_project, project_archive, or project_unarchive.")
+    if tool == "tag_rename":
+        old_tag = (payload.get("old_tag") or "").strip()
+        new_tag = (payload.get("new_tag") or "").strip()
+        if not old_tag:
+            return (False, "tag_rename requires old_tag.")
+        if not new_tag:
+            return (False, "tag_rename requires new_tag.")
+        try:
+            from task_service import tag_rename
+            n = tag_rename(old_tag, new_tag)
+            return (True, f"Tag \"{old_tag}\" renamed to \"{new_tag}\". Updated {n} task(s).")
+        except ValueError as e:
+            return (False, str(e))
+        except Exception as e:
+            return (False, str(e))
+    if tool == "tag_delete":
+        tag = (payload.get("tag") or "").strip()
+        if not tag:
+            return (False, "tag_delete requires tag.")
+        try:
+            from task_service import tag_delete
+            tag_delete(tag)
+            return (True, f"Tag \"{tag}\" removed from all tasks.")
+        except ValueError as e:
+            return (False, str(e))
+        except Exception as e:
+            return (False, str(e))
+    return (False, f"Unknown tool: {tool}. Use delete_task, delete_project, project_archive, project_unarchive, tag_rename, or tag_delete.")
 
 
 # Pending confirm per API key for external chat (no history): when user says "yes" we execute
@@ -245,8 +275,15 @@ _external_pending: dict[str, dict] = {}
 
 @app.post("/api/execute-pending-confirm")
 def execute_pending_confirm(body: PendingConfirmBody) -> dict[str, bool | str]:
-    """Execute a pending delete (task or project). Used by Telegram bot when user replies 'yes' and history is disabled."""
-    payload = {"tool": body.tool, "number": body.number, "short_id": body.short_id}
+    """Execute a pending delete/rename (task, project, tag). Used by Telegram/API/Electron when user confirms."""
+    payload = {
+        "tool": body.tool,
+        "number": body.number,
+        "short_id": body.short_id,
+        "old_tag": body.old_tag,
+        "new_tag": body.new_tag,
+        "tag": body.tag,
+    }
     ok, message = _execute_pending_confirm_payload(payload)
     return {"ok": ok, "message": message}
 
@@ -324,11 +361,16 @@ def api_update_task(task_id: str, body: dict):
             if str(pid).strip():
                 add_task_project(task_id, str(pid).strip())
     if "tags" in body:
-        for tag in t.get("tags") or []:
-            remove_task_tag(task_id, tag)
-        for tag in body.get("tags") or []:
-            if str(tag).strip():
-                add_task_tag(task_id, str(tag).strip())
+        tags_val = body.get("tags")
+        if tags_val is not None:
+            if isinstance(tags_val, str):
+                tags_list = [tags_val.strip()] if tags_val.strip() else []
+            else:
+                tags_list = [str(x).strip() for x in (tags_val if isinstance(tags_val, list) else []) if str(x).strip()]
+            for tag in t.get("tags") or []:
+                remove_task_tag(task_id, tag)
+            for tag in tags_list:
+                add_task_tag(task_id, tag)
     return get_task(task_id)
 
 
@@ -555,11 +597,16 @@ async def external_update_task(task_id: str, request: Request):
             if str(pid).strip():
                 add_task_project(tid, str(pid).strip())
     if "tags" in body:
-        for tag in (t.get("tags") or []):
-            remove_task_tag(tid, tag)
-        for tag in body.get("tags") or []:
-            if str(tag).strip():
-                add_task_tag(tid, str(tag).strip())
+        tags_val = body.get("tags")
+        if tags_val is not None:
+            if isinstance(tags_val, str):
+                tags_list = [tags_val.strip()] if tags_val.strip() else []
+            else:
+                tags_list = [str(x).strip() for x in (tags_val if isinstance(tags_val, list) else []) if str(x).strip()]
+            for tag in (t.get("tags") or []):
+                remove_task_tag(tid, tag)
+            for tag in tags_list:
+                add_task_tag(tid, tag)
     from task_service import get_task as _get
     out = _get(tid)
     if getattr(load_config(), "debug", False):
@@ -709,6 +756,18 @@ def external_delete_list(list_id: str):
     if not delete_list(list_id):
         raise HTTPException(status_code=404, detail="List not found")
     return {"status": "deleted"}
+
+
+# External: Tags (tag-list with counts; tag-rename / tag-delete via execute-pending-confirm)
+@app.get("/api/external/tags", dependencies=[Depends(_require_api_key)])
+def external_list_tags():
+    """Return all tags with the number of tasks that have that tag (in tags, or #tag in title/notes). Each task counted once per tag."""
+    from task_service import tag_list
+    try:
+        return tag_list()
+    except Exception as e:
+        logger.exception("tag_list failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # External: Chat (same flow as Telegram — orchestrator + Ollama + tools)

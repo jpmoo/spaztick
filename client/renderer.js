@@ -27,10 +27,11 @@
   const NAV_PROJECT_ORDER_KEY = 'spaztick_nav_project_order';
   const NAV_LIST_ORDER_KEY = 'spaztick_nav_list_order';
   const NAV_FAVORITES_KEY = 'spaztick_favorites';
+  const NAV_TAG_SORT_KEY = 'spaztick_nav_tag_sort';
   const DEFAULT_OPEN_VIEW_KEY = 'spaztick_default_open_view';
   const TASK_LIST_SEPARATOR_KEY = 'spaztick_task_list_separator';
 
-  const TASK_PROPERTY_KEYS = ['due_date', 'available_date', 'priority', 'description', 'projects', 'tags', 'recurrence'];
+  const TASK_PROPERTY_KEYS = ['due_date', 'available_date', 'description', 'projects', 'tags', 'recurrence'];
   const TASK_PROPERTY_LABELS = {
     due_date: 'Due date',
     available_date: 'Available date',
@@ -137,6 +138,8 @@
   const inboxItem = document.getElementById('inbox-item');
   const inboxCountEl = document.getElementById('inbox-count');
   const listsListEl = document.getElementById('lists-list');
+  const tagsListEl = document.getElementById('tags-list');
+  const tagsSortRow = document.getElementById('tags-sort-row');
   const navigatorAddBtn = document.getElementById('navigator-add-btn');
   const navigatorAddPopover = document.getElementById('navigator-add-popover');
 
@@ -144,6 +147,7 @@
   let lastTaskSource = null;
   let lastSearchQuery = '';
   let displayedTasks = [];
+  let currentInspectorTag = null;
 
   function getApiBase() {
     return localStorage.getItem(API_BASE_KEY) || 'http://localhost:8081';
@@ -383,7 +387,100 @@
     }
     settingsOverlay.classList.remove('hidden');
     settingsOverlay.setAttribute('aria-hidden', 'false');
+    loadSettingsTags();
   }
+
+  const settingsTagsList = document.getElementById('settings-tags-list');
+  const settingsTagsRefresh = document.getElementById('settings-tags-refresh');
+  async function loadSettingsTags() {
+    if (!settingsTagsList) return;
+    if (!getApiKey()) {
+      settingsTagsList.innerHTML = '<li class="settings-tags-empty">Set API key above to list tags.</li>';
+      return;
+    }
+    try {
+      const tags = await api('/api/external/tags');
+      if (!Array.isArray(tags) || !tags.length) {
+        settingsTagsList.innerHTML = '<li class="settings-tags-empty">No tags yet. Tags come from task tags or #tag in titles/notes.</li>';
+        return;
+      }
+      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      settingsTagsList.innerHTML = tags.map((item) => {
+        const tag = escape(item.tag || '');
+        const count = Number(item.count) || 0;
+        return `<li class="settings-tags-row" data-tag="${tag}" data-count="${count}">
+          <span class="settings-tags-name">#${tag}</span>
+          <span class="settings-tags-count">${count} task(s)</span>
+          <button type="button" class="btn-secondary btn-sm settings-tag-rename" data-action="rename" aria-label="Rename tag">Rename</button>
+          <button type="button" class="btn-secondary btn-sm settings-tag-delete" data-action="delete" aria-label="Delete tag">Delete</button>
+        </li>`;
+      }).join('');
+      settingsTagsList.querySelectorAll('.settings-tag-rename').forEach((btn) => {
+        btn.addEventListener('click', onSettingsTagRename);
+      });
+      settingsTagsList.querySelectorAll('.settings-tag-delete').forEach((btn) => {
+        btn.addEventListener('click', onSettingsTagDelete);
+      });
+    } catch (e) {
+      settingsTagsList.innerHTML = '<li class="settings-tags-empty">Failed to load tags: ' + (e.message || 'network error') + '</li>';
+    }
+  }
+
+  async function onSettingsTagRename(ev) {
+    const row = ev.target.closest('.settings-tags-row');
+    if (!row) return;
+    const oldTag = row.dataset.tag;
+    const count = Number(row.dataset.count) || 0;
+    const newTag = (prompt(`Rename tag #${oldTag} to:`, oldTag) || '').trim();
+    if (!newTag || newTag === oldTag) return;
+    const msg = `Rename tag "#${oldTag}" to "#${newTag}"? This will update task tags and any #${oldTag} in titles/notes (${count} task(s)).`;
+    if (!confirm(msg)) return;
+    try {
+      const res = await api('/api/execute-pending-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: 'tag_rename', old_tag: oldTag, new_tag: newTag }),
+      });
+      const data = typeof res === 'object' ? res : {};
+      if (data.ok) {
+        loadSettingsTags();
+        if (lastTaskSource) refreshTaskList();
+        alert(data.message || 'Tag renamed.');
+      } else {
+        alert(data.message || 'Rename failed.');
+      }
+    } catch (e) {
+      alert(e.message || 'Failed to rename tag.');
+    }
+  }
+
+  async function onSettingsTagDelete(ev) {
+    const row = ev.target.closest('.settings-tags-row');
+    if (!row) return;
+    const tag = row.dataset.tag;
+    const count = Number(row.dataset.count) || 0;
+    const msg = `Delete tag "#${tag}"? It will be removed from all task tags and any #${tag} in titles/notes (${count} task(s)).`;
+    if (!confirm(msg)) return;
+    try {
+      const res = await api('/api/execute-pending-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool: 'tag_delete', tag }),
+      });
+      const data = typeof res === 'object' ? res : {};
+      if (data.ok) {
+        loadSettingsTags();
+        if (lastTaskSource) refreshTaskList();
+        alert(data.message || 'Tag removed.');
+      } else {
+        alert(data.message || 'Delete failed.');
+      }
+    } catch (e) {
+      alert(e.message || 'Failed to delete tag.');
+    }
+  }
+
+  if (settingsTagsRefresh) settingsTagsRefresh.addEventListener('click', loadSettingsTags);
 
   function closeSettings() {
     settingsOverlay.classList.add('hidden');
@@ -567,8 +664,15 @@
   if (descriptionModalClose) descriptionModalClose.addEventListener('click', closeDescriptionModal);
   if (descriptionModalSave) {
     descriptionModalSave.addEventListener('click', async () => {
-      if (!descriptionModalTaskId) return;
       const text = descriptionEditTextarea ? descriptionEditTextarea.value : '';
+      if (descriptionModalForNewTask) {
+        newTaskState.description = text;
+        closeDescriptionModal();
+        const notesBtn = newTaskModalContent && newTaskModalContent.querySelector('.new-task-notes-btn');
+        if (notesBtn) notesBtn.classList.toggle('muted', !text.trim());
+        return;
+      }
+      if (!descriptionModalTaskId) return;
       try {
         const updated = await updateTask(descriptionModalTaskId, { description: text });
         updateTaskInLists(updated);
@@ -584,10 +688,20 @@
   }
   if (descriptionTabEdit) descriptionTabEdit.addEventListener('click', () => switchDescriptionTab(false));
   if (descriptionTabPreview) descriptionTabPreview.addEventListener('click', () => switchDescriptionTab(true));
+  if (descriptionEditTextarea) attachHashtagAutocomplete(descriptionEditTextarea);
 
+  const TAG_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
+  function validateTagName(name) {
+    const s = (name || '').trim();
+    if (!s) return null;
+    if (!TAG_NAME_REGEX.test(s)) return null;
+    return s;
+  }
   // --- Recurrence modal ---
   const recurrenceModalOverlay = document.getElementById('recurrence-modal-overlay');
   let recurrenceModalTaskId = null;
+  /** When set, recurrence modal is in "new task" mode; on Save call this with recurrence object and close. */
+  let recurrenceModalForNewTaskCallback = null;
   let recurrenceModalCleared = false;
   /** True only when user clicked "Clear recurrence"; used so we send null only then, not when opening for a task with no recurrence. */
   let recurrenceUserClickedClear = false;
@@ -728,26 +842,36 @@
     return /^\d{4}-\d{2}-\d{2}$/.test(d);
   }
 
-  function openRecurrenceModal(taskId) {
+  function openRecurrenceModal(taskId, options) {
     recurrenceModalTaskId = taskId;
+    recurrenceModalForNewTaskCallback = (options && options.forNewTask && options.onSave) ? options.onSave : null;
     recurrenceUserClickedClear = false;
+    function showRecurrenceForm(rec, canSetRecurrence) {
+      recurrencePopulateForm(rec || null);
+      const noDueMsg = document.getElementById('recurrence-no-due-date-msg');
+      const formBody = document.getElementById('recurrence-form-body');
+      const saveBtn = document.getElementById('recurrence-modal-save');
+      if (noDueMsg) noDueMsg.classList.toggle('hidden', canSetRecurrence);
+      if (formBody) formBody.classList.toggle('hidden', !canSetRecurrence);
+      if (saveBtn) {
+        saveBtn.disabled = !canSetRecurrence;
+        saveBtn.title = canSetRecurrence ? '' : 'Set a due date for this task first';
+      }
+      if (recurrenceModalOverlay) {
+        recurrenceModalOverlay.classList.remove('hidden');
+        recurrenceModalOverlay.setAttribute('aria-hidden', 'false');
+      }
+    }
+    if (taskId == null && recurrenceModalForNewTaskCallback) {
+      const dueDate = (options && options.dueDate) ? String(options.dueDate).trim().substring(0, 10) : '';
+      const canSet = /^\d{4}-\d{2}-\d{2}$/.test(dueDate);
+      showRecurrenceForm((options && options.initialRecurrence) || null, canSet);
+      return;
+    }
+    if (!taskId) return;
     api(`/api/external/tasks/${encodeURIComponent(taskId)}`)
       .then((task) => {
-        recurrencePopulateForm(task.recurrence || null);
-        const noDueMsg = document.getElementById('recurrence-no-due-date-msg');
-        const formBody = document.getElementById('recurrence-form-body');
-        const saveBtn = document.getElementById('recurrence-modal-save');
-        const canSetRecurrence = hasDueDate(task);
-        if (noDueMsg) noDueMsg.classList.toggle('hidden', canSetRecurrence);
-        if (formBody) formBody.classList.toggle('hidden', !canSetRecurrence);
-        if (saveBtn) {
-          saveBtn.disabled = !canSetRecurrence;
-          saveBtn.title = canSetRecurrence ? '' : 'Set a due date for this task first';
-        }
-        if (recurrenceModalOverlay) {
-          recurrenceModalOverlay.classList.remove('hidden');
-          recurrenceModalOverlay.setAttribute('aria-hidden', 'false');
-        }
+        showRecurrenceForm(task.recurrence || null, hasDueDate(task));
       })
       .catch((e) => {
         console.error('Failed to load task for recurrence:', e);
@@ -756,6 +880,7 @@
   }
   function closeRecurrenceModal() {
     recurrenceModalTaskId = null;
+    recurrenceModalForNewTaskCallback = null;
     if (recurrenceModalOverlay) {
       recurrenceModalOverlay.classList.add('hidden');
       recurrenceModalOverlay.setAttribute('aria-hidden', 'true');
@@ -768,10 +893,15 @@
   const recurrenceModalClose = document.getElementById('recurrence-modal-close');
   if (recurrenceModalClose) recurrenceModalClose.addEventListener('click', closeRecurrenceModal);
   async function saveRecurrenceModal() {
-    if (!recurrenceModalTaskId) return;
     const saveBtn = document.getElementById('recurrence-modal-save');
     if (saveBtn && saveBtn.disabled) return;
     const rec = recurrenceUserClickedClear ? null : recurrenceFormToObject();
+    if (recurrenceModalForNewTaskCallback) {
+      recurrenceModalForNewTaskCallback(rec);
+      closeRecurrenceModal();
+      return;
+    }
+    if (!recurrenceModalTaskId) return;
     try {
       const updated = await updateTask(recurrenceModalTaskId, { recurrence: rec });
       updateTaskInLists(updated);
@@ -876,18 +1006,19 @@
           const showFlagged = o.showFlagged !== false;
           const showCompleted = o.showCompleted !== false;
           const showHighlightDue = o.showHighlightDue !== false;
+          const showPriority = o.showPriority === true;
           const sortBy = Array.isArray(o.sortBy) ? o.sortBy.filter((s) => s && SORT_FIELD_KEYS.includes(s.key)) : [];
           const manualSort = o.manualSort === true;
           const manualOrder = Array.isArray(o.manualOrder) ? o.manualOrder.filter((id) => id != null) : [];
-          return { order, visible, showFlagged, showCompleted, showHighlightDue, sortBy, manualSort, manualOrder };
+          return { order, visible, showFlagged, showCompleted, showHighlightDue, showPriority, sortBy, manualSort, manualOrder };
         }
       }
     } catch (_) {}
-    const order = ['due_date', 'priority'];
-    return { order, visible: new Set(order), showFlagged: true, showCompleted: true, showHighlightDue: true, sortBy: [], manualSort: false, manualOrder: [] };
+    const order = ['due_date'];
+    return { order, visible: new Set(order), showFlagged: true, showCompleted: true, showHighlightDue: true, showPriority: false, sortBy: [], manualSort: false, manualOrder: [] };
   }
 
-  function saveDisplayProperties(source, order, visible, showFlagged, showCompleted, showHighlightDue, sortBy, manualSort, manualOrder) {
+  function saveDisplayProperties(source, order, visible, showFlagged, showCompleted, showHighlightDue, showPriority, sortBy, manualSort, manualOrder) {
     const key = displayKey(source != null ? source : 'project');
     let all = {};
     try {
@@ -901,6 +1032,7 @@
       showFlagged: showFlagged !== undefined ? showFlagged : current.showFlagged,
       showCompleted: showCompleted !== undefined ? showCompleted : current.showCompleted,
       showHighlightDue: showHighlightDue !== undefined ? showHighlightDue : current.showHighlightDue,
+      showPriority: showPriority !== undefined ? showPriority : current.showPriority,
       sortBy: sortBy !== undefined ? sortBy : current.sortBy,
       manualSort: manualSort !== undefined ? manualSort : current.manualSort,
       manualOrder: manualOrder !== undefined ? manualOrder : current.manualOrder,
@@ -919,36 +1051,45 @@
     const source = lastTaskSource != null ? lastTaskSource : 'project';
     const isListSource = typeof source === 'string' && source.startsWith('list:');
     if (dropdownEl) dropdownEl.classList.toggle('display-dropdown-list-only', !!isListSource);
-    const { order, visible, showFlagged, showCompleted, showHighlightDue, sortBy, manualSort, manualOrder } = getDisplayProperties(source);
+    const { order, visible, showFlagged, showCompleted, showHighlightDue, showPriority, sortBy, manualSort, manualOrder } = getDisplayProperties(source);
     if (flaggedCb) {
       flaggedCb.checked = showFlagged;
       flaggedCb.onchange = () => {
-        const { order: o, visible: v, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(source);
-        saveDisplayProperties(source, o, v, flaggedCb.checked, sc, sh);
+        const { order: o, visible: v, showCompleted: sc, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, flaggedCb.checked, sc, sh, sp);
         refreshTaskList();
       };
     }
     if (completedCb) {
       completedCb.checked = showCompleted;
       completedCb.onchange = () => {
-        const { order: o, visible: v, showFlagged: sf, showHighlightDue: sh } = getDisplayProperties(source);
-        saveDisplayProperties(source, o, v, sf, completedCb.checked, sh);
+        const { order: o, visible: v, showFlagged: sf, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, completedCb.checked, sh, sp);
         refreshTaskList();
       };
     }
     if (highlightDueCb) {
       highlightDueCb.checked = showHighlightDue;
       highlightDueCb.onchange = () => {
-        const { order: o, visible: v, showFlagged: sf, showCompleted: sc } = getDisplayProperties(source);
-        saveDisplayProperties(source, o, v, sf, sc, highlightDueCb.checked);
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showPriority: sp } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, sc, highlightDueCb.checked, sp);
+        refreshTaskList();
+      };
+    }
+    const priorityCb = document.getElementById('display-show-priority');
+    if (priorityCb) {
+      priorityCb.checked = showPriority;
+      priorityCb.onchange = () => {
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, sc, sh, priorityCb.checked);
         refreshTaskList();
       };
     }
     if (manualSortCb) {
       manualSortCb.checked = manualSort;
       manualSortCb.onchange = () => {
-        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, sortBy: sb } = getDisplayProperties(source);
-        saveDisplayProperties(source, o, v, sf, sc, sh, sb, manualSortCb.checked);
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, sc, sh, sp, sb, manualSortCb.checked);
         refreshTaskList();
       };
     }
@@ -956,9 +1097,9 @@
     const addSortBtn = document.getElementById('display-sort-add');
     if (addSortBtn) {
       addSortBtn.onclick = () => {
-        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, sortBy: sb } = getDisplayProperties(source);
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
         const next = [...sb, { key: 'due_date', dir: 'asc' }];
-        saveDisplayProperties(source, o, v, sf, sc, sh, next);
+        saveDisplayProperties(source, o, v, sf, sc, sh, sp, next);
         renderSortLadder(source);
         refreshTaskList();
       };
@@ -981,8 +1122,8 @@
         if (e.target.checked) v.add(key);
         else v.delete(key);
         if (!o.includes(key)) o.push(key);
-        const { showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(source);
-        saveDisplayProperties(source, o, v, sf, sc, sh);
+        const { showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(source);
+        saveDisplayProperties(source, o, v, sf, sc, sh, sp);
         refreshTaskList();
       });
     });
@@ -1011,8 +1152,8 @@
         key: row.querySelector('.display-sort-field').value,
         dir: row.querySelector('.display-sort-dir').value,
       }));
-      const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(source);
-      saveDisplayProperties(source, o, v, sf, sc, sh, sb);
+      const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(source);
+      saveDisplayProperties(source, o, v, sf, sc, sh, sp, sb);
       refreshTaskList();
     };
     ladderEl.querySelectorAll('.display-sort-field, .display-sort-dir').forEach((el) => {
@@ -1020,9 +1161,9 @@
     });
     ladderEl.querySelectorAll('.display-sort-remove').forEach((btn, i) => {
       btn.addEventListener('click', () => {
-        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, sortBy: sb } = getDisplayProperties(source);
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
         const next = sb.filter((_, j) => j !== i);
-        saveDisplayProperties(source, o, v, sf, sc, sh, next);
+        saveDisplayProperties(source, o, v, sf, sc, sh, sp, next);
         renderSortLadder(source);
         refreshTaskList();
       });
@@ -1070,8 +1211,8 @@
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           const order = Array.from(listEl.querySelectorAll('li')).map((el) => el.dataset.key);
-          const { visible, showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(ctx);
-          saveDisplayProperties(ctx, order, visible, sf, sc, sh);
+          const { visible, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(ctx);
+          saveDisplayProperties(ctx, order, visible, sf, sc, sh, sp);
           refreshTaskList();
         };
         document.addEventListener('mousemove', onMove);
@@ -1164,6 +1305,7 @@
     const idxDisp = (displayedTasks || []).findIndex((t) => String(t.id) === id);
     if (idxDisp >= 0) displayedTasks[idxDisp] = updatedTask;
     redrawDisplayedTasks();
+    refreshLeftAndCenter();
   }
 
   const DISPLAY_SETTINGS_ICON = '<svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8L15 8M15 8C15 9.65686 16.3431 11 18 11C19.6569 11 21 9.65685 21 8C21 6.34315 19.6569 5 18 5C16.3431 5 15 6.34315 15 8ZM9 16L21 16M9 16C9 17.6569 7.65685 19 6 19C4.34315 19 3 17.6569 3 16C3 14.3431 4.34315 13 6 13C7.65685 13 9 14.3431 9 16Z"/></svg>';
@@ -1187,6 +1329,12 @@
       const listId = lastTaskSource.slice(5);
       if (listId) loadListTasks(listId);
     } else if (lastTaskSource) loadProjectTasks(lastTaskSource);
+  }
+
+  function refreshLeftAndCenter() {
+    loadProjects();
+    loadLists();
+    refreshCenterView();
   }
 
   async function loadListTasks(listId) {
@@ -1317,12 +1465,12 @@
     closePriorityDropdown();
   }
 
-  function openPriorityDropdown(ev, cell) {
+  function openPriorityDropdown(ev, cell, opts) {
     ev.stopPropagation();
     closePriorityDropdown();
-    const row = cell.closest('.task-row');
     const taskId = cell.dataset.priorityTaskId;
     if (!taskId) return;
+    const onAfterApply = opts && opts.onAfterApply;
     const dropdown = document.createElement('div');
     dropdown.className = 'task-priority-dropdown';
     dropdown.setAttribute('role', 'menu');
@@ -1331,6 +1479,7 @@
       { value: 2, label: '2 – Medium high', cls: 'priority-2' },
       { value: 1, label: '1 – Medium low', cls: 'priority-1' },
       { value: 0, label: '0 – Low', cls: 'priority-0' },
+      { value: null, label: 'No priority', cls: 'priority-empty' },
     ];
     options.forEach(({ value, label, cls }) => {
       const btn = document.createElement('button');
@@ -1339,8 +1488,10 @@
       btn.innerHTML = `<span class="priority-circle-wrap ${cls}">${PRIORITY_CIRCLE_SVG}</span><span class="task-priority-dropdown-label">${label}</span>`;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        applyTaskPriority(taskId, value);
-        closePriorityDropdown();
+        applyTaskPriority(taskId, value).then(() => {
+          closePriorityDropdown();
+          if (onAfterApply) onAfterApply();
+        });
       });
       dropdown.appendChild(btn);
     });
@@ -1585,13 +1736,141 @@
     if (projectsDropdownEl && !projectsDropdownEl.contains(ev.target) && !ev.target.closest('.projects-cell') && !ev.target.closest('.inspector-projects-wrap')) closeProjectsDropdown();
   }
 
-  let descriptionModalTaskId = null;
-  function openDescriptionModal(ev, cell) {
+  let taskTagsDropdownEl = null;
+  function closeTaskTagsDropdown() {
+    if (taskTagsDropdownEl && taskTagsDropdownEl.parentNode) taskTagsDropdownEl.parentNode.removeChild(taskTagsDropdownEl);
+    taskTagsDropdownEl = null;
+    document.removeEventListener('click', taskTagsDropdownOutside);
+  }
+  function taskTagsDropdownOutside(ev) {
+    if (taskTagsDropdownEl && !taskTagsDropdownEl.contains(ev.target) && !ev.target.closest('.tags-cell') && !ev.target.closest('.inspector-tags-btn')) closeTaskTagsDropdown();
+  }
+  async function openTaskTagsDropdown(ev, anchorEl, options) {
     ev.stopPropagation();
+    closeTaskTagsDropdown();
+    closeProjectsDropdown();
+    const taskId = options && options.taskId ? String(options.taskId) : null;
+    if (!taskId) return;
+    const currentTags = Array.isArray(options.currentTags) ? options.currentTags : [];
+    const selectedSet = new Set(currentTags.map((t) => String(t).trim()).filter(Boolean));
+    const onAfterApply = options && options.onAfterApply;
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'task-tags-dropdown';
+    dropdown.setAttribute('role', 'dialog');
+    dropdown.setAttribute('aria-label', 'Assign tags');
+
+    const section = document.createElement('div');
+    section.className = 'task-tags-dropdown-section';
+    const title = document.createElement('div');
+    title.className = 'task-tags-dropdown-section-title';
+    title.textContent = 'Tags';
+    section.appendChild(title);
+    const list = document.createElement('div');
+    list.className = 'task-tags-dropdown-list';
+
+    function collectSelected() {
+      const sel = [];
+      list.querySelectorAll('input[type="checkbox"]').forEach((cb) => { if (cb.checked && cb.dataset.tag) sel.push(cb.dataset.tag); });
+      return sel;
+    }
+    async function applyTags(tags) {
+      try {
+        const updated = await updateTask(taskId, { tags });
+        updateTaskInLists(updated);
+        if (onAfterApply) onAfterApply();
+      } catch (e) {
+        console.error('Failed to update tags:', e);
+      }
+    }
+
+    try {
+      const allTags = await api('/api/external/tags');
+      const tagNames = Array.isArray(allTags) ? [...new Set(allTags.map((x) => String(x.tag || '').trim()).filter(Boolean))].sort() : [];
+      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      tagNames.forEach((tag) => {
+        const checked = selectedSet.has(tag);
+        const row = document.createElement('label');
+        row.className = 'task-tags-dropdown-row';
+        row.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''} data-tag="${escape(tag)}" /><span class="task-tags-dropdown-label">#${escape(tag)}</span>`;
+        const cb = row.querySelector('input');
+        cb.addEventListener('change', () => applyTags(collectSelected()));
+        list.appendChild(row);
+      });
+    } catch (e) {
+      list.innerHTML = '<span class="task-tags-dropdown-empty">Failed to load tags</span>';
+    }
+    section.appendChild(list);
+    dropdown.appendChild(section);
+
+    const newSection = document.createElement('div');
+    newSection.className = 'task-tags-dropdown-new-section';
+    const newInput = document.createElement('input');
+    newInput.type = 'text';
+    newInput.placeholder = 'New tag…';
+    newInput.className = 'task-tags-dropdown-new-input';
+    newInput.setAttribute('aria-label', 'New tag name');
+    newInput.maxLength = 80;
+    const addBtn = document.createElement('button');
+    addBtn.type = 'button';
+    addBtn.className = 'task-tags-dropdown-add-btn';
+    addBtn.textContent = 'Add';
+    addBtn.setAttribute('aria-label', 'Add tag');
+    addBtn.addEventListener('click', () => {
+      const name = validateTagName(newInput.value);
+      if (!name) {
+        alert('Tag must be a single word: letters, numbers, underscore or dash only.');
+        return;
+      }
+      const existing = list.querySelector(`input[data-tag="${name.replace(/"/g, '&quot;')}"]`);
+      if (existing) {
+        existing.checked = true;
+        applyTags(collectSelected());
+        newInput.value = '';
+        return;
+      }
+      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      const row = document.createElement('label');
+      row.className = 'task-tags-dropdown-row';
+      row.innerHTML = `<input type="checkbox" checked data-tag="${escape(name)}" /><span class="task-tags-dropdown-label">#${escape(name)}</span>`;
+      const cb = row.querySelector('input');
+      cb.addEventListener('change', () => applyTags(collectSelected()));
+      list.appendChild(row);
+      applyTags(collectSelected());
+      newInput.value = '';
+    });
+    newSection.appendChild(newInput);
+    newSection.appendChild(addBtn);
+    dropdown.appendChild(newSection);
+
+    document.body.appendChild(dropdown);
+    taskTagsDropdownEl = dropdown;
+    const rect = anchorEl.getBoundingClientRect();
+    const minW = Math.max(rect.width, 200);
+    const fromInspector = anchorEl.closest('.inspector-content') || anchorEl.closest('.right-panel');
+    dropdown.style.position = 'fixed';
+    dropdown.style.top = `${rect.bottom + 4}px`;
+    dropdown.style.minWidth = `${minW}px`;
+    dropdown.style.maxHeight = '320px';
+    dropdown.style.overflowY = 'auto';
+    if (fromInspector) {
+      dropdown.style.right = `${window.innerWidth - rect.right}px`;
+      dropdown.style.left = 'auto';
+    } else {
+      dropdown.style.left = `${rect.left}px`;
+    }
+    requestAnimationFrame(() => document.addEventListener('click', taskTagsDropdownOutside));
+  }
+
+  let descriptionModalTaskId = null;
+  let descriptionModalForNewTask = false;
+  function openDescriptionModal(ev, cell) {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
     const taskId = cell && cell.dataset.descriptionTaskId;
     if (!taskId) return;
     const task = getTaskById(taskId);
     const desc = (task && (task.description != null)) ? String(task.description) : '';
+    descriptionModalForNewTask = false;
     descriptionModalTaskId = taskId;
     if (descriptionEditTextarea) descriptionEditTextarea.value = desc;
     if (descriptionPreviewPane) descriptionPreviewPane.innerHTML = renderMarkdown(desc);
@@ -1607,9 +1886,25 @@
   }
   function closeDescriptionModal() {
     descriptionModalTaskId = null;
+    descriptionModalForNewTask = false;
     if (descriptionModalOverlay) {
       descriptionModalOverlay.classList.add('hidden');
       descriptionModalOverlay.setAttribute('aria-hidden', 'true');
+    }
+  }
+  function openDescriptionModalForNewTask() {
+    descriptionModalTaskId = null;
+    descriptionModalForNewTask = true;
+    if (descriptionEditTextarea) descriptionEditTextarea.value = newTaskState.description || '';
+    if (descriptionPreviewPane) descriptionPreviewPane.innerHTML = renderMarkdown(newTaskState.description || '');
+    if (descriptionEditPane) descriptionEditPane.classList.remove('hidden');
+    if (descriptionPreviewPane) descriptionPreviewPane.classList.add('hidden');
+    if (descriptionTabEdit) { descriptionTabEdit.classList.add('active'); descriptionTabEdit.setAttribute('aria-pressed', 'true'); }
+    if (descriptionTabPreview) { descriptionTabPreview.classList.remove('active'); descriptionTabPreview.setAttribute('aria-pressed', 'false'); }
+    if (descriptionModalOverlay) {
+      descriptionModalOverlay.classList.remove('hidden');
+      descriptionModalOverlay.setAttribute('aria-hidden', 'false');
+      if (descriptionEditTextarea) setTimeout(() => descriptionEditTextarea.focus(), 50);
     }
   }
   function switchDescriptionTab(toPreview) {
@@ -1637,7 +1932,9 @@
   function openProjectsDropdown(ev, cellOrAnchor, options) {
     ev.stopPropagation();
     closeProjectsDropdown();
+    closeTaskTagsDropdown();
     const fromInspector = options && (options.taskId != null || options.currentIds != null);
+    const forNewTask = options && options.forNewTask;
     const row = fromInspector ? null : cellOrAnchor.closest('.task-row');
     const taskId = fromInspector ? (options.taskId != null ? String(options.taskId) : (row && row.dataset.id)) : (row && row.dataset.id);
     let currentIds = [];
@@ -1648,7 +1945,7 @@
         currentIds = JSON.parse(cellOrAnchor.dataset.projectsJson || '[]');
       } catch (_) {}
     }
-    if (!taskId) return;
+    if (!taskId && !forNewTask) return;
 
     const onAfterApply = options && options.onAfterApply;
     const anchorEl = (options && options.anchorEl) || cellOrAnchor;
@@ -1679,10 +1976,16 @@
       removeBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const next = currentIds.filter((id) => String(id) !== String(pid));
-        applyTaskProjects(taskId, next).then(() => {
+        if (taskId) {
+          applyTaskProjects(taskId, next).then(() => {
+            closeProjectsDropdown();
+            if (onAfterApply) onAfterApply();
+          });
+        } else {
+          currentIds = next;
+          if (onAfterApply) onAfterApply(next);
           closeProjectsDropdown();
-          if (onAfterApply) onAfterApply();
-        });
+        }
       });
       currentList.appendChild(item);
     });
@@ -1730,10 +2033,16 @@
           btn.addEventListener('click', (e) => {
             e.stopPropagation();
             const next = [...currentIds, p.id];
-            applyTaskProjects(taskId, next).then(() => {
+            if (taskId) {
+              applyTaskProjects(taskId, next).then(() => {
+                closeProjectsDropdown();
+                if (onAfterApply) onAfterApply();
+              });
+            } else {
+              currentIds = next;
+              if (onAfterApply) onAfterApply(next);
               closeProjectsDropdown();
-              if (onAfterApply) onAfterApply();
-            });
+            }
           });
           resultsDiv.appendChild(btn);
         });
@@ -1751,10 +2060,15 @@
               body: JSON.stringify({ name: searchInput.value.trim() }),
             });
             const next = [...currentIds, created.id];
-            await applyTaskProjects(taskId, next);
+            if (taskId) {
+              await applyTaskProjects(taskId, next);
+              if (onAfterApply) onAfterApply();
+            } else {
+              currentIds = next;
+              if (onAfterApply) onAfterApply(next);
+            }
             loadProjects();
             closeProjectsDropdown();
-            if (onAfterApply) onAfterApply();
           } catch (err) {
             console.error('Failed to create project:', err);
           }
@@ -1771,12 +2085,19 @@
     projectsDropdownEl = dropdown;
 
     const rect = anchorEl.getBoundingClientRect();
+    const minW = Math.max(rect.width, 240);
+    const anchorInRightPanel = anchorEl.closest('.inspector-content') || anchorEl.closest('.right-panel');
     dropdown.style.position = 'fixed';
-    dropdown.style.left = `${rect.left}px`;
     dropdown.style.top = `${rect.bottom + 4}px`;
-    dropdown.style.minWidth = `${Math.max(rect.width, 240)}px`;
+    dropdown.style.minWidth = `${minW}px`;
     dropdown.style.maxHeight = '320px';
     dropdown.style.overflowY = 'auto';
+    if (anchorInRightPanel) {
+      dropdown.style.right = `${window.innerWidth - rect.right}px`;
+      dropdown.style.left = 'auto';
+    } else {
+      dropdown.style.left = `${rect.left}px`;
+    }
 
     requestAnimationFrame(() => {
       document.addEventListener('click', projectsDropdownOutside);
@@ -1786,7 +2107,7 @@
 
   function buildTaskRow(t) {
     const source = lastTaskSource != null ? lastTaskSource : 'project';
-    const { order, visible, showFlagged, showHighlightDue, manualSort } = getDisplayProperties(source);
+    const { order, visible, showFlagged, showHighlightDue, showPriority, manualSort } = getDisplayProperties(source);
     const row = document.createElement('div');
     row.className = 'task-row';
     row.dataset.type = 'task';
@@ -1807,7 +2128,14 @@
     const circleTickSvg = '<svg class="status-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 8c0 4.418 3.59 8 8 8 4.418 0 8-3.59 8-8 0-4.418-3.59-8-8-8-4.418 0-8 3.59-8 8zm2 0c0-3.307 2.686-6 6-6 3.307 0 6 2.686 6 6 0 3.307-2.686 6-6 6-3.307 0-6-2.686-6-6zm9.778-1.672l-1.414-1.414L6.828 8.45 5.414 7.036 4 8.45l2.828 2.828 3.182-3.182 1.768-1.768z" fill-rule="evenodd"/></svg>';
     const folderOpenSvg = '<svg class="project-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>';
     const documentIconSvg = '<svg class="description-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.29289 1.29289C9.48043 1.10536 9.73478 1 10 1H18C19.6569 1 21 2.34315 21 4V20C21 21.6569 19.6569 23 18 23H6C4.34315 23 3 21.6569 3 20V8C3 7.73478 3.10536 7.48043 3.29289 7.29289L9.29289 1.29289ZM18 3H11V8C11 8.55228 10.5523 9 10 9H5V20C5 20.5523 5.44772 21 6 21H18C18.5523 21 19 20.5523 19 20V4C19 3.44772 18.5523 3 18 3ZM6.41421 7H9V4.41421L6.41421 7ZM7 13C7 12.4477 7.44772 12 8 12H16C16.5523 12 17 12.4477 17 13C17 13.5523 16.5523 14 16 14H8C7.44772 14 7 13.4477 7 13ZM7 17C7 16.4477 7.44772 16 8 16H16C16.5523 16 17 16.4477 17 17C17 17.5523 16.5523 18 16 18H8C7.44772 18 7 17.5523 7 17Z"/></svg>';
+    const tagIconSvg = '<svg class="tags-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C4 4.44772 4.44772 4 5 4H11.1716C11.4368 4 11.6911 4.10536 11.8787 4.29289L19.8787 12.2929C20.2692 12.6834 20.2692 13.3166 19.8787 13.7071L13.7071 19.8787C13.3166 20.2692 12.6834 20.2692 12.2929 19.8787L4.29289 11.8787C4.10536 11.6911 4 11.4368 4 11.1716V5ZM5 2C3.34315 2 2 3.34315 2 5L2 11.1716C2 11.9672 2.31607 12.7303 2.87868 13.2929L10.8787 21.2929C12.0503 22.4645 13.9497 22.4645 15.1213 21.2929L21.2929 15.1213C22.4645 13.9497 22.4645 12.0503 21.2929 10.8787L13.2929 2.87868C12.7303 2.31607 11.9672 2 11.1716 2H5ZM8 10C9.10457 10 10 9.10457 10 8C10 6.89543 9.10457 6 8 6C6.89543 6 6 6.89543 6 8C6 9.10457 6.89543 10 8 10Z"/></svg>';
     const refreshIconSvg = '<svg class="recurrence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4.06 13C4.02 12.67 4 12.34 4 12c0-4.42 3.58-8 8-8 2.5 0 4.73 1.15 6.2 2.94M19.94 11C19.98 11.33 20 11.66 20 12c0 4.42-3.58 8-8 8-2.5 0-4.73-1.15-6.2-2.94M9 17H6v.29M18.2 4v2.94M18.2 6.94V7L15.2 7M6 20v-2.71"/></svg>';
+
+    function formatTitleWithTagPills(titleText) {
+      if (!titleText) return '';
+      const escaped = titleText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      return escaped.replace(/(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
+    }
 
     function addCell(key, html, opts) {
       if (!html && !(opts && opts.descriptionTaskId != null)) return;
@@ -1839,15 +2167,26 @@
       if (opts && opts.recurrenceTaskId != null) {
         cell.dataset.recurrenceTaskId = opts.recurrenceTaskId;
       }
+      if (opts && opts.tagsTaskId != null) {
+        cell.dataset.tagsTaskId = opts.tagsTaskId;
+        cell.dataset.tagsJson = opts.tagsJson != null ? opts.tagsJson : '[]';
+      }
       row.appendChild(cell);
     }
 
-    addCell('status', statusComplete ? circleTickSvg : circleOpenSvg);
+    if (showPriority) {
+      const p = t.priority;
+      const cls = priorityClass(p);
+      const title = p != null ? `Priority ${p} (click to change)` : 'No priority (click to set)';
+      const priorityHtml = `<span class="priority-circle-wrap ${cls}" title="${title}">${PRIORITY_CIRCLE_SVG}</span>`;
+      addCell('priority', priorityHtml, { priorityTaskId: t.id, priorityValue: p });
+    }
     if (showFlagged) {
       const flagged = t.flagged === true || t.flagged === 1;
       addCell('flagged', `<span class="flagged-icon ${flagged ? '' : 'empty'}" title="${flagged ? 'Flagged (click to unflag)' : 'Click to flag'}">★</span>`, { flaggedTaskId: t.id, flaggedValue: flagged });
     }
-    addCell('title', `<span class="cell-value">${(t.title || '(no title)').trim().replace(/</g, '&lt;')}</span>`, { titleTaskId: t.id });
+    addCell('status', statusComplete ? circleTickSvg : circleOpenSvg);
+    addCell('title', `<span class="cell-value">${formatTitleWithTagPills((t.title || '(no title)').trim())}</span>`, { titleTaskId: t.id });
 
     order.forEach((key) => {
       if (!visible.has(key)) return;
@@ -1871,13 +2210,6 @@
         html = calCheckSvg + (hasVal ? `<span class="cell-value ${stateClass}">${formatDate(t.due_date)}</span>` : `<span class="cell-value empty" title="Click to set date">—</span>`);
         addCell(key, html, { dateField: 'due_date', dateValue: dateVal || '' });
         return;
-      } else if (key === 'priority') {
-        const p = t.priority;
-        const cls = priorityClass(p);
-        const title = p != null ? `Priority ${p} (click to change)` : 'No priority (click to set)';
-        html = `<span class="priority-circle-wrap ${cls}" title="${title}">${PRIORITY_CIRCLE_SVG}</span>`;
-        addCell(key, html, { priorityTaskId: t.id, priorityValue: p });
-        return;
       } else if (key === 'description') {
         const d = (t.description || '').trim();
         let tooltip = d ? d.replace(/"/g, '&quot;').replace(/</g, '&lt;') : 'No description (click to add)';
@@ -1900,10 +2232,12 @@
         addCell(key, html, { projectsTaskId: t.id, projectsJson: JSON.stringify(p) });
         return;
       } else if (key === 'tags') {
-        const tg = (t.tags || []);
+        const tg = (t.tags || []).map((x) => String(x).trim()).filter(Boolean);
         const hasVal = tg.length > 0;
-        html = hasVal ? `<span class="cell-value">${tg.join(', ').replace(/</g, '&lt;')}</span>` : `<span class="cell-value empty" title="No tags">—</span>`;
-        addCell(key, html);
+        const iconClass = 'tags-icon-wrap ' + (hasVal ? '' : 'empty');
+        const title = hasVal ? `Tags: ${tg.join(', ')} (click to edit)` : 'No tags (click to assign)';
+        html = `<span class="${iconClass}" title="${title.replace(/"/g, '&quot;')}">${tagIconSvg}</span>`;
+        addCell(key, html, { tagsTaskId: t.id, tagsJson: JSON.stringify(tg) });
         return;
       } else if (key === 'recurrence') {
         const hasRec = t.recurrence && typeof t.recurrence === 'object' && (t.recurrence.freq || t.recurrence.interval);
@@ -1939,6 +2273,14 @@
     if (descriptionCell && descriptionCell.dataset.descriptionTaskId) {
       descriptionCell.classList.add('task-cell-clickable');
       descriptionCell.addEventListener('click', (ev) => openDescriptionModal(ev, descriptionCell));
+    }
+    const tagsCell = row.querySelector('.tags-cell');
+    if (tagsCell && tagsCell.dataset.tagsTaskId) {
+      tagsCell.classList.add('task-cell-clickable');
+      tagsCell.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        openTaskTagsDropdown(ev, tagsCell, { taskId: tagsCell.dataset.tagsTaskId, currentTags: JSON.parse(tagsCell.dataset.tagsJson || '[]') });
+      });
     }
     const priorityCell = row.querySelector('.priority-cell');
     if (priorityCell && priorityCell.dataset.priorityTaskId) {
@@ -1983,7 +2325,7 @@
     function saveAndClose() {
       const newTitle = (input.value || '').trim();
       const displayTitle = newTitle || '(no title)';
-      titleCell.innerHTML = `<span class="cell-value">${displayTitle.replace(/</g, '&lt;')}</span>`;
+      titleCell.innerHTML = `<span class="cell-value">${formatTitleWithTagPills(displayTitle)}</span>`;
       if (newTitle !== currentTitle) {
         updateTask(taskId, { title: newTitle }).then((updated) => {
           if (updated) updateTaskInLists(updated);
@@ -1996,7 +2338,7 @@
     }
 
     function cancel() {
-      titleCell.innerHTML = `<span class="cell-value">${(currentTitle || '(no title)').replace(/</g, '&lt;')}</span>`;
+      titleCell.innerHTML = `<span class="cell-value">${formatTitleWithTagPills(currentTitle || '(no title)')}</span>`;
     }
 
     let cancelled = false;
@@ -2094,8 +2436,8 @@
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
           const newOrder = Array.from(listEl.querySelectorAll('.task-row')).map((r) => r.dataset.id).filter(Boolean);
-          const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, sortBy: sb } = getDisplayProperties(ctx);
-          saveDisplayProperties(ctx, o, v, sf, sc, sh, sb, true, newOrder);
+          const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(ctx);
+          saveDisplayProperties(ctx, o, v, sf, sc, sh, sp, sb, true, newOrder);
           refreshTaskList();
         };
         document.addEventListener('mousemove', onMove);
@@ -2119,10 +2461,12 @@
 
   // --- Inbox (tasks with no project) ---
   function onInboxClick() {
+    currentInspectorTag = null;
     lastTaskSource = 'inbox';
     if (inboxItem) inboxItem.classList.add('selected');
     projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (tagsListEl) tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     document.getElementById('center-title').textContent = 'Inbox';
     const centerDescInbox = document.getElementById('center-description');
@@ -2270,15 +2614,17 @@
       const archiveSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M20.5 7V13C20.5 16.7712 20.5 18.6569 19.3284 19.8284C18.1569 21 16.2712 21 12.5 21H11.5C7.72876 21 5.84315 21 4.67157 19.8284C3.5 18.6569 3.5 16.7712 3.5 13V7"/><path d="M2 5C2 4.05719 2 3.58579 2.29289 3.29289C2.58579 3 3.05719 3 4 3H20C20.9428 3 21.4142 3 21.7071 3.29289C22 3.58579 22 4.05719 22 5C22 5.94281 22 6.41421 21.7071 6.70711C21.4142 7 20.9428 7 20 7H4C3.05719 7 2.58579 7 2.29289 6.70711C2 6.41421 2 5.94281 2 5Z"/><path d="M12 7L12 16M12 16L15 12.6667M12 16L9 12.6667"/></svg>';
       const minusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>';
       const moveSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
-      const starIcon = '<img src="assets/favorite-star-svgrepo-com.svg" alt="" width="14" height="14" />';
       projectsList.innerHTML = projectListCache.map((p) => {
         const name = (p.name || p.short_id || 'Project').replace(/</g, '&lt;');
         const projectTasks = projectTasksMap.get(String(p.id)) || [];
         const countHtml = countRendererNav(countTasksByBucket(projectTasks));
         const label = (p.name || p.short_id || 'Project').replace(/</g, '&lt;').replace(/"/g, '&quot;');
         const idEsc = (p.id || '').replace(/"/g, '&quot;');
-        const addFavBtn = !isInFavorites('project', p.id) ? `<button type="button" class="nav-action-btn nav-item-add-favorite" title="Add to favorites" aria-label="Add to favorites">${starIcon}</button>` : '';
-        const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-archive" title="Archive" aria-label="Archive project">${archiveSvg}</button><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete project">${minusSvg}</button>${addFavBtn}<span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
+        const isFav = isInFavorites('project', p.id);
+        const starIcon = isFav ? STAR_PROHIBITED_SVG_14 : STAR_ADD_SVG_14;
+        const favTitle = isFav ? 'Remove from favorites' : 'Add to favorites';
+        const favBtn = `<button type="button" class="nav-action-btn nav-item-favorite-toggle" data-favorite="${isFav ? '1' : '0'}" title="${favTitle}" aria-label="${favTitle}">${starIcon}</button>`;
+        const actions = `<span class="nav-item-actions">${favBtn}<button type="button" class="nav-action-btn nav-item-archive" title="Archive" aria-label="Archive project">${archiveSvg}</button><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete project">${minusSvg}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
         return `<li class="nav-item" data-type="project" data-id="${idEsc}" data-label="${label}">${name}${countHtml}${actions}</li>`;
       }).join('');
       projectsList.querySelectorAll('.nav-item').forEach((el) => {
@@ -2290,13 +2636,19 @@
       projectsList.querySelectorAll('.nav-item-delete').forEach((btn) => {
         btn.addEventListener('click', (e) => { e.stopPropagation(); onProjectDelete(e); });
       });
-      projectsList.querySelectorAll('.nav-item-add-favorite').forEach((btn) => {
+      projectsList.querySelectorAll('.nav-item-favorite-toggle').forEach((btn) => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
           const li = btn.closest('.nav-item');
           if (!li || !li.dataset.id) return;
-          addToFavorites('project', li.dataset.id, (li.dataset.label || 'Project').replace(/&quot;/g, '"'));
-          btn.remove();
+          const id = li.dataset.id;
+          const label = (li.dataset.label || 'Project').replace(/&quot;/g, '"');
+          if (isInFavorites('project', id)) {
+            removeFromFavorites('project', id);
+          } else {
+            addToFavorites('project', id, label);
+          }
+          loadProjects();
         });
       });
       projectsList.querySelectorAll('.nav-item-drag-handle').forEach((handle) => {
@@ -2317,9 +2669,11 @@
     if (ev.target.closest('.nav-item-actions')) return;
     const li = ev.currentTarget;
     if (li.classList.contains('placeholder')) return;
+    currentInspectorTag = null;
     if (inboxItem) inboxItem.classList.remove('selected');
     projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (tagsListEl) tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     li.classList.add('selected');
     const type = li.dataset.type;
@@ -2404,6 +2758,26 @@
   const favoritesListEl = document.getElementById('favorites-list');
   const NAV_PROJECT_ICON_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>';
   const NAV_LIST_ICON_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M8 5.00005C7.01165 5.00082 6.49359 5.01338 6.09202 5.21799C5.71569 5.40973 5.40973 5.71569 5.21799 6.09202C5 6.51984 5 7.07989 5 8.2V17.8C5 18.9201 5 19.4802 5.21799 19.908C5.40973 20.2843 5.71569 20.5903 6.09202 20.782C6.51984 21 7.07989 21 8.2 21H15.8C16.9201 21 17.4802 21 17.908 20.782C18.2843 20.5903 18.5903 20.2843 18.782 19.908C19 19.4802 19 18.9201 19 17.8V8.2C19 7.07989 19 6.51984 18.782 6.09202C18.5903 5.71569 18.2843 5.40973 17.908 5.21799C17.5064 5.01338 16.9884 5.00082 16 5.00005M8 5.00005V7H16V5.00005M8 5.00005V4.70711C8 4.25435 8.17986 3.82014 8.5 3.5C8.82014 3.17986 9.25435 3 9.70711 3H14.2929C14.7456 3 15.1799 3.17986 15.5 3.5C15.8201 3.82014 16 4.25435 16 4.70711V5.00005M15 12H12M15 16H12M9 12H9.01M9 16H9.01" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const NAV_TAG_ICON_SVG = '<svg class="nav-tag-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C4 4.44772 4.44772 4 5 4H11.1716C11.4368 4 11.6911 4.10536 11.8787 4.29289L19.8787 12.2929C20.2692 12.6834 20.2692 13.3166 19.8787 13.7071L13.7071 19.8787C13.3166 20.2692 12.6834 20.2692 12.2929 19.8787L4.29289 11.8787C4.10536 11.6911 4 11.4368 4 11.1716V5ZM5 2C3.34315 2 2 3.34315 2 5L2 11.1716C2 11.9672 2.31607 12.7303 2.87868 13.2929L10.8787 21.2929C12.0503 22.4645 13.9497 22.4645 15.1213 21.2929L21.2929 15.1213C22.4645 13.9497 22.4645 12.0503 21.2929 10.8787L13.2929 2.87868C12.7303 2.31607 11.9672 2 11.1716 2H5ZM8 10C9.10457 10 10 9.10457 10 8C10 6.89543 9.10457 6 8 6C6.89543 6 6 6.89543 6 8C6 9.10457 6.89543 10 8 10Z"/></svg>';
+  /* Star-add: add to favorites (from star-add-svgrepo-com). Star-prohibited: remove from favorites (from star-prohibited-svgrepo-com). Both use currentColor for theme. */
+  const STAR_ADD_SVG_14 = '<svg class="star-add-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14" xmlns="http://www.w3.org/2000/svg"><path fill-rule="nonzero" d="M12.6728137,2.75963841 L15.3563695,8.20794048 L21.3672771,9.07653583 C21.9828509,9.16548822 22.2288847,9.92194118 21.7834166,10.355994 L20.4150744,11.6887401 C19.9202594,11.4400424 19.3893043,11.2526832 18.8321893,11.1366429 L19.6468361,10.3435066 L14.7508503,9.63602099 C14.5061256,9.60065749 14.2945567,9.44694368 14.1853,9.2251246 L12,4.78840895 L9.81470005,9.2251246 C9.70544328,9.44694368 9.49387437,9.60065749 9.24914969,9.63602099 L4.35428754,10.3433442 L7.89856004,13.7927085 C8.07576033,13.9651637 8.15657246,14.2138779 8.11458106,14.4575528 L7.27468983,19.3314183 L11.0013001,17.3686786 C11.0004347,17.4123481 11,17.4561233 11,17.5 C11,18.0076195 11.0581888,18.5016483 11.1682599,18.9757801 L6.6265261,21.3681981 C6.07605002,21.6581549 5.43223188,21.1903936 5.53789075,20.5772582 L6.56928006,14.5921347 L2.21690124,10.3563034 C1.77102944,9.92237116 2.01694609,9.16551755 2.63272295,9.07653583 L8.6436305,8.20794048 L11.3271863,2.75963841 C11.6020985,2.20149668 12.3979015,2.20149668 12.6728137,2.75963841 Z M17.5,13.9992349 L17.4101244,14.0072906 C17.2060313,14.0443345 17.0450996,14.2052662 17.0080557,14.4093593 L17,14.4992349 L16.9996498,16.9992349 L14.4976498,17 L14.4077742,17.0080557 C14.2036811,17.0450996 14.0427494,17.2060313 14.0057055,17.4101244 L13.9976498,17.5 L14.0057055,17.5898756 C14.0427494,17.7939687 14.2036811,17.9549004 14.4077742,17.9919443 L14.4976498,18 L17.0006498,17.9992349 L17.0011076,20.5034847 L17.0091633,20.5933603 C17.0462073,20.7974534 17.207139,20.9583851 17.411232,20.995429 L17.5011076,21.0034847 L17.5909833,20.995429 C17.7950763,20.9583851 17.956008,20.7974534 17.993052,20.5933603 L18.0011076,20.5034847 L18.0006498,17.9992349 L20.5045655,18 L20.5944411,17.9919443 C20.7985342,17.9549004 20.9594659,17.7939687 20.9965098,17.5898756 L21.0045655,17.5 L20.9965098,17.4101244 C20.9594659,17.2060313 20.7985342,17.0450996 20.5944411,17.0080557 L20.5045655,17 L17.9996498,16.9992349 L18,14.4992349 L17.9919443,14.4093593 C17.9549004,14.2052662 17.7939687,14.0443345 17.5898756,14.0072906 L17.5,13.9992349 Z"/></svg>';
+  const STAR_PROHIBITED_SVG_14 = '<svg class="star-prohibited-icon" viewBox="0 0 24 24" fill="currentColor" width="14" height="14" xmlns="http://www.w3.org/2000/svg"><path d="M8.64372 8.20797L11.3273 2.75967C11.6022 2.20153 12.398 2.20153 12.6729 2.75967L15.3565 8.20797L21.3674 9.07657C21.9829 9.16552 22.229 9.92197 21.7835 10.356L20.4155 11.689C19.9208 11.4402 19.3899 11.2529 18.8328 11.1368L19.6469 10.3435L14.7509 9.63605C14.5062 9.60069 14.2947 9.44698 14.1854 9.22516L12.0001 4.78844L9.81479 9.22516C9.70554 9.44698 9.49397 9.60069 9.24924 9.63605L4.35438 10.3434L7.89865 13.7927C8.07585 13.9652 8.15667 14.2139 8.11468 14.4576L7.27478 19.3315L11.0013 17.3686C11.0004 17.4123 11 17.4561 11 17.5C11 18.0077 11.0582 18.5018 11.1683 18.976L6.62662 21.3682C6.07614 21.6582 5.43233 21.1904 5.53798 20.5773L6.56937 14.5922L2.217 10.3563C1.77112 9.9224 2.01704 9.16555 2.63282 9.07657L8.64372 8.20797Z"/><path d="M23 17.5C23 20.5376 20.5376 23 17.5 23C14.4624 23 12 20.5376 12 17.5C12 14.4624 14.4624 12 17.5 12C20.5376 12 23 14.4624 23 17.5ZM13.5 17.5C13.5 18.3335 13.755 19.1075 14.1911 19.7482L19.7482 14.1911C19.1075 13.755 18.3335 13.5 17.5 13.5C15.2909 13.5 13.5 15.2909 13.5 17.5ZM17.5 21.5C19.7091 21.5 21.5 19.7091 21.5 17.5C21.5 16.6665 21.245 15.8925 20.8089 15.2518L15.2518 20.8089C15.8925 21.245 16.6665 21.5 17.5 21.5Z"/></svg>';
+  const STAR_ADD_SVG_18 = '<svg class="star-add-icon" viewBox="0 0 24 24" fill="currentColor" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path fill-rule="nonzero" d="M12.6728137,2.75963841 L15.3563695,8.20794048 L21.3672771,9.07653583 C21.9828509,9.16548822 22.2288847,9.92194118 21.7834166,10.355994 L20.4150744,11.6887401 C19.9202594,11.4400424 19.3893043,11.2526832 18.8321893,11.1366429 L19.6468361,10.3435066 L14.7508503,9.63602099 C14.5061256,9.60065749 14.2945567,9.44694368 14.1853,9.2251246 L12,4.78840895 L9.81470005,9.2251246 C9.70544328,9.44694368 9.49387437,9.60065749 9.24914969,9.63602099 L4.35428754,10.3433442 L7.89856004,13.7927085 C8.07576033,13.9651637 8.15657246,14.2138779 8.11458106,14.4575528 L7.27468983,19.3314183 L11.0013001,17.3686786 C11.0004347,17.4123481 11,17.4561233 11,17.5 C11,18.0076195 11.0581888,18.5016483 11.1682599,18.9757801 L6.6265261,21.3681981 C6.07605002,21.6581549 5.43223188,21.1903936 5.53789075,20.5772582 L6.56928006,14.5921347 L2.21690124,10.3563034 C1.77102944,9.92237116 2.01694609,9.16551755 2.63272295,9.07653583 L8.6436305,8.20794048 L11.3271863,2.75963841 C11.6020985,2.20149668 12.3979015,2.20149668 12.6728137,2.75963841 Z M17.5,13.9992349 L17.4101244,14.0072906 C17.2060313,14.0443345 17.0450996,14.2052662 17.0080557,14.4093593 L17,14.4992349 L16.9996498,16.9992349 L14.4976498,17 L14.4077742,17.0080557 C14.2036811,17.0450996 14.0427494,17.2060313 14.0057055,17.4101244 L13.9976498,17.5 L14.0057055,17.5898756 C14.0427494,17.7939687 14.2036811,17.9549004 14.4077742,17.9919443 L14.4976498,18 L17.0006498,17.9992349 L17.0011076,20.5034847 L17.0091633,20.5933603 C17.0462073,20.7974534 17.207139,20.9583851 17.411232,20.995429 L17.5011076,21.0034847 L17.5909833,20.995429 C17.7950763,20.9583851 17.956008,20.7974534 17.993052,20.5933603 L18.0011076,20.5034847 L18.0006498,17.9992349 L20.5045655,18 L20.5944411,17.9919443 C20.7985342,17.9549004 20.9594659,17.7939687 20.9965098,17.5898756 L21.0045655,17.5 L20.9965098,17.4101244 C20.9594659,17.2060313 20.7985342,17.0450996 20.5944411,17.0080557 L20.5045655,17 L17.9996498,16.9992349 L18,14.4992349 L17.9919443,14.4093593 C17.9549004,14.2052662 17.7939687,14.0443345 17.5898756,14.0072906 L17.5,13.9992349 Z"/></svg>';
+  const STAR_PROHIBITED_SVG_18 = '<svg class="star-prohibited-icon" viewBox="0 0 24 24" fill="currentColor" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M8.64372 8.20797L11.3273 2.75967C11.6022 2.20153 12.398 2.20153 12.6729 2.75967L15.3565 8.20797L21.3674 9.07657C21.9829 9.16552 22.229 9.92197 21.7835 10.356L20.4155 11.689C19.9208 11.4402 19.3899 11.2529 18.8328 11.1368L19.6469 10.3435L14.7509 9.63605C14.5062 9.60069 14.2947 9.44698 14.1854 9.22516L12.0001 4.78844L9.81479 9.22516C9.70554 9.44698 9.49397 9.60069 9.24924 9.63605L4.35438 10.3434L7.89865 13.7927C8.07585 13.9652 8.15667 14.2139 8.11468 14.4576L7.27478 19.3315L11.0013 17.3686C11.0004 17.4123 11 17.4561 11 17.5C11 18.0077 11.0582 18.5018 11.1683 18.976L6.62662 21.3682C6.07614 21.6582 5.43233 21.1904 5.53798 20.5773L6.56937 14.5922L2.217 10.3563C1.77112 9.9224 2.01704 9.16555 2.63282 9.07657L8.64372 8.20797Z"/><path d="M23 17.5C23 20.5376 20.5376 23 17.5 23C14.4624 23 12 20.5376 12 17.5C12 14.4624 14.4624 12 17.5 12C20.5376 12 23 14.4624 23 17.5ZM13.5 17.5C13.5 18.3335 13.755 19.1075 14.1911 19.7482L19.7482 14.1911C19.1075 13.755 18.3335 13.5 17.5 13.5C15.2909 13.5 13.5 15.2909 13.5 17.5ZM17.5 21.5C19.7091 21.5 21.5 19.7091 21.5 17.5C21.5 16.6665 21.245 15.8925 20.8089 15.2518L15.2518 20.8089C15.8925 21.245 16.6665 21.5 17.5 21.5Z"/></svg>';
+  const INSPECTOR_STAR_ADD_SVG = STAR_ADD_SVG_18;
+  const INSPECTOR_STAR_PROHIBITED_SVG = STAR_PROHIBITED_SVG_18;
+  const INSPECTOR_ARCHIVE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M20.5 7V13C20.5 16.7712 20.5 18.6569 19.3284 19.8284C18.1569 21 16.2712 21 12.5 21H11.5C7.72876 21 5.84315 21 4.67157 19.8284C3.5 18.6569 3.5 16.7712 3.5 13V7"/><path d="M2 5C2 4.05719 2 3.58579 2.29289 3.29289C2.58579 3 3.05719 3 4 3H20C20.9428 3 21.4142 3 21.7071 3.29289C22 3.58579 22 4.05719 22 5C22 5.94281 22 6.41421 21.7071 6.70711C21.4142 7 20.9428 7 20 7H4C3.05719 7 2.58579 7 2.29289 6.70711C2 6.41421 2 5.94281 2 5Z"/><path d="M12 7L12 16M12 16L15 12.6667M12 16L9 12.6667"/></svg>';
+  const INSPECTOR_TRASH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M18 6L17.1991 18.0129C17.129 19.065 17.0939 19.5911 16.8667 19.99C16.6666 20.3412 16.3648 20.6235 16.0011 20.7998C15.588 21 15.0607 21 14.0062 21H9.99377C8.93927 21 8.41202 21 7.99889 20.7998C7.63517 20.6235 7.33339 20.3412 7.13332 19.99C6.90607 19.5911 6.871 19.065 6.80086 18.0129L6 6M4 6H20M16 6L15.7294 5.18807C15.4671 4.40125 15.3359 4.00784 15.0927 3.71698C14.8779 3.46013 14.6021 3.26132 14.2905 3.13878C13.9376 3 13.523 3 12.6936 3H11.3064C10.477 3 10.0624 3 9.70951 3.13878C9.39792 3.26132 9.12208 3.46013 8.90729 3.71698C8.66405 4.00784 8.53292 4.40125 8.27064 5.18807L8 6M14 10V17M10 10V17"/></svg>';
+  const INSPECTOR_SAVE_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M18.1716 1C18.702 1 19.2107 1.21071 19.5858 1.58579L22.4142 4.41421C22.7893 4.78929 23 5.29799 23 5.82843V20C23 21.6569 21.6569 23 20 23H4C2.34315 23 1 21.6569 1 20V4C1 2.34315 2.34315 1 4 1H18.1716ZM4 3C3.44772 3 3 3.44772 3 4V20C3 20.5523 3.44772 21 4 21L5 21L5 15C5 13.3431 6.34315 12 8 12L16 12C17.6569 12 19 13.3431 19 15V21H20C20.5523 21 21 20.5523 21 20V6.82843C21 6.29799 20.7893 5.78929 20.4142 5.41421L18.5858 3.58579C18.2107 3.21071 17.702 3 17.1716 3H17V5C17 6.65685 15.6569 8 14 8H10C8.34315 8 7 6.65685 7 5V3H4ZM17 21V15C17 14.4477 16.5523 14 16 14L8 14C7.44772 14 7 14.4477 7 15L7 21L17 21ZM9 3H15V5C15 5.55228 14.5523 6 14 6H10C9.44772 6 9 5.55228 9 5V3Z"/></svg>';
+  /* Duplicate icon: from duplicate-document asset, inline SVG with currentColor for theme */
+  const INSPECTOR_DUPLICATE_SVG = '<svg viewBox="0 0 512 512" fill="currentColor" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><g transform="translate(64, 42.666667)"><path d="M320,128 L384,192 L384,426.666667 L128,426.666667 L128,128 L320,128 Z M302.314667,170.666667 L170.666667,170.666667 L170.666667,384 L341.333333,384 L341.333333,209.685333 L302.314667,170.666667 Z M277.333333,213.333333 L277.333,256 L320,256 L320,298.666667 L277.333,298.666 L277.333333,341.333333 L234.666667,341.333333 L234.666,298.666 L192,298.666667 L192,256 L234.666,256 L234.666667,213.333333 L277.333333,213.333333 Z M192,0 L256,64 L256,106.666 L213.333,106.666 L213.333333,81.6853333 L174.314667,42.6666667 L42.6666667,42.6666667 L42.6666667,256 L106.666,256 L106.666,298.666 L0,298.666667 L0,0 L192,0 Z"/></g></svg>';
+  const INSPECTOR_STATUS_TICK_SVG = '<svg class="inspector-status-img" viewBox="0 0 16 16" fill="currentColor" width="15" height="15" xmlns="http://www.w3.org/2000/svg"><path d="M0 8c0 4.418 3.59 8 8 8 4.418 0 8-3.59 8-8 0-4.418-3.59-8-8-8-4.418 0-8 3.59-8 8zm2 0c0-3.307 2.686-6 6-6 3.307 0 6 2.686 6 6 0 3.307-2.686 6-6 6-3.307 0-6-2.686-6-6zm9.778-1.672l-1.414-1.414L6.828 8.45 5.414 7.036 4 8.45l2.828 2.828 3.182-3.182 1.768-1.768z" fill-rule="evenodd"/></svg>';
+  const INSPECTOR_STATUS_OPEN_SVG = '<svg class="inspector-status-img" viewBox="0 0 32 32" fill="currentColor" width="15" height="15" xmlns="http://www.w3.org/2000/svg"><path d="M0 16q0 3.264 1.28 6.208t3.392 5.12 5.12 3.424 6.208 1.248 6.208-1.248 5.12-3.424 3.392-5.12 1.28-6.208-1.28-6.208-3.392-5.12-5.088-3.392-6.24-1.28q-3.264 0-6.208 1.28t-5.12 3.392-3.392 5.12-1.28 6.208zM4 16q0-3.264 1.6-6.016t4.384-4.352 6.016-1.632 6.016 1.632 4.384 4.352 1.6 6.016-1.6 6.048-4.384 4.352-6.016 1.6-6.016-1.6-4.384-4.352-1.6-6.048z"/></svg>';
+  const INSPECTOR_DOCUMENT_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.29289 1.29289C9.48043 1.10536 9.73478 1 10 1H18C19.6569 1 21 2.34315 21 4V20C21 21.6569 19.6569 23 18 23H6C4.34315 23 3 21.6569 3 20V8C3 7.73478 3.10536 7.48043 3.29289 7.29289L9.29289 1.29289ZM18 3H11V8C11 8.55228 10.5523 9 10 9H5V20C5 20.5523 5.44772 21 6 21H18C18.5523 21 19 20.5523 19 20V4C19 3.44772 18.5523 3 18 3ZM6.41421 7H9V4.41421L6.41421 7ZM7 13C7 12.4477 7.44772 12 8 12H16C16.5523 12 17 12.4477 17 13C17 13.5523 16.5523 14 16 14H8C7.44772 14 7 13.5523 7 13ZM7 17C7 16.4477 7.44772 16 8 16H16C16.5523 16 17 16.4477 17 17C17 17.5523 16.5523 18 16 18H8C7.44772 18 7 17.5523 7 17Z"/></svg>';
+  /* Tag icon: from assets/tag-svgrepo-com.svg, currentColor for theme */
+  const INSPECTOR_TAG_SVG = '<svg class="inspector-tag-icon" viewBox="0 0 24 24" fill="currentColor" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C4 4.44772 4.44772 4 5 4H11.1716C11.4368 4 11.6911 4.10536 11.8787 4.29289L19.8787 12.2929C20.2692 12.6834 20.2692 13.3166 19.8787 13.7071L13.7071 19.8787C13.3166 20.2692 12.6834 20.2692 12.2929 19.8787L4.29289 11.8787C4.10536 11.6911 4 11.4368 4 11.1716V5ZM5 2C3.34315 2 2 3.34315 2 5L2 11.1716C2 11.9672 2.31607 12.7303 2.87868 13.2929L10.8787 21.2929C12.0503 22.4645 13.9497 22.4645 15.1213 21.2929L21.2929 15.1213C22.4645 13.9497 22.4645 12.0503 21.2929 10.8787L13.2929 2.87868C12.7303 2.31607 11.9672 2 11.1716 2H5ZM8 10C9.10457 10 10 9.10457 10 8C10 6.89543 9.10457 6 8 6C6.89543 6 6 6.89543 6 8C6 9.10457 6.89543 10 8 10Z"/></svg>';
+  /* Projects icon: inline SVG with currentColor for theme (from folder-open asset) */
+  const INSPECTOR_PROJECTS_ICON_SVG = '<svg class="inspector-projects-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>';
   function loadFavorites() {
     if (!favoritesListEl) return;
     const favs = getFavorites();
@@ -2411,16 +2785,18 @@
       favoritesListEl.innerHTML = '<li class="nav-item placeholder">—</li>';
       return;
     }
-    const minusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>';
     const moveSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
     favoritesListEl.innerHTML = favs.map((f) => {
       const name = (f.label || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
       const idEsc = (f.id || '').replace(/"/g, '&quot;');
-      const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-delete nav-item-favorite-remove" title="Remove from favorites" aria-label="Remove from favorites">${minusSvg}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
-      const iconSvg = f.type === 'list' ? NAV_LIST_ICON_SVG : NAV_PROJECT_ICON_SVG;
+      const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-delete nav-item-favorite-remove" title="Remove from favorites" aria-label="Remove from favorites">${STAR_PROHIBITED_SVG_14}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
+      const iconSvg = f.type === 'list' ? NAV_LIST_ICON_SVG : f.type === 'tag' ? NAV_TAG_ICON_SVG : NAV_PROJECT_ICON_SVG;
       const iconHtml = `<span class="nav-item-icon">${iconSvg}</span>`;
       if (f.type === 'list') {
         return `<li class="nav-item nav-item-favorite" data-type="list" data-list-id="${idEsc}" data-id="${idEsc}" data-label="${name}">${iconHtml}${name}${actions}</li>`;
+      }
+      if (f.type === 'tag') {
+        return `<li class="nav-item nav-item-favorite" data-type="tag" data-tag="${idEsc}" data-id="${idEsc}" data-label="${name}">${iconHtml}${name}${actions}</li>`;
       }
       return `<li class="nav-item nav-item-favorite" data-type="project" data-id="${idEsc}" data-label="${name}">${iconHtml}${name}${actions}</li>`;
     }).join('');
@@ -2442,11 +2818,23 @@
     if (inboxItem) inboxItem.classList.remove('selected');
     if (projectsList) projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (tagsListEl) tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     li.classList.add('selected');
     const type = li.dataset.type;
-    const id = type === 'list' ? li.dataset.listId : li.dataset.id;
-    const label = li.dataset.label || (type === 'project' ? 'Project' : 'List');
+    const id = type === 'list' ? li.dataset.listId : type === 'tag' ? (li.dataset.tag || li.dataset.id) : li.dataset.id;
+    const label = li.dataset.label || (type === 'project' ? 'Project' : type === 'tag' ? 'Tag' : 'List');
+    if (type === 'tag' && id) {
+      currentInspectorTag = id;
+      document.getElementById('inspector-title').textContent = 'Tag';
+      loadTagDetails(id);
+      const tagLi = tagsListEl && tagsListEl.querySelector(`.nav-item[data-tag="${id.replace(/"/g, '\\"')}"]`);
+      if (tagLi) {
+        tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+        tagLi.classList.add('selected');
+      }
+      return;
+    }
     if (type === 'project' && id) {
       lastTaskSource = id;
       document.getElementById('center-title').textContent = label;
@@ -2473,7 +2861,7 @@
     const li = ev.target.closest('.nav-item-favorite');
     if (!li) return;
     const type = li.dataset.type;
-    const id = type === 'list' ? li.dataset.listId : li.dataset.id;
+    const id = type === 'list' ? li.dataset.listId : type === 'tag' ? (li.dataset.tag || li.dataset.id) : li.dataset.id;
     removeFromFavorites(type, id);
   }
   function applyListOrder(lists) {
@@ -2509,13 +2897,15 @@
     }
     const minusSvg = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg>';
     const moveSvg = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
-    const starIconList = '<img src="assets/favorite-star-svgrepo-com.svg" alt="" width="14" height="14" />';
     listsListEl.innerHTML = lists.map((list) => {
       const name = (list.name || '').replace(/</g, '&lt;');
       const label = (list.name || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
       const listIdEsc = (list.id || '').replace(/"/g, '&quot;');
-      const addFavBtn = !isInFavorites('list', list.id) ? `<button type="button" class="nav-action-btn nav-item-add-favorite" title="Add to favorites" aria-label="Add to favorites">${starIconList}</button>` : '';
-      const actions = `<span class="nav-item-actions"><button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete list">${minusSvg}</button>${addFavBtn}<span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
+      const isFav = isInFavorites('list', list.id);
+      const starIconList = isFav ? STAR_PROHIBITED_SVG_14 : STAR_ADD_SVG_14;
+      const favTitle = isFav ? 'Remove from favorites' : 'Add to favorites';
+      const favBtn = `<button type="button" class="nav-action-btn nav-item-favorite-toggle" data-favorite="${isFav ? '1' : '0'}" title="${favTitle}" aria-label="${favTitle}">${starIconList}</button>`;
+      const actions = `<span class="nav-item-actions">${favBtn}<button type="button" class="nav-action-btn nav-item-delete" title="Delete" aria-label="Delete list">${minusSvg}</button><span class="nav-item-drag-handle" title="Reorder" aria-label="Drag to reorder">${moveSvg}</span></span>`;
       return `<li class="nav-item" data-type="list" data-list-id="${listIdEsc}" data-label="${label}">${name}${actions}</li>`;
     }).join('');
     listsListEl.querySelectorAll('.nav-item').forEach((el) => {
@@ -2524,26 +2914,345 @@
     listsListEl.querySelectorAll('.nav-item-delete').forEach((btn) => {
       btn.addEventListener('click', (e) => { e.stopPropagation(); onListDelete(e); });
     });
-    listsListEl.querySelectorAll('.nav-item-add-favorite').forEach((btn) => {
+    listsListEl.querySelectorAll('.nav-item-favorite-toggle').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const li = btn.closest('.nav-item');
         if (!li || !li.dataset.listId) return;
-        addToFavorites('list', li.dataset.listId, (li.dataset.label || 'List').replace(/&quot;/g, '"'));
-        btn.remove();
+        const id = li.dataset.listId;
+        const label = (li.dataset.label || 'List').replace(/&quot;/g, '"');
+        if (isInFavorites('list', id)) {
+          removeFromFavorites('list', id);
+        } else {
+          addToFavorites('list', id, label);
+        }
+        loadLists();
       });
     });
     listsListEl.querySelectorAll('.nav-item-drag-handle').forEach((handle) => {
       handle.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); onNavItemDragStart(e, 'list'); });
     });
   }
+
+  let cachedTagNames = [];
+
+  // --- # Hashtag autocomplete (title / description) ---
+  let hashtagAutocompleteDropdown = null;
+  let hashtagAutocompleteState = null;
+
+  function getHashtagDropdown() {
+    if (!hashtagAutocompleteDropdown) {
+      const d = document.createElement('div');
+      d.id = 'hashtag-autocomplete-dropdown';
+      d.className = 'hashtag-autocomplete-dropdown hidden';
+      d.setAttribute('role', 'listbox');
+      document.body.appendChild(d);
+      hashtagAutocompleteDropdown = d;
+    }
+    return hashtagAutocompleteDropdown;
+  }
+
+  function hideHashtagAutocomplete() {
+    const dd = getHashtagDropdown();
+    dd.classList.add('hidden');
+    dd.innerHTML = '';
+    hashtagAutocompleteState = null;
+  }
+
+  function showHashtagAutocomplete(anchorEl, fragment, tagNames, onSelect) {
+    const filtered = (tagNames || []).filter((t) => t.toLowerCase().startsWith((fragment || '').toLowerCase())).slice(0, 10);
+    const dd = getHashtagDropdown();
+    dd.innerHTML = '';
+    if (!filtered.length) {
+      dd.classList.add('hidden');
+      hashtagAutocompleteState = null;
+      return;
+    }
+    const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+    filtered.forEach((tag, i) => {
+      const item = document.createElement('div');
+      item.className = 'hashtag-autocomplete-item';
+      item.setAttribute('role', 'option');
+      item.dataset.tag = tag;
+      item.dataset.index = String(i);
+      item.innerHTML = '#' + escape(tag);
+      item.addEventListener('click', () => {
+        onSelect(tag);
+        hideHashtagAutocomplete();
+      });
+      dd.appendChild(item);
+    });
+    const rect = anchorEl.getBoundingClientRect();
+    dd.style.left = rect.left + 'px';
+    dd.style.top = (rect.bottom + 2) + 'px';
+    dd.style.minWidth = Math.max(rect.width, 120) + 'px';
+    dd.classList.remove('hidden');
+    hashtagAutocompleteState = { anchorEl, fragment, tagNames: filtered, onSelect, selectedIndex: 0 };
+    dd.querySelectorAll('.hashtag-autocomplete-item').forEach((el, i) => el.classList.toggle('selected', i === 0));
+  }
+
+  function attachHashtagAutocomplete(el) {
+    if (!el || el.dataset.hashtagAutocomplete === 'true') return;
+    el.dataset.hashtagAutocomplete = 'true';
+
+    el.addEventListener('input', () => {
+      const value = el.value || '';
+      const start = el.selectionStart != null ? el.selectionStart : value.length;
+      const textBefore = value.substring(0, start);
+      const lastHash = textBefore.lastIndexOf('#');
+      if (lastHash === -1) {
+        hideHashtagAutocomplete();
+        return;
+      }
+      const fragment = textBefore.substring(lastHash + 1);
+      if (!/^[a-zA-Z0-9_-]*$/.test(fragment)) {
+        hideHashtagAutocomplete();
+        return;
+      }
+      const tags = cachedTagNames.length ? cachedTagNames : [];
+      const onSelect = (tag) => {
+        const val = el.value || '';
+        const st = el.selectionStart != null ? el.selectionStart : val.length;
+        const before = val.substring(0, st);
+        const hashIdx = before.lastIndexOf('#');
+        if (hashIdx === -1) return;
+        const newText = val.substring(0, hashIdx) + '#' + tag + ' ' + val.substring(st);
+        el.value = newText;
+        const newPos = hashIdx + 1 + tag.length + 1;
+        el.setSelectionRange(newPos, newPos);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      showHashtagAutocomplete(el, fragment, tags, onSelect);
+    });
+
+    el.addEventListener('keydown', (e) => {
+      if (!hashtagAutocompleteState || hashtagAutocompleteState.anchorEl !== el) return;
+      const dd = getHashtagDropdown();
+      if (dd.classList.contains('hidden')) return;
+      const items = dd.querySelectorAll('.hashtag-autocomplete-item');
+      if (!items.length) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        hashtagAutocompleteState.selectedIndex = (hashtagAutocompleteState.selectedIndex + 1) % items.length;
+        items.forEach((item, i) => item.classList.toggle('selected', i === hashtagAutocompleteState.selectedIndex));
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        hashtagAutocompleteState.selectedIndex = (hashtagAutocompleteState.selectedIndex - 1 + items.length) % items.length;
+        items.forEach((item, i) => item.classList.toggle('selected', i === hashtagAutocompleteState.selectedIndex));
+        return;
+      }
+      if (e.key === 'Enter' && items[hashtagAutocompleteState.selectedIndex]) {
+        e.preventDefault();
+        const tag = items[hashtagAutocompleteState.selectedIndex].dataset.tag;
+        if (tag) hashtagAutocompleteState.onSelect(tag);
+        hideHashtagAutocomplete();
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        hideHashtagAutocomplete();
+      }
+    });
+
+    el.addEventListener('blur', () => {
+      setTimeout(hideHashtagAutocomplete, 150);
+    });
+  }
+
+  function getTagSort() {
+    const v = (localStorage.getItem(NAV_TAG_SORT_KEY) || 'name_asc').trim();
+    return ['name_asc', 'name_desc', 'count_asc', 'count_desc'].includes(v) ? v : 'name_asc';
+  }
+  function setTagSort(value) {
+    if (['name_asc', 'name_desc', 'count_asc', 'count_desc'].includes(value)) {
+      localStorage.setItem(NAV_TAG_SORT_KEY, value);
+    }
+  }
+
+  async function loadTags() {
+    if (!tagsListEl) return;
+    if (!getApiKey()) {
+      tagsListEl.innerHTML = '<li class="nav-item placeholder">Set API key to list tags</li>';
+      cachedTagNames = [];
+      return;
+    }
+    try {
+      let tags = await api('/api/external/tags');
+      tags = Array.isArray(tags) ? tags.slice() : [];
+      cachedTagNames = tags.map((item) => String(item.tag || '').trim()).filter(Boolean);
+      if (!tags.length) {
+        tagsListEl.innerHTML = '<li class="nav-item placeholder">—</li>';
+        return;
+      }
+      const sort = getTagSort();
+      if (sort === 'name_asc') tags.sort((a, b) => String(a.tag || '').localeCompare(String(b.tag || ''), undefined, { sensitivity: 'base' }));
+      else if (sort === 'name_desc') tags.sort((a, b) => String(b.tag || '').localeCompare(String(a.tag || ''), undefined, { sensitivity: 'base' }));
+      else if (sort === 'count_asc') tags.sort((a, b) => (Number(a.count) || 0) - (Number(b.count) || 0));
+      else if (sort === 'count_desc') tags.sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0));
+
+      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      tagsListEl.innerHTML = tags.map((item) => {
+        const rawTag = String(item.tag || '').trim();
+        const tag = escape(rawTag);
+        const count = Number(item.count) || 0;
+        const isFav = isInFavorites('tag', rawTag);
+        const starIcon = isFav ? STAR_PROHIBITED_SVG_14 : STAR_ADD_SVG_14;
+        const favTitle = isFav ? 'Remove from favorites' : 'Add to favorites';
+        const favBtn = `<button type="button" class="nav-action-btn nav-item-favorite-toggle" data-favorite="${isFav ? '1' : '0'}" title="${favTitle}" aria-label="${favTitle}">${starIcon}</button>`;
+        const actions = `<span class="nav-item-actions">${favBtn}</span>`;
+        return `<li class="nav-item" data-type="tag" data-tag="${tag}">#${tag} <span class="nav-item-count nav-item-count-tag">${count}</span>${actions}</li>`;
+      }).join('');
+      tagsListEl.querySelectorAll('.nav-item').forEach((el) => {
+        el.addEventListener('click', onTagClick);
+      });
+      tagsListEl.querySelectorAll('.nav-item-favorite-toggle').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const li = btn.closest('.nav-item');
+          if (!li || !li.dataset.tag) return;
+          const tagName = li.dataset.tag || '';
+          if (isInFavorites('tag', tagName)) {
+            removeFromFavorites('tag', tagName);
+          } else {
+            addToFavorites('tag', tagName, '#' + tagName);
+          }
+          loadTags();
+          loadFavorites();
+        });
+      });
+    } catch (e) {
+      tagsListEl.innerHTML = '<li class="nav-item placeholder">Failed to load tags</li>';
+    }
+  }
+  function syncTagsSortActive() {
+    const current = getTagSort();
+    document.querySelectorAll('.tags-sort-row .tags-sort-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.sort === current);
+    });
+  }
+  document.querySelectorAll('.tags-sort-row .tags-sort-btn').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      setTagSort(btn.dataset.sort);
+      syncTagsSortActive();
+      loadTags();
+    });
+  });
+
+  function onTagClick(ev) {
+    const li = ev.currentTarget;
+    if (li.classList.contains('placeholder')) return;
+    const tag = li.dataset.tag;
+    if (!tag) return;
+    currentInspectorTag = tag;
+    if (inboxItem) inboxItem.classList.remove('selected');
+    if (projectsList) projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (tagsListEl) tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    li.classList.add('selected');
+    document.getElementById('inspector-title').textContent = 'Tag';
+    loadTagDetails(tag);
+  }
+
+  function loadTagDetails(tagName) {
+    const div = document.getElementById('inspector-content');
+    const titleEl = document.getElementById('inspector-title');
+    if (!div || !titleEl) return;
+    currentInspectorTag = tagName;
+    titleEl.textContent = 'Tag';
+    const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    const tagEsc = escape(tagName);
+    div.innerHTML = '<div class="inspector-content-inner">' +
+      '<p class="inspector-label-line"><strong>Name</strong></p>' +
+      '<input type="text" id="inspector-tag-name" class="inspector-edit-input" value="' + tagEsc + '" placeholder="Tag name (letters, numbers, _ or -)" aria-label="Tag name" maxlength="80" />' +
+      '<div class="inspector-tag-actions">' +
+      '<button type="button" id="inspector-tag-delete" class="inspector-action-btn" title="Delete tag" aria-label="Delete">' + INSPECTOR_TRASH_SVG + '</button>' +
+      '<button type="button" id="inspector-tag-save" class="inspector-action-btn inspector-save-action-btn" title="Rename tag" aria-label="Save">' + INSPECTOR_SAVE_SVG + '</button>' +
+      '</div></div>';
+    const nameInput = document.getElementById('inspector-tag-name');
+    const deleteBtn = document.getElementById('inspector-tag-delete');
+    const saveBtn = document.getElementById('inspector-tag-save');
+    if (nameInput) {
+      nameInput.addEventListener('input', () => {
+        const v = nameInput.value;
+        if (!TAG_NAME_REGEX.test(v.replace(/\s/g, ''))) {
+          nameInput.setCustomValidity('Single word: letters, numbers, underscore or dash only.');
+        } else {
+          nameInput.setCustomValidity('');
+        }
+      });
+    }
+    if (deleteBtn) {
+      deleteBtn.addEventListener('click', async () => {
+        if (!confirm('Delete tag "#' + tagName + '"? It will be removed from all task tags and any #' + tagName + ' in titles/notes.')) return;
+        try {
+          const res = await api('/api/execute-pending-confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool: 'tag_delete', tag: tagName }),
+          });
+          const data = typeof res === 'object' ? res : {};
+          if (data.ok) {
+            currentInspectorTag = null;
+            loadTags();
+            titleEl.textContent = 'Inspector';
+            div.innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+            if (lastTaskSource) refreshTaskList();
+          } else {
+            alert(data.message || 'Delete failed.');
+          }
+        } catch (e) {
+          alert(e.message || 'Failed to delete tag.');
+        }
+      });
+    }
+    if (saveBtn && nameInput) {
+      saveBtn.addEventListener('click', async () => {
+        const newName = validateTagName(nameInput.value);
+        if (!newName) {
+          alert('Tag name must be a single word: letters, numbers, underscore or dash only.');
+          return;
+        }
+        if (newName === tagName) return;
+        if (!confirm('Rename tag "#' + tagName + '" to "#' + newName + '"? This will update task tags and any #' + tagName + ' in titles/notes.')) return;
+        try {
+          const res = await api('/api/execute-pending-confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ tool: 'tag_rename', old_tag: tagName, new_tag: newName }),
+          });
+          const data = typeof res === 'object' ? res : {};
+          if (data.ok) {
+            currentInspectorTag = newName;
+            loadTags();
+            loadTagDetails(newName);
+            if (lastTaskSource) refreshTaskList();
+            const tagLi = tagsListEl && tagsListEl.querySelector(`.nav-item[data-tag="${newName.replace(/"/g, '\\"')}"]`);
+            if (tagLi) {
+              tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+              tagLi.classList.add('selected');
+            }
+          } else {
+            alert(data.message || 'Rename failed.');
+          }
+        } catch (e) {
+          alert(e.message || 'Failed to rename tag.');
+        }
+      });
+    }
+  }
+
   function onListClick(ev) {
     if (ev.target.closest('.nav-item-actions')) return;
     const li = ev.currentTarget;
     if (li.classList.contains('placeholder')) return;
+    currentInspectorTag = null;
     if (inboxItem) inboxItem.classList.remove('selected');
     projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
+    if (tagsListEl) tagsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (favoritesListEl) favoritesListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     li.classList.add('selected');
     const id = li.dataset.listId;
@@ -2852,26 +3561,31 @@
           <p><strong>Created:</strong> ${createdVal}</p>
           <p><strong>Updated:</strong> ${updatedVal}</p>
           <div class="setting-row">
-            <label for="inspector-project-name">Name</label>
+            <label for="inspector-project-name"><strong>Name</strong></label>
             <input type="text" id="inspector-project-name" value="${nameVal}" class="inspector-edit-input" />
           </div>
           <div class="setting-row">
-            <label for="inspector-project-description">Description</label>
+            <label for="inspector-project-description"><strong>Description</strong></label>
             <textarea id="inspector-project-description" rows="3" class="inspector-edit-textarea">${descVal}</textarea>
           </div>
         </div>
         <div class="inspector-project-actions">
-          ${!isInFavorites('project', p.id) ? `<button type="button" id="inspector-project-add-favorite" class="inspector-action-btn" title="Add to favorites" aria-label="Add to favorites"><img src="assets/favorite-star-svgrepo-com.svg" alt="" /></button>` : ''}
-          <button type="button" id="inspector-project-archive" class="inspector-action-btn" title="Archive" aria-label="Archive"><img src="assets/archive-down-svgrepo-com.svg" alt="" /></button>
-          <button type="button" id="inspector-project-delete" class="inspector-action-btn" title="Delete" aria-label="Delete"><img src="assets/trash-alt-svgrepo-com.svg" alt="" /></button>
-          <button type="button" id="inspector-project-save" class="inspector-action-btn btn-primary" title="Save" aria-label="Save"><img src="assets/save-svgrepo-com.svg" alt="" /></button>
+          <button type="button" id="inspector-project-favorite-toggle" class="inspector-action-btn" title="${isInFavorites('project', p.id) ? 'Remove from favorites' : 'Add to favorites'}" aria-label="${isInFavorites('project', p.id) ? 'Remove from favorites' : 'Add to favorites'}">${isInFavorites('project', p.id) ? INSPECTOR_STAR_PROHIBITED_SVG : INSPECTOR_STAR_ADD_SVG}</button>
+          <button type="button" id="inspector-project-archive" class="inspector-action-btn" title="Archive" aria-label="Archive">${INSPECTOR_ARCHIVE_SVG}</button>
+          <button type="button" id="inspector-project-delete" class="inspector-action-btn" title="Delete" aria-label="Delete">${INSPECTOR_TRASH_SVG}</button>
+          <button type="button" id="inspector-project-save" class="inspector-action-btn inspector-save-action-btn" title="Save" aria-label="Save">${INSPECTOR_SAVE_SVG}</button>
         </div>
       `;
       const pid = p.id;
-      const addFavProjectBtn = document.getElementById('inspector-project-add-favorite');
-      if (addFavProjectBtn) {
-        addFavProjectBtn.addEventListener('click', () => {
-          addToFavorites('project', pid, p.name || 'Project');
+      const favToggleProjectBtn = document.getElementById('inspector-project-favorite-toggle');
+      if (favToggleProjectBtn) {
+        favToggleProjectBtn.addEventListener('click', () => {
+          if (isInFavorites('project', pid)) {
+            removeFromFavorites('project', pid);
+          } else {
+            addToFavorites('project', pid, p.name || 'Project');
+          }
+          loadProjects();
           loadProjectDetails(pid);
         });
       }
@@ -2889,7 +3603,7 @@
           });
           if (titleEl) titleEl.textContent = (nameInput && nameInput.value) ? nameInput.value.trim() : '(no name)';
           loadProjectDetails(pid);
-          refreshTaskList();
+          refreshLeftAndCenter();
         } catch (err) {
           alert(err.message || 'Failed to save project.');
         }
@@ -2958,26 +3672,31 @@
           <p><strong>Created:</strong> ${createdVal}</p>
           <p><strong>Updated:</strong> ${updatedVal}</p>
           <div class="setting-row">
-            <label for="inspector-list-name">Name</label>
+            <label for="inspector-list-name"><strong>Name</strong></label>
             <input type="text" id="inspector-list-name" value="${nameVal}" class="inspector-edit-input" />
           </div>
           <div class="setting-row">
-            <label for="inspector-list-description">Description</label>
+            <label for="inspector-list-description"><strong>Description</strong></label>
             <textarea id="inspector-list-description" rows="3" class="inspector-edit-textarea">${descVal}</textarea>
           </div>
         </div>
         <div class="inspector-project-actions">
-          ${!isInFavorites('list', lst.id || listId) ? `<button type="button" id="inspector-list-add-favorite" class="inspector-action-btn" title="Add to favorites" aria-label="Add to favorites"><img src="assets/favorite-star-svgrepo-com.svg" alt="" /></button>` : ''}
-          <button type="button" id="inspector-list-duplicate" class="inspector-action-btn" title="Duplicate" aria-label="Duplicate"><img src="assets/duplicate-document-svgrepo-com.svg" alt="" /></button>
-          <button type="button" id="inspector-list-delete" class="inspector-action-btn" title="Delete" aria-label="Delete"><img src="assets/trash-alt-svgrepo-com.svg" alt="" /></button>
-          <button type="button" id="inspector-list-save" class="inspector-action-btn btn-primary" title="Save" aria-label="Save"><img src="assets/save-svgrepo-com.svg" alt="" /></button>
+          <button type="button" id="inspector-list-favorite-toggle" class="inspector-action-btn" title="${isInFavorites('list', lst.id || listId) ? 'Remove from favorites' : 'Add to favorites'}" aria-label="${isInFavorites('list', lst.id || listId) ? 'Remove from favorites' : 'Add to favorites'}">${isInFavorites('list', lst.id || listId) ? INSPECTOR_STAR_PROHIBITED_SVG : INSPECTOR_STAR_ADD_SVG}</button>
+          <button type="button" id="inspector-list-duplicate" class="inspector-action-btn" title="Duplicate" aria-label="Duplicate">${INSPECTOR_DUPLICATE_SVG}</button>
+          <button type="button" id="inspector-list-delete" class="inspector-action-btn" title="Delete" aria-label="Delete">${INSPECTOR_TRASH_SVG}</button>
+          <button type="button" id="inspector-list-save" class="inspector-action-btn inspector-save-action-btn" title="Save" aria-label="Save">${INSPECTOR_SAVE_SVG}</button>
         </div>
       `;
       const lid = lst.id || listId;
-      const addFavListBtn = document.getElementById('inspector-list-add-favorite');
-      if (addFavListBtn) {
-        addFavListBtn.addEventListener('click', () => {
-          addToFavorites('list', lid, lst.name || 'List');
+      const favToggleListBtn = document.getElementById('inspector-list-favorite-toggle');
+      if (favToggleListBtn) {
+        favToggleListBtn.addEventListener('click', () => {
+          if (isInFavorites('list', lid)) {
+            removeFromFavorites('list', lid);
+          } else {
+            addToFavorites('list', lid, lst.name || 'List');
+          }
+          loadLists();
           loadListDetails(lid);
         });
       }
@@ -2995,7 +3714,7 @@
           });
           if (titleEl) titleEl.textContent = (nameInput && nameInput.value) ? nameInput.value.trim() : '(no name)';
           loadListDetails(lid);
-          refreshTaskList();
+          refreshLeftAndCenter();
         } catch (err) {
           alert(err.message || 'Failed to save list.');
         }
@@ -3055,11 +3774,11 @@
 
 
   async function loadTaskDetails(taskId) {
+    currentInspectorTag = null;
     try {
       const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
       const div = document.getElementById('inspector-content');
       div.dataset.taskId = taskId;
-      const titleEsc = escapeHtml((t.title || '(no title)').trim());
       const createdVal = t.created_at ? formatDateTimeForInspector(t.created_at) : '—';
       const updatedVal = t.updated_at ? formatDateTimeForInspector(t.updated_at) : '—';
       const completedVal = t.completed_at ? formatDateTimeForInspector(t.completed_at) : null;
@@ -3076,52 +3795,84 @@
       const recText = formatRecurrenceForDisplay(t.recurrence);
       const hasRecurrence = !!(t.recurrence && typeof t.recurrence === 'object' && (t.recurrence.freq || t.recurrence.interval));
 
+      const titleVal = (t.title || '').trim();
       let html = '';
-      html += `<p class="inspector-label-line"><strong>Title:</strong> ${titleEsc}</p>`;
+      html += '<p class="inspector-immediate-note">All changes are applied immediately.</p>';
       html += `<p class="inspector-label-line"><strong>Created:</strong> ${createdVal}</p>`;
       html += `<p class="inspector-label-line"><strong>Updated:</strong> ${updatedVal}</p>`;
       if (completedVal) html += `<p class="inspector-label-line"><strong>Last completed:</strong> ${completedVal}</p>`;
+      html += '<div class="inspector-title-block">';
+      html += '<p class="inspector-label-line"><strong>Title</strong></p>';
+      html += '<input type="text" class="inspector-edit-input inspector-title-input" value="' + escapeAttr(titleVal) + '" data-task-id="' + escapeAttr(taskId) + '" placeholder="Task title" aria-label="Title" />';
+      html += '</div>';
 
+      html += '<p class="inspector-label-line inspector-dates-heading"><strong>Available and due dates</strong></p>';
       html += '<div class="inspector-dates-block">';
       html += `<div class="inspector-date-row inspector-date-available" data-task-id="${escapeAttr(taskId)}" data-date-field="available_date">
         <span class="inspector-date-icon" aria-hidden="true">${CAL_EVENT_SVG}</span>
-        <input type="date" class="inspector-date-input inspector-date-input-small" value="${escapeAttr(avDateAttr)}" title="Available date" aria-label="Available date" />
         <button type="button" class="inspector-date-dropdown-trigger" title="Quick set available date" aria-haspopup="true" aria-label="Available date options">▾</button>
+        <input type="date" class="inspector-date-input inspector-date-input-small" value="${escapeAttr(avDateAttr)}" title="Available date" aria-label="Available date" />
       </div>`;
       html += `<div class="inspector-date-row inspector-date-due" data-task-id="${escapeAttr(taskId)}" data-date-field="due_date">
         <span class="inspector-date-icon" aria-hidden="true">${CAL_CHECK_SVG}</span>
-        <input type="date" class="inspector-date-input inspector-date-input-small" value="${escapeAttr(dueDateAttr)}" title="Due date" aria-label="Due date" />
         <button type="button" class="inspector-date-dropdown-trigger" title="Quick set due date" aria-haspopup="true" aria-label="Due date options">▾</button>
+        <input type="date" class="inspector-date-input inspector-date-input-small" value="${escapeAttr(dueDateAttr)}" title="Due date" aria-label="Due date" />
       </div>`;
       html += '</div>';
 
       html += '<div class="inspector-actions-row" data-task-id="' + escapeAttr(taskId) + '">';
       html += '<button type="button" class="inspector-action-icon inspector-status-btn" title="' + (statusComplete ? 'Mark incomplete' : 'Mark complete') + '" aria-label="Toggle status">';
-      html += statusComplete ? '<img src="assets/circle-tick-svgrepo-com.svg" alt="" class="inspector-status-img" width="15" height="15" />' : '<img src="assets/circle-open-svgrepo-com.svg" alt="" class="inspector-status-img" width="15" height="15" />';
+      html += statusComplete ? INSPECTOR_STATUS_TICK_SVG : INSPECTOR_STATUS_OPEN_SVG;
       html += '</button>';
+      const priorityCls = priorityClass(t.priority);
+      html += '<button type="button" class="inspector-action-icon inspector-priority-btn" data-priority-task-id="' + escapeAttr(taskId) + '" title="Priority (click to change)" aria-haspopup="true" aria-label="Priority"><span class="priority-circle-wrap ' + priorityCls + '">' + PRIORITY_CIRCLE_SVG + '</span></button>';
       html += '<button type="button" class="inspector-action-icon inspector-flag-btn' + (flagged ? '' : ' muted') + '" data-flagged="' + (flagged ? '1' : '0') + '" title="' + (flagged ? 'Unflag' : 'Flag') + '" aria-label="Toggle flag">';
       html += '<span class="inspector-flag-star flagged-icon' + (flagged ? '' : ' empty') + '">★</span>';
       html += '</button>';
+      html += '<span class="inspector-actions-projects inspector-projects-wrap" data-task-id="' + escapeAttr(taskId) + '" data-projects-json="' + escapeAttr(JSON.stringify(projectIds)) + '">';
+      html += '<button type="button" class="inspector-action-icon inspector-projects-btn' + (projectIds.length ? '' : ' muted') + '" title="Add or remove projects" aria-haspopup="true" aria-label="Projects">';
+      html += INSPECTOR_PROJECTS_ICON_SVG;
+      html += '</button>';
+      html += '</span>';
+      const taskTags = (t.tags || []).map((x) => String(x).trim()).filter(Boolean);
+      html += '<button type="button" class="inspector-action-icon inspector-tags-btn' + (taskTags.length ? '' : ' muted') + '" data-task-id="' + escapeAttr(taskId) + '" data-tags-json="' + escapeAttr(JSON.stringify(taskTags)) + '" title="Assign tags" aria-label="Assign tags">';
+      html += INSPECTOR_TAG_SVG;
+      html += '</button>';
       html += '<button type="button" class="inspector-action-icon inspector-notes-btn' + (hasDescription ? '' : ' muted') + '" data-description-task-id="' + escapeAttr(taskId) + '" title="Notes / description" aria-label="Edit notes">';
-      html += '<img src="assets/document-svgrepo-com.svg" alt="" width="18" height="18" />';
+      html += INSPECTOR_DOCUMENT_SVG;
       html += '</button>';
       html += '<button type="button" class="inspector-action-icon inspector-recurrence-btn' + (hasRecurrence ? '' : ' muted') + '" data-task-id="' + escapeAttr(taskId) + '" title="' + (hasRecurrence ? 'Edit recurrence' : 'Set recurrence') + '" aria-label="Recurrence">';
       html += RECURRENCE_ICON_SVG;
       html += '</button>';
-      html += '<span class="inspector-actions-projects inspector-projects-wrap" data-task-id="' + escapeAttr(taskId) + '" data-projects-json="' + escapeAttr(JSON.stringify(projectIds)) + '">';
-      html += '<img src="assets/folder-open-svgrepo-com.svg" class="inspector-folder-icon" alt="" width="18" height="18" />';
-      html += '<button type="button" class="inspector-projects-trigger" title="Add or remove projects" aria-haspopup="true">▾</button>';
-      html += '<span class="inspector-projects-ids">' + escapeHtml(projectsListStr) + '</span>';
-      html += '</span>';
-      html += '<button type="button" class="inspector-action-icon inspector-save-btn" data-task-id="' + escapeAttr(taskId) + '" title="Refresh / Save" aria-label="Save">';
-      html += '<img src="assets/save-svgrepo-com.svg" alt="" width="16" height="16" />';
-      html += '</button>';
       html += '<button type="button" class="inspector-action-icon inspector-delete-btn" data-task-id="' + escapeAttr(taskId) + '" title="Delete task" aria-label="Delete">';
-      html += '<img src="assets/trash-alt-svgrepo-com.svg" alt="" width="16" height="16" />';
+      html += INSPECTOR_TRASH_SVG;
       html += '</button>';
       html += '</div>';
 
       div.innerHTML = '<div class="inspector-content-inner">' + html + '</div>';
+
+      const titleInput = div.querySelector('.inspector-title-input');
+      if (titleInput) {
+        const saveTitle = () => {
+          const newTitle = (titleInput.value || '').trim();
+          updateTask(taskId, { title: newTitle || '(no title)' }).then((updated) => {
+            if (updated) updateTaskInLists(updated);
+            const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
+            if (row) {
+              const titleCell = row.querySelector('.title-cell .cell-value');
+              if (titleCell) titleCell.textContent = newTitle || '(no title)';
+            }
+          }).catch((err) => console.error(err));
+        };
+        titleInput.addEventListener('blur', saveTitle);
+        titleInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            titleInput.blur();
+          }
+        });
+        attachHashtagAutocomplete(titleInput);
+      }
 
       div.querySelectorAll('.inspector-recurrence-btn').forEach((btn) => {
         btn.addEventListener('click', () => openRecurrenceModal(btn.dataset.taskId));
@@ -3144,7 +3895,7 @@
 
       const projectsWrap = div.querySelector('.inspector-projects-wrap');
       if (projectsWrap) {
-        const trigger = projectsWrap.querySelector('.inspector-projects-trigger');
+        const trigger = projectsWrap.querySelector('.inspector-projects-btn');
         if (trigger) {
           trigger.addEventListener('click', (ev) => {
             openProjectsDropdown(ev, projectsWrap, {
@@ -3167,6 +3918,9 @@
           }).catch((err) => console.error(err));
         });
       });
+      div.querySelectorAll('.inspector-priority-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => openPriorityDropdown(e, btn, { onAfterApply: () => loadTaskDetails(taskId) }));
+      });
       div.querySelectorAll('.inspector-flag-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
           e.stopPropagation();
@@ -3176,14 +3930,17 @@
           }).catch((err) => console.error(err));
         });
       });
+      div.querySelectorAll('.inspector-tags-btn').forEach((btn) => {
+        btn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          openTaskTagsDropdown(ev, btn, { taskId: btn.dataset.taskId, currentTags: JSON.parse(btn.dataset.tagsJson || '[]'), onAfterApply: () => loadTaskDetails(taskId) });
+        });
+      });
       div.querySelectorAll('.inspector-notes-btn').forEach((btn) => {
         btn.addEventListener('click', () => {
           const fakeCell = { dataset: { descriptionTaskId: taskId } };
           openDescriptionModal({ stopPropagation: () => {} }, fakeCell);
         });
-      });
-      div.querySelectorAll('.inspector-save-btn').forEach((btn) => {
-        btn.addEventListener('click', () => loadTaskDetails(btn.dataset.taskId));
       });
       div.querySelectorAll('.inspector-delete-btn').forEach((btn) => {
         btn.addEventListener('click', async () => {
@@ -3649,13 +4406,15 @@
         sortEl.innerHTML = listSettingsSortToRow({});
       }
       const source = 'list:' + listId;
-      const { order, visible, showFlagged, showCompleted, showHighlightDue } = getDisplayProperties(source);
+      const { order, visible, showFlagged, showCompleted, showHighlightDue, showPriority } = getDisplayProperties(source);
       const flaggedCb = document.getElementById('list-settings-show-flagged');
       const completedCb = document.getElementById('list-settings-show-completed');
       const highlightDueCb = document.getElementById('list-settings-show-highlight-due');
+      const priorityCb = document.getElementById('list-settings-show-priority');
       if (flaggedCb) flaggedCb.checked = showFlagged;
       if (completedCb) completedCb.checked = showCompleted;
       if (highlightDueCb) highlightDueCb.checked = showHighlightDue;
+      if (priorityCb) priorityCb.checked = showPriority;
       const allOrdered = [...order];
       TASK_PROPERTY_KEYS.forEach((k) => { if (!allOrdered.includes(k)) allOrdered.push(k); });
       const dragHandleSvg = '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
@@ -3690,22 +4449,30 @@
       const highlightDueCb = document.getElementById('list-settings-show-highlight-due');
       if (flaggedCb) {
         flaggedCb.onchange = () => {
-          const { order: o, visible: v, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(listSource);
-          saveDisplayProperties(listSource, o, v, flaggedCb.checked, sc, sh);
+          const { order: o, visible: v, showCompleted: sc, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, flaggedCb.checked, sc, sh, sp);
           if (lastTaskSource === listSource) refreshTaskList();
         };
       }
       if (completedCb) {
         completedCb.onchange = () => {
-          const { order: o, visible: v, showFlagged: sf, showHighlightDue: sh } = getDisplayProperties(listSource);
-          saveDisplayProperties(listSource, o, v, sf, completedCb.checked, sh);
+          const { order: o, visible: v, showFlagged: sf, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, sf, completedCb.checked, sh, sp);
           if (lastTaskSource === listSource) refreshTaskList();
         };
       }
       if (highlightDueCb) {
         highlightDueCb.onchange = () => {
-          const { order: o, visible: v, showFlagged: sf, showCompleted: sc } = getDisplayProperties(listSource);
-          saveDisplayProperties(listSource, o, v, sf, sc, highlightDueCb.checked);
+          const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showPriority: sp } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, sf, sc, highlightDueCb.checked, sp);
+          if (lastTaskSource === listSource) refreshTaskList();
+        };
+      }
+      const priorityCb = document.getElementById('list-settings-show-priority');
+      if (priorityCb) {
+        priorityCb.onchange = () => {
+          const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, sf, sc, sh, priorityCb.checked);
           if (lastTaskSource === listSource) refreshTaskList();
         };
       }
@@ -3716,8 +4483,8 @@
           if (e.target.checked) v.add(key);
           else v.delete(key);
           if (!o.includes(key)) o.push(key);
-          const { showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(listSource);
-          saveDisplayProperties(listSource, o, v, sf, sc, sh);
+          const { showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, sf, sc, sh, sp);
           if (lastTaskSource === listSource) refreshTaskList();
         });
       });
@@ -3885,7 +4652,7 @@
           body: JSON.stringify({ query_definition, sort_definition }),
         });
         closeListSettingsModal();
-        if (lastTaskSource === 'list:' + listId) loadListTasks(listId);
+        refreshLeftAndCenter();
       } catch (e) {
         alert(e.message || 'Failed to save list settings.');
       }
@@ -3904,6 +4671,10 @@
     if (!leftPanel) return;
     leftPanel.classList.remove('left-panel-edit-mode');
     if (navigatorEditBtn) navigatorEditBtn.classList.remove('active');
+    if (tagsSortRow) {
+      tagsSortRow.classList.add('hidden');
+      tagsSortRow.setAttribute('aria-hidden', 'true');
+    }
     document.querySelectorAll('.nav-section[data-section]').forEach((section) => {
       const sectionId = section.dataset.section;
       if (sectionId === 'inbox') return;
@@ -3915,6 +4686,7 @@
     });
     loadProjects();
     loadLists();
+    loadTags();
     if (editModeOutsideClickRef) {
       document.removeEventListener('click', editModeOutsideClickRef, true);
       editModeOutsideClickRef = null;
@@ -3925,11 +4697,16 @@
     if (!leftPanel) return;
     leftPanel.classList.add('left-panel-edit-mode');
     if (navigatorEditBtn) navigatorEditBtn.classList.add('active');
-    document.querySelectorAll('#nav-section-favorites, #nav-section-projects, #nav-section-lists').forEach((section) => {
+    document.querySelectorAll('#nav-section-favorites, #nav-section-projects, #nav-section-lists, #nav-section-tags').forEach((section) => {
       section.classList.remove('collapsed');
       const header = section.querySelector('.nav-section-header');
       if (header) header.setAttribute('aria-expanded', 'true');
     });
+    if (tagsSortRow) {
+      tagsSortRow.classList.remove('hidden');
+      tagsSortRow.setAttribute('aria-hidden', 'false');
+    }
+    syncTagsSortActive();
     editModeOutsideClickRef = (ev) => {
       if (ev.target.closest('#navigator-edit-btn')) return;
       if (ev.target.closest('.nav-item-actions')) return;
@@ -3966,26 +4743,175 @@
       if (navigatorAddBtn) navigatorAddBtn.setAttribute('aria-expanded', 'false');
     }
   }
-  const navigatorAddTaskBtn = document.getElementById('navigator-add-task-btn');
-  const navigatorSearchInput = document.getElementById('navigator-search-input');
-  const navigatorSearchBtn = document.getElementById('navigator-search-btn');
-  if (navigatorAddTaskBtn) {
-    navigatorAddTaskBtn.addEventListener('click', async () => {
-      const projects = (lastTaskSource && lastTaskSource !== 'inbox' && lastTaskSource !== 'search' && !lastTaskSource.startsWith('list:'))
+  // --- New task modal ---
+  const newTaskModalOverlay = document.getElementById('new-task-modal-overlay');
+  const newTaskModalClose = document.getElementById('new-task-modal-close');
+  const newTaskModalSave = document.getElementById('new-task-modal-save');
+  const newTaskModalContent = document.getElementById('new-task-modal-content');
+  let newTaskState = {
+    title: '',
+    available_date: '',
+    due_date: '',
+    status: 'incomplete',
+    flagged: false,
+    description: '',
+    recurrence: null,
+    projects: [],
+  };
+
+  function closeNewTaskModal() {
+    if (newTaskModalOverlay) {
+      newTaskModalOverlay.classList.add('hidden');
+      newTaskModalOverlay.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function openNewTaskModal() {
+    newTaskState = {
+      title: '',
+      available_date: '',
+      due_date: '',
+      status: 'incomplete',
+      flagged: false,
+      description: '',
+      recurrence: null,
+      projects: (lastTaskSource && lastTaskSource !== 'inbox' && lastTaskSource !== 'search' && !lastTaskSource.startsWith('list:'))
         ? [lastTaskSource]
-        : undefined;
+        : [],
+    };
+    if (!newTaskModalContent) return;
+    const hasRecurrence = !!(newTaskState.recurrence && typeof newTaskState.recurrence === 'object' && (newTaskState.recurrence.freq || newTaskState.recurrence.interval));
+    const avAttr = /^\d{4}-\d{2}-\d{2}$/.test(newTaskState.available_date) ? newTaskState.available_date : '';
+    const dueAttr = /^\d{4}-\d{2}-\d{2}$/.test(newTaskState.due_date) ? newTaskState.due_date : '';
+    const projectsListStr = newTaskState.projects.map((id) => projectIdToShortName(id)).sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true })).join(', ') || '—';
+    let html = '';
+    html += '<div class="new-task-title-wrap">';
+    html += '<input type="text" id="new-task-title-input" class="inspector-edit-input new-task-title-input" value="" placeholder="Task title" aria-label="Title" />';
+    html += '</div>';
+    html += '<p class="inspector-label-line inspector-dates-heading"><strong>Available and due dates</strong></p>';
+    html += '<div class="inspector-dates-block new-task-dates-block">';
+    html += '<div class="inspector-date-row new-task-date-available" data-date-field="available_date">';
+    html += '<span class="inspector-date-icon" aria-hidden="true">' + CAL_EVENT_SVG + '</span>';
+    html += '<input type="date" class="inspector-date-input inspector-date-input-small new-task-available-date" value="' + escapeAttr(avAttr) + '" title="Available date" aria-label="Available date" />';
+    html += '</div>';
+    html += '<div class="inspector-date-row new-task-date-due" data-date-field="due_date">';
+    html += '<span class="inspector-date-icon" aria-hidden="true">' + CAL_CHECK_SVG + '</span>';
+    html += '<input type="date" class="inspector-date-input inspector-date-input-small new-task-due-date" value="' + escapeAttr(dueAttr) + '" title="Due date" aria-label="Due date" />';
+    html += '</div>';
+    html += '</div>';
+    html += '<div class="inspector-actions-row new-task-actions-row">';
+    html += '<button type="button" class="inspector-action-icon inspector-flag-btn muted new-task-flag-btn" data-flagged="0" title="Flag" aria-label="Toggle flag"><span class="inspector-flag-star flagged-icon empty">★</span></button>';
+    html += '<button type="button" class="inspector-action-icon inspector-notes-btn' + (newTaskState.description ? '' : ' muted') + ' new-task-notes-btn" title="Notes / description" aria-label="Edit notes">' + INSPECTOR_DOCUMENT_SVG + '</button>';
+    html += '<button type="button" class="inspector-action-icon inspector-recurrence-btn muted new-task-recurrence-btn" title="Set recurrence" aria-label="Recurrence">' + RECURRENCE_ICON_SVG + '</button>';
+    html += '<span class="inspector-actions-projects inspector-projects-wrap new-task-projects-wrap" data-projects-json="' + escapeAttr(JSON.stringify(newTaskState.projects)) + '">';
+    html += '<button type="button" class="inspector-action-icon inspector-projects-btn' + (newTaskState.projects.length ? '' : ' muted') + ' new-task-projects-btn" title="Add or remove projects" aria-haspopup="true" aria-label="Projects">' + INSPECTOR_PROJECTS_ICON_SVG + '</button>';
+    html += '</span>';
+    html += '</div>';
+    newTaskModalContent.innerHTML = html;
+
+    const titleInput = newTaskModalContent.querySelector('#new-task-title-input');
+    const availableInput = newTaskModalContent.querySelector('.new-task-available-date');
+    const dueInput = newTaskModalContent.querySelector('.new-task-due-date');
+    if (titleInput) titleInput.value = newTaskState.title;
+    attachHashtagAutocomplete(titleInput);
+
+    newTaskModalContent.querySelector('.new-task-flag-btn').addEventListener('click', () => {
+      newTaskState.flagged = !newTaskState.flagged;
+      const btn = newTaskModalContent.querySelector('.new-task-flag-btn');
+      btn.classList.toggle('muted', !newTaskState.flagged);
+      btn.querySelector('.flagged-icon').classList.toggle('empty', !newTaskState.flagged);
+      btn.title = newTaskState.flagged ? 'Unflag' : 'Flag';
+    });
+    newTaskModalContent.querySelector('.new-task-notes-btn').addEventListener('click', () => {
+      openDescriptionModalForNewTask();
+    });
+    newTaskModalContent.querySelector('.new-task-recurrence-btn').addEventListener('click', () => {
+      openRecurrenceModal(null, {
+        forNewTask: true,
+        dueDate: dueInput ? dueInput.value : '',
+        initialRecurrence: newTaskState.recurrence,
+        onSave: (rec) => {
+          newTaskState.recurrence = rec;
+          const btn = newTaskModalContent.querySelector('.new-task-recurrence-btn');
+          if (btn) {
+            btn.classList.toggle('muted', !rec || !(rec.freq || rec.interval));
+            btn.title = (rec && (rec.freq || rec.interval)) ? 'Edit recurrence' : 'Set recurrence';
+          }
+          closeRecurrenceModal();
+        },
+      });
+    });
+    const projectsWrap = newTaskModalContent.querySelector('.new-task-projects-wrap');
+    const projectsBtn = newTaskModalContent.querySelector('.new-task-projects-btn');
+    if (projectsWrap && projectsBtn) {
+      projectsBtn.addEventListener('click', (ev) => {
+        openProjectsDropdown(ev, projectsWrap, {
+          taskId: null,
+          forNewTask: true,
+          currentIds: newTaskState.projects,
+          anchorEl: projectsBtn,
+          onAfterApply: (ids) => {
+            newTaskState.projects = ids;
+            projectsWrap.dataset.projectsJson = JSON.stringify(ids);
+            projectsBtn.classList.toggle('muted', !ids.length);
+          },
+        });
+      });
+    }
+    if (availableInput) availableInput.addEventListener('change', () => { newTaskState.available_date = (availableInput.value || '').trim().substring(0, 10); });
+    if (dueInput) dueInput.addEventListener('change', () => { newTaskState.due_date = (dueInput.value || '').trim().substring(0, 10); });
+
+    if (newTaskModalOverlay) {
+      newTaskModalOverlay.classList.remove('hidden');
+      newTaskModalOverlay.setAttribute('aria-hidden', 'false');
+      if (titleInput) setTimeout(() => titleInput.focus(), 50);
+    }
+  }
+
+  if (newTaskModalClose) newTaskModalClose.addEventListener('click', closeNewTaskModal);
+  if (newTaskModalOverlay) newTaskModalOverlay.addEventListener('click', (e) => { if (e.target === newTaskModalOverlay) closeNewTaskModal(); });
+  if (newTaskModalSave) {
+    newTaskModalSave.addEventListener('click', async () => {
+      const titleEl = newTaskModalContent && newTaskModalContent.querySelector('#new-task-title-input');
+      const availableEl = newTaskModalContent && newTaskModalContent.querySelector('.new-task-available-date');
+      const dueEl = newTaskModalContent && newTaskModalContent.querySelector('.new-task-due-date');
+      const title = (titleEl && titleEl.value) ? titleEl.value.trim() : '';
+      if (!title) {
+        alert('Please enter a title.');
+        return;
+      }
+      newTaskState.title = title;
+      newTaskState.available_date = (availableEl && availableEl.value) ? (availableEl.value || '').trim().substring(0, 10) : '';
+      newTaskState.due_date = (dueEl && dueEl.value) ? (dueEl.value || '').trim().substring(0, 10) : '';
+      const body = {
+        title: newTaskState.title,
+        available_date: newTaskState.available_date || null,
+        due_date: newTaskState.due_date || null,
+        status: newTaskState.status,
+        flagged: newTaskState.flagged,
+        description: newTaskState.description || null,
+        recurrence: newTaskState.recurrence || null,
+        projects: newTaskState.projects && newTaskState.projects.length ? newTaskState.projects : null,
+      };
       try {
         await api('/api/external/tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: 'New task', projects }),
+          body: JSON.stringify(body),
         });
-        refreshCenterView();
-        refreshTaskList();
+        closeNewTaskModal();
+        refreshLeftAndCenter();
       } catch (e) {
         alert(e.message || 'Failed to create task.');
       }
     });
+  }
+
+  const navigatorAddTaskBtn = document.getElementById('navigator-add-task-btn');
+  const navigatorSearchInput = document.getElementById('navigator-search-input');
+  const navigatorSearchBtn = document.getElementById('navigator-search-btn');
+  if (navigatorAddTaskBtn) {
+    navigatorAddTaskBtn.addEventListener('click', () => openNewTaskModal());
   }
   if (navigatorSearchBtn) navigatorSearchBtn.addEventListener('click', () => runSearch(navigatorSearchInput && navigatorSearchInput.value));
   if (navigatorSearchInput) {
@@ -4120,7 +5046,7 @@
         if (created && created.id) {
           const sourceKey = 'list:' + (duplicateListSource.id || '');
           const props = getDisplayProperties(sourceKey);
-          saveDisplayProperties('list:' + created.id, props.order, props.visible, props.showFlagged, props.showCompleted, props.showHighlightDue, props.sortBy, props.manualSort, props.manualOrder);
+          saveDisplayProperties('list:' + created.id, props.order, props.visible, props.showFlagged, props.showCompleted, props.showHighlightDue, props.showPriority, props.sortBy, props.manualSort, props.manualOrder);
         }
         closeDuplicateListModal();
         await loadListsFromApi();
@@ -4170,6 +5096,7 @@
   loadProjects().then(() => {
     loadLists();
     loadFavorites();
+    loadTags();
     applyDefaultOpenView();
   });
   setInterval(checkConnection, 30000);

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sqlite3
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -217,8 +218,12 @@ def get_tasks_that_depend_on(task_id: str) -> list[dict[str, Any]]:
 def list_tasks(
     status: str | None = None,
     project_id: str | None = None,
+    project_ids: list[str] | None = None,
+    project_mode: str = "any",
     inbox: bool = False,
     tag: str | None = None,
+    tags: list[str] | None = None,
+    tag_mode: str = "any",
     due_by: str | None = None,
     available_by: str | None = None,
     available_or_due_by: str | None = None,
@@ -239,21 +244,43 @@ def list_tasks(
     q: match tag exactly OR title OR description (substring). Use for combined/tag search.
     sort_by: due_date, available_date, created_at, completed_at, title (default created_at DESC).
     priority: 0-3 to filter by exact priority (3 = highest).
-    inbox: if True, only tasks that have no project (inbox = unassigned). Ignored if project_id is set.
+    inbox: if True, only tasks that have no project (inbox = unassigned). Ignored if project_id/project_ids set.
+    tags: list of tag names; tag_mode "any" = task has any of these (OR), "all" = task has all (AND).
+    project_ids: list of project ids; project_mode "any" = task in any of these (OR), "all" = task in all (AND).
     """
     conn = get_connection()
     try:
         sql = "SELECT * FROM tasks WHERE 1=1"
         params: list[Any] = []
+        use_project_list = project_ids and len(project_ids) > 0
+        use_tag_list = tags and len(tags) > 0
         if status:
             sql += " AND status = ?"
             params.append(status)
-        if inbox and not project_id:
+        if inbox and not project_id and not use_project_list:
             sql += " AND id NOT IN (SELECT task_id FROM task_projects)"
+        elif use_project_list:
+            if (project_mode or "any").strip().lower() == "all":
+                for pid in project_ids:
+                    sql += " AND id IN (SELECT task_id FROM task_projects WHERE project_id = ?)"
+                    params.append(pid)
+            else:
+                placeholders = ",".join("?" * len(project_ids))
+                sql += f" AND id IN (SELECT task_id FROM task_projects WHERE project_id IN ({placeholders}))"
+                params.extend(project_ids)
         elif project_id:
             sql += " AND id IN (SELECT task_id FROM task_projects WHERE project_id = ?)"
             params.append(project_id)
-        if tag:
+        if use_tag_list:
+            if (tag_mode or "any").strip().lower() == "all":
+                sql += f" AND (SELECT COUNT(DISTINCT tag) FROM task_tags WHERE task_id = tasks.id AND tag IN ({','.join('?' * len(tags))})) = ?"
+                params.extend(tags)
+                params.append(len(tags))
+            else:
+                placeholders = ",".join("?" * len(tags))
+                sql += f" AND id IN (SELECT task_id FROM task_tags WHERE tag IN ({placeholders}))"
+                params.extend(tags)
+        elif tag:
             sql += " AND id IN (SELECT task_id FROM task_tags WHERE tag = ?)"
             params.append(tag)
         if due_by:
@@ -461,6 +488,121 @@ def remove_task_tag(task_id: str, tag: str) -> None:
         conn.execute("DELETE FROM task_tags WHERE task_id = ? AND tag = ?", (task_id, tag))
         _record_history(conn, task_id, "tag_removed", {"tag": tag})
         conn.commit()
+    finally:
+        conn.close()
+
+
+def _hashtag_regex(tag: str) -> re.Pattern:
+    """Match #tag as whole word (not #tagging or #tags)."""
+    return re.compile(r"#" + re.escape(tag) + r"(?![a-zA-Z0-9_-])")
+
+
+def tag_list() -> list[dict[str, Any]]:
+    """
+    Return all tags with the number of distinct tasks that have that tag.
+    A task has a tag if: the tag is in task_tags, or #tag appears in title, or #tag in description/notes.
+    Each task is counted at most once per tag.
+    """
+    conn = get_connection()
+    try:
+        tag_to_task_ids: dict[str, set[str]] = {}
+        # From task_tags
+        for row in conn.execute("SELECT tag, task_id FROM task_tags").fetchall():
+            t, tid = row[0], row[1]
+            if t not in tag_to_task_ids:
+                tag_to_task_ids[t] = set()
+            tag_to_task_ids[t].add(tid)
+        # From title, description, notes: extract #word
+        hashtag_re = re.compile(r"#([a-zA-Z0-9_-]+)")
+        for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
+            tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
+            for text in (title, desc, notes):
+                for m in hashtag_re.finditer(text):
+                    tagname = m.group(1)
+                    if tagname not in tag_to_task_ids:
+                        tag_to_task_ids[tagname] = set()
+                    tag_to_task_ids[tagname].add(tid)
+        return [{"tag": tag, "count": len(ids)} for tag, ids in sorted(tag_to_task_ids.items())]
+    finally:
+        conn.close()
+
+
+def tag_rename(old_tag: str, new_tag: str) -> int:
+    """
+    Rename a tag everywhere: in task_tags and in any task title/description/notes (#old_tag -> #new_tag).
+    new_tag must be non-empty. Returns number of tasks whose title/description/notes were updated.
+    """
+    old_tag = (old_tag or "").strip()
+    new_tag = (new_tag or "").strip()
+    if not old_tag:
+        raise ValueError("old_tag is required")
+    if not new_tag:
+        raise ValueError("new_tag is required")
+    if old_tag == new_tag:
+        return 0
+    conn = get_connection()
+    try:
+        # task_tags: for each task that had old_tag, remove old and add new (avoid duplicate)
+        task_ids_with_old = [r[0] for r in conn.execute("SELECT task_id FROM task_tags WHERE tag = ?", (old_tag,)).fetchall()]
+        conn.execute("DELETE FROM task_tags WHERE tag = ?", (old_tag,))
+        for tid in task_ids_with_old:
+            conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (tid, new_tag))
+        # Replace #old_tag with #new_tag in title, description, notes (whole-word)
+        pat = _hashtag_regex(old_tag)
+        repl = "#" + new_tag
+        updated = 0
+        now = _now_iso()
+        for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
+            tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
+            new_title = pat.sub(repl, title) if title else title
+            new_desc = pat.sub(repl, desc) if desc else desc
+            new_notes = pat.sub(repl, notes) if notes else notes
+            if new_title != title or new_desc != desc or new_notes != notes:
+                conn.execute(
+                    "UPDATE tasks SET title = ?, description = ?, notes = ?, updated_at = ? WHERE id = ?",
+                    (new_title, new_desc, new_notes, now, tid),
+                )
+                _record_history(conn, tid, "tag_renamed_in_text", {"old_tag": old_tag, "new_tag": new_tag})
+                updated += 1
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
+def tag_delete(tag: str) -> int:
+    """
+    Remove a tag from all tasks: delete from task_tags and remove #tag from title/description/notes.
+    Returns number of tasks whose title/description/notes were updated (excluding tag-table-only removals).
+    """
+    tag = (tag or "").strip()
+    if not tag:
+        raise ValueError("tag is required")
+    conn = get_connection()
+    try:
+        conn.execute("DELETE FROM task_tags WHERE tag = ?", (tag,))
+        pat = _hashtag_regex(tag)
+        updated = 0
+        now = _now_iso()
+        for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
+            tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
+            # Remove #tag and collapse adjacent spaces
+            def remove_tag(text: str) -> str:
+                if not text:
+                    return text
+                return re.sub(r"\s+", " ", pat.sub("", text)).strip()
+            new_title = remove_tag(title)
+            new_desc = remove_tag(desc)
+            new_notes = remove_tag(notes)
+            if new_title != title or new_desc != desc or new_notes != notes:
+                conn.execute(
+                    "UPDATE tasks SET title = ?, description = ?, notes = ?, updated_at = ? WHERE id = ?",
+                    (new_title, new_desc, new_notes, now, tid),
+                )
+                _record_history(conn, tid, "tag_removed_from_text", {"tag": tag})
+                updated += 1
+        conn.commit()
+        return updated
     finally:
         conn.close()
 
