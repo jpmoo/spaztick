@@ -1,5 +1,21 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const path = require('path');
+const { exec } = require('child_process');
+
+function openExternalUrl(url) {
+  const u = typeof url === 'string' ? url.trim() : '';
+  if (!u.startsWith('http://') && !u.startsWith('https://')) return Promise.resolve();
+  return shell.openExternal(u).catch(() => {
+    const cmd = process.platform === 'win32' ? `start "" "${u}"` : process.platform === 'darwin' ? `open "${u}"` : `xdg-open "${u}"`;
+    return new Promise((resolve, reject) => {
+      exec(cmd, (err) => (err ? reject(err) : resolve()));
+    });
+  });
+}
+
+ipcMain.handle('open-external-url', async (_event, url) => {
+  await openExternalUrl(url);
+});
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -13,6 +29,13 @@ function createWindow() {
       nodeIntegration: false,
     },
     title: 'Spaztick',
+  });
+
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try {
+      shell.openExternal(url);
+    } catch (_) {}
+    return { action: 'deny' };
   });
 
   win.loadFile(path.join(__dirname, 'index.html'));

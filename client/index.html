@@ -59,6 +59,18 @@
             </ul>
           </div>
         </section>
+        <section class="nav-section" id="nav-section-boards" data-section="boards">
+          <button type="button" class="nav-section-header" aria-expanded="true" aria-controls="nav-section-boards-body">
+            <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill-rule="nonzero" d="M18.2513521,2.49820514 C19.9843968,2.49820514 21.4006513,3.85452629 21.4962634,5.56367469 L21.5014083,5.74810161 L21.5008077,17.7519229 C21.5005988,19.5467519 20.0455893,21.0018356 18.2507042,21.0018356 L6.25005624,21.0018356 C4.51701151,21.0018356 3.10075697,19.6455145 3.00514494,17.9363661 L3,17.7519391 L3.00060063,5.74811784 C3.00080955,3.9532889 4.45581897,2.49820514 6.25064792,2.49820514 L18.2513521,2.49820514 Z M11.5,9.49820514 L4.5,9.49920514 L4.50010353,17.7518667 L4.50727563,17.9125936 C4.58838653,18.803788 5.33765319,19.5018356 6.25,19.5018356 L11.5,19.5012051 L11.5,9.49820514 Z M20,15.4982051 L13,15.4992051 L13,19.5012051 L18.2506479,19.5018356 C19.2171619,19.5018356 20.0006952,18.7182622 20.0008077,17.7518046 L20,15.4982051 Z M18.2514083,3.99820514 L13,3.99720514 L13,13.9992051 L20,13.9982051 L20.0013048,5.74817408 L19.9941327,5.58744715 C19.9130218,4.69625278 19.1637551,3.99820514 18.2514083,3.99820514 Z M11.5,3.99720514 L6.25073228,3.99820514 L6.10723072,4.00401666 C5.20785168,4.0770851 4.5007075,4.83010139 4.50060063,5.7482362 L4.5,7.99920514 L11.5,7.99820514 L11.5,3.99720514 Z"/></svg>
+            <span class="nav-section-title-text">Boards</span>
+            <svg class="nav-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          <div class="nav-section-body" id="nav-section-boards-body">
+            <ul class="nav-list" id="boards-list">
+              <li class="nav-item placeholder">—</li>
+            </ul>
+          </div>
+        </section>
         <section class="nav-section" id="nav-section-tags" data-section="tags">
           <button type="button" class="nav-section-header" aria-expanded="true" aria-controls="nav-section-tags-body">
             <svg class="section-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C4 4.44772 4.44772 4 5 4H11.1716C11.4368 4 11.6911 4.10536 11.8787 4.29289L19.8787 12.2929C20.2692 12.6834 20.2692 13.3166 19.8787 13.7071L13.7071 19.8787C13.3166 20.2692 12.6834 20.2692 12.2929 19.8787L4.29289 11.8787C4.10536 11.6911 4 11.4368 4 11.1716V5ZM5 2C3.34315 2 2 3.34315 2 5L2 11.1716C2 11.9672 2.31607 12.7303 2.87868 13.2929L10.8787 21.2929C12.0503 22.4645 13.9497 22.4645 15.1213 21.2929L21.2929 15.1213C22.4645 13.9497 22.4645 12.0503 21.2929 10.8787L13.2929 2.87868C12.7303 2.31607 11.9672 2 11.1716 2H5ZM8 10C9.10457 10 10 9.10457 10 8C10 6.89543 9.10457 6 8 6C6.89543 6 6 6.89543 6 8C6 9.10457 6.89543 10 8 10Z"/></svg>
@@ -92,12 +104,13 @@
         <button type="button" id="navigator-edit-btn" class="navigator-edit-btn" title="Edit order and delete" aria-label="Edit navigator">
           <svg class="navigator-edit-icon" viewBox="0 0 15 15" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M4.5 8.5L4.14645 8.14645L4 8.29289V8.5H4.5ZM8.5 4.5L8.85355 4.14645C8.65829 3.95118 8.34171 3.95118 8.14645 4.14645L8.5 4.5ZM10.5 6.5L10.8536 6.85355C11.0488 6.65829 11.0488 6.34171 10.8536 6.14645L10.5 6.5ZM6.5 10.5V11H6.70711L6.85355 10.8536L6.5 10.5ZM4.5 10.5H4C4 10.7761 4.22386 11 4.5 11V10.5ZM7.5 14C3.91015 14 1 11.0899 1 7.5H0C0 11.6421 3.35786 15 7.5 15V14ZM14 7.5C14 11.0899 11.0899 14 7.5 14V15C11.6421 15 15 11.6421 15 7.5H14ZM7.5 1C11.0899 1 14 3.91015 14 7.5H15C15 3.35786 11.6421 0 7.5 0V1ZM7.5 0C3.35786 0 0 3.35786 0 7.5H1C1 3.91015 3.91015 1 7.5 1V0ZM4.85355 8.85355L8.85355 4.85355L8.14645 4.14645L4.14645 8.14645L4.85355 8.85355ZM8.14645 4.85355L10.1464 6.85355L10.8536 6.14645L8.85355 4.14645L8.14645 4.85355ZM10.1464 6.14645L6.14645 10.1464L6.85355 10.8536L10.8536 6.85355L10.1464 6.14645ZM6.5 10H4.5V11H6.5V10ZM5 10.5V8.5H4V10.5H5Z"/></svg>
         </button>
-        <button type="button" id="navigator-add-btn" class="navigator-edit-btn" title="Add project or list" aria-label="Add project or list" aria-haspopup="true" aria-expanded="false">
+        <button type="button" id="navigator-add-btn" class="navigator-edit-btn" title="Add project, list, or board" aria-label="Add project, list, or board" aria-haspopup="true" aria-expanded="false">
           <svg class="navigator-edit-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><path d="M12 5v14M5 12h14" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
         <div id="navigator-add-popover" class="navigator-add-popover hidden" role="menu" aria-hidden="true">
           <button type="button" class="navigator-add-popover-item" data-choice="project">Project</button>
           <button type="button" class="navigator-add-popover-item" data-choice="list">List</button>
+          <button type="button" class="navigator-add-popover-item" data-choice="board">Board</button>
         </div>
       </div>
     </aside>
@@ -209,6 +222,53 @@
         <svg class="bar-icon icon-flip" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg" fill="currentColor"><path d="M28,4H4A2,2,0,0,0,2,6V26a2,2,0,0,0,2,2H28a2,2,0,0,0,2-2V6A2,2,0,0,0,28,4Zm0,22H12V6H28Z"/></svg>
       </button>
     </footer>
+
+    <div id="board-view" class="board-view hidden" aria-hidden="true">
+      <div class="board-view-header">
+        <h1 id="board-view-title" class="board-view-title"></h1>
+        <button type="button" id="board-view-close" class="board-view-close" title="Close board" aria-label="Close board">&times;</button>
+      </div>
+      <div id="board-view-canvas" class="board-view-canvas">
+        <div id="board-canvas-inner" class="board-canvas-inner">
+          <div id="board-cards-layer" class="board-cards-layer"></div>
+        </div>
+      </div>
+      <div class="board-view-toolbar board-view-toolbar-center">
+        <button type="button" id="board-add-task-btn" class="board-add-task-btn" title="Add task to board" aria-label="Add task to board">
+          <svg class="board-add-task-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M8 12H12M12 12H16M12 12V16M12 12V8M12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12C21 16.9706 16.9706 21 12 21Z"/></svg>
+        </button>
+      </div>
+      <div id="board-add-task-popover" class="board-add-task-popover hidden" role="listbox" aria-hidden="true">
+        <div class="board-add-task-popover-title">Tasks not on board</div>
+        <ul id="board-add-task-list" class="board-add-task-list"></ul>
+      </div>
+      <div class="board-view-zoom">
+        <button type="button" id="board-zoom-out" class="board-zoom-btn" title="Zoom out" aria-label="Zoom out">−</button>
+        <select id="board-zoom-select" class="board-zoom-select" title="Zoom level" aria-label="Zoom level">
+          <option value="25">25%</option>
+          <option value="50">50%</option>
+          <option value="75">75%</option>
+          <option value="100" selected>100%</option>
+          <option value="125">125%</option>
+          <option value="150">150%</option>
+          <option value="200">200%</option>
+          <option value="300">300%</option>
+        </select>
+        <button type="button" id="board-zoom-in" class="board-zoom-btn" title="Zoom in" aria-label="Zoom in">+</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="board-task-inspector-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-board-inspector" role="dialog" aria-labelledby="board-task-inspector-title">
+      <div class="modal-header">
+        <h2 id="board-task-inspector-title">Task</h2>
+        <button type="button" id="board-task-inspector-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body modal-body-scroll">
+        <div id="board-task-inspector-content" class="inspector-content-inner"></div>
+      </div>
+    </div>
   </div>
 
   <div id="settings-overlay" class="modal-overlay hidden" aria-hidden="true">
@@ -365,6 +425,30 @@
       </div>
       <div class="modal-footer">
         <button type="button" id="new-list-create" class="btn-primary">Create</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="new-board-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-small" role="dialog" aria-labelledby="new-board-title">
+      <div class="modal-header">
+        <h2 id="new-board-title">New board</h2>
+        <button type="button" id="new-board-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-row">
+          <label for="new-board-name">Name</label>
+          <input type="text" id="new-board-name" placeholder="Board name" />
+        </div>
+        <div class="setting-row">
+          <label for="new-board-base">Based on</label>
+          <select id="new-board-base" aria-label="List or project to base this board on">
+            <option value="">— Select a list or project —</option>
+          </select>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="new-board-create" class="btn-primary">Create</button>
       </div>
     </div>
   </div>

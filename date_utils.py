@@ -22,8 +22,9 @@ def _today_in_tz(tz_name: str) -> date:
 def resolve_date_expression(value: str | None, tz_name: str = "UTC") -> str | None:
     """
     Resolve list query date expressions to YYYY-MM-DD.
-    Supports: "today", "today+3", "today-1" (no spaces around +/-).
-    Used by saved list AST compilation; does NOT handle "tomorrow", "next week", etc.
+    Supports: "today", "today+3", "today-1", "tomorrow", "tomorrow+1", "tomorrow-1",
+    "yesterday" (no spaces around +/-).
+    Used by saved list AST compilation.
     """
     if not value or not str(value).strip():
         return None
@@ -36,12 +37,28 @@ def resolve_date_expression(value: str | None, tz_name: str = "UTC") -> str | No
         today = date.today()
     if raw == "today":
         return today.isoformat()
+    if raw == "tomorrow":
+        return (today + timedelta(days=1)).isoformat()
+    if raw == "yesterday":
+        return (today - timedelta(days=1)).isoformat()
     m = re.match(r"^today\+(\d+)$", raw)
     if m:
         return (today + timedelta(days=int(m.group(1)))).isoformat()
     m = re.match(r"^today-(\d+)$", raw)
     if m:
         return (today - timedelta(days=int(m.group(1)))).isoformat()
+    m = re.match(r"^tomorrow\+(\d+)$", raw)
+    if m:
+        return (today + timedelta(days=1 + int(m.group(1)))).isoformat()
+    m = re.match(r"^tomorrow-(\d+)$", raw)
+    if m:
+        return (today + timedelta(days=1 - int(m.group(1)))).isoformat()
+    m = re.match(r"^yesterday\+(\d+)$", raw)
+    if m:
+        return (today - timedelta(days=1 - int(m.group(1)))).isoformat()
+    m = re.match(r"^yesterday-(\d+)$", raw)
+    if m:
+        return (today - timedelta(days=1 + int(m.group(1)))).isoformat()
     return None
 
 
