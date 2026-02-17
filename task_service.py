@@ -177,16 +177,21 @@ def _tags_for_task(
     description: str | None = None,
     notes: str | None = None,
 ) -> list[str]:
-    """Return tags for a task: from task_tags plus #word in title/description/notes (same semantics as tag_list)."""
+    """Return tags for a task: from task_tags plus #word in title/description/notes. Case-insensitive dedupe (canonical lowercase)."""
     from_tags = [r[0] for r in conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (task_id,))]
     hashtag_re = re.compile(r"#([a-zA-Z0-9_-]+)")
-    seen = set(from_tags)
-    out = list(from_tags)
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in from_tags:
+        k = t.lower()
+        if k not in seen:
+            seen.add(k)
+            out.append(k)
     for text in (title or "", description or "", notes or ""):
         if not text:
             continue
         for m in hashtag_re.finditer(text):
-            tagname = m.group(1)
+            tagname = m.group(1).lower()
             if tagname not in seen:
                 seen.add(tagname)
                 out.append(tagname)
@@ -300,16 +305,16 @@ def list_tasks(
         if use_tag_list:
             tags = [((t or "").strip().lstrip("#").strip() or (t or "").strip()) for t in tags if (t or "").strip()]
             if (tag_mode or "any").strip().lower() == "all":
-                # Task must have each tag (in task_tags or #tag in title/description/notes)
+                # Task must have each tag (in task_tags or #tag in title/description/notes); tag match case-insensitive
                 for tname in tags:
                     frag, p = _sql_hashtag_in_text_condition(tname)
-                    sql += f" AND (id IN (SELECT task_id FROM task_tags WHERE tag = ?) OR {frag})"
+                    sql += f" AND (id IN (SELECT task_id FROM task_tags WHERE LOWER(tag) = LOWER(?)) OR {frag})"
                     params.append(tname)
                     params.extend(p)
             else:
-                # Task has any of the tags (in task_tags or #tag in text)
-                placeholders = ",".join("?" * len(tags))
-                tag_frag = f"id IN (SELECT task_id FROM task_tags WHERE tag IN ({placeholders}))"
+                # Task has any of the tags (in task_tags or #tag in text); tag match case-insensitive
+                tag_conds = " OR ".join(["LOWER(tag) = LOWER(?)" for _ in tags])
+                tag_frag = f"id IN (SELECT task_id FROM task_tags WHERE {tag_conds})"
                 text_frags = []
                 text_params: list[Any] = []
                 for tname in tags:
@@ -322,7 +327,7 @@ def list_tasks(
         elif tag:
             tag_val = (tag or "").strip().lstrip("#").strip() or (tag or "").strip()
             frag, p = _sql_hashtag_in_text_condition(tag_val)
-            sql += f" AND (id IN (SELECT task_id FROM task_tags WHERE tag = ?) OR {frag})"
+            sql += f" AND (id IN (SELECT task_id FROM task_tags WHERE LOWER(tag) = LOWER(?)) OR {frag})"
             params.append(tag_val)
             params.extend(p)
         if due_by:
@@ -351,7 +356,7 @@ def list_tasks(
             params.append(f"%{s}%")
         if q and q.strip():
             qv = q.strip()
-            sql += " AND (id IN (SELECT task_id FROM task_tags WHERE tag = ?) OR title LIKE ? OR description LIKE ? OR notes LIKE ?)"
+            sql += " AND (id IN (SELECT task_id FROM task_tags WHERE LOWER(tag) = LOWER(?)) OR title LIKE ? OR description LIKE ? OR notes LIKE ?)"
             params.append(qv)
             params.append(f"%{qv}%")
             params.append(f"%{qv}%")
@@ -521,6 +526,10 @@ def remove_task_project(task_id: str, project_id: str) -> None:
 
 
 def add_task_tag(task_id: str, tag: str) -> None:
+    """Add a tag to a task. Stored in lowercase so #Meghan and #meghan are the same."""
+    tag = (tag or "").strip().lower()
+    if not tag:
+        return
     conn = get_connection()
     try:
         conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (task_id, tag))
@@ -533,16 +542,17 @@ def add_task_tag(task_id: str, tag: str) -> None:
 def remove_task_tag(task_id: str, tag: str) -> None:
     conn = get_connection()
     try:
-        conn.execute("DELETE FROM task_tags WHERE task_id = ? AND tag = ?", (task_id, tag))
+        conn.execute("DELETE FROM task_tags WHERE task_id = ? AND LOWER(tag) = LOWER(?)", (task_id, tag))
         _record_history(conn, task_id, "tag_removed", {"tag": tag})
         conn.commit()
     finally:
         conn.close()
 
 
-def _hashtag_regex(tag: str) -> re.Pattern:
-    """Match #tag as whole word (not #tagging or #tags)."""
-    return re.compile(r"#" + re.escape(tag) + r"(?![a-zA-Z0-9_-])")
+def _hashtag_regex(tag: str, case_insensitive: bool = False) -> re.Pattern:
+    """Match #tag as whole word (not #tagging or #tags). If case_insensitive, #Meghan matches #meghan."""
+    flags = re.IGNORECASE if case_insensitive else 0
+    return re.compile(r"#" + re.escape(tag) + r"(?![a-zA-Z0-9_-])", flags)
 
 
 def _like_escape(tag: str) -> str:
@@ -553,19 +563,20 @@ def _like_escape(tag: str) -> str:
 def _sql_hashtag_in_text_condition(tag: str) -> tuple[str, list[Any]]:
     """
     Return (sql_fragment, params) for "this task has #tag in title or description or notes" (whole-word).
-    Fragment is like: (title LIKE ? ESCAPE '\\' OR ... OR notes LIKE ? ESCAPE '\\') with 15 params.
+    Case-insensitive: #Meghan and #meghan in text both match. Uses LOWER(column) LIKE lowercase pattern.
     """
     t = (tag or "").strip()
     if not t:
         return ("0", [])
-    needle = "#" + _like_escape(t)
-    # Whole-word #tag: at start, after space, at end
+    t_lower = t.lower()
+    needle = "#" + _like_escape(t_lower)
+    # Whole-word #tag: at start, after space, at end (pattern in lowercase for case-insensitive match)
     pats = [needle, needle + " %", "% " + needle, "% " + needle + " %", "%" + needle]
     frags: list[str] = []
     params: list[Any] = []
     for col in ("title", "description", "notes"):
         for p in pats:
-            frags.append(f"{col} LIKE ? ESCAPE '\\'")
+            frags.append(f"LOWER({col}) LIKE ? ESCAPE '\\'")
             params.append(p)
     return ("(" + " OR ".join(frags) + ")", params)
 
@@ -574,24 +585,25 @@ def tag_list() -> list[dict[str, Any]]:
     """
     Return all tags with the number of distinct tasks that have that tag.
     A task has a tag if: the tag is in task_tags, or #tag appears in title, or #tag in description/notes.
-    Each task is counted at most once per tag.
+    Case-insensitive: meghan and Meghan are one tag (canonical lowercase). Each task counted once per tag.
     """
     conn = get_connection()
     try:
         tag_to_task_ids: dict[str, set[str]] = {}
-        # From task_tags
+        # From task_tags (key by lowercase so meghan/Meghan merge)
         for row in conn.execute("SELECT tag, task_id FROM task_tags").fetchall():
             t, tid = row[0], row[1]
-            if t not in tag_to_task_ids:
-                tag_to_task_ids[t] = set()
-            tag_to_task_ids[t].add(tid)
+            key = t.lower()
+            if key not in tag_to_task_ids:
+                tag_to_task_ids[key] = set()
+            tag_to_task_ids[key].add(tid)
         # From title, description, notes: extract #word
         hashtag_re = re.compile(r"#([a-zA-Z0-9_-]+)")
         for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
             tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
             for text in (title, desc, notes):
                 for m in hashtag_re.finditer(text):
-                    tagname = m.group(1)
+                    tagname = m.group(1).lower()
                     if tagname not in tag_to_task_ids:
                         tag_to_task_ids[tagname] = set()
                     tag_to_task_ids[tagname].add(tid)
@@ -606,22 +618,22 @@ def tag_rename(old_tag: str, new_tag: str) -> int:
     new_tag must be non-empty. Returns number of tasks whose title/description/notes were updated.
     """
     old_tag = (old_tag or "").strip()
-    new_tag = (new_tag or "").strip()
+    new_tag = (new_tag or "").strip().lower()
     if not old_tag:
         raise ValueError("old_tag is required")
     if not new_tag:
         raise ValueError("new_tag is required")
-    if old_tag == new_tag:
+    if old_tag.lower() == new_tag:
         return 0
     conn = get_connection()
     try:
-        # task_tags: for each task that had old_tag, remove old and add new (avoid duplicate)
-        task_ids_with_old = [r[0] for r in conn.execute("SELECT task_id FROM task_tags WHERE tag = ?", (old_tag,)).fetchall()]
-        conn.execute("DELETE FROM task_tags WHERE tag = ?", (old_tag,))
+        # task_tags: for each task that had old_tag (case-insensitive), remove old and add new (avoid duplicate)
+        task_ids_with_old = [r[0] for r in conn.execute("SELECT task_id FROM task_tags WHERE LOWER(tag) = LOWER(?)", (old_tag,)).fetchall()]
+        conn.execute("DELETE FROM task_tags WHERE LOWER(tag) = LOWER(?)", (old_tag,))
         for tid in task_ids_with_old:
             conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (tid, new_tag))
-        # Replace #old_tag with #new_tag in title, description, notes (whole-word)
-        pat = _hashtag_regex(old_tag)
+        # Replace #old_tag with #new_tag in title, description, notes (whole-word, case-insensitive)
+        pat = _hashtag_regex(old_tag, case_insensitive=True)
         repl = "#" + new_tag
         updated = 0
         now = _now_iso()
@@ -645,7 +657,8 @@ def tag_rename(old_tag: str, new_tag: str) -> int:
 
 def tag_delete(tag: str) -> int:
     """
-    Remove a tag from all tasks: delete from task_tags and remove #tag from title/description/notes.
+    Remove a tag from all tasks: delete from task_tags and strip the # from #tag in title/description/notes
+    (so "#meghan" becomes "meghan"; the word is left in place).
     Returns number of tasks whose title/description/notes were updated (excluding tag-table-only removals).
     """
     tag = (tag or "").strip()
@@ -653,20 +666,20 @@ def tag_delete(tag: str) -> int:
         raise ValueError("tag is required")
     conn = get_connection()
     try:
-        conn.execute("DELETE FROM task_tags WHERE tag = ?", (tag,))
-        pat = _hashtag_regex(tag)
+        conn.execute("DELETE FROM task_tags WHERE LOWER(tag) = LOWER(?)", (tag,))
+        pat = _hashtag_regex(tag, case_insensitive=True)
         updated = 0
         now = _now_iso()
         for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
             tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
-            # Remove #tag and collapse adjacent spaces
-            def remove_tag(text: str) -> str:
+            # Replace #tag with tag (remove only the #), preserve casing in text; collapse adjacent spaces
+            def strip_tag_marker(text: str) -> str:
                 if not text:
                     return text
-                return re.sub(r"\s+", " ", pat.sub("", text)).strip()
-            new_title = remove_tag(title)
-            new_desc = remove_tag(desc)
-            new_notes = remove_tag(notes)
+                return re.sub(r"\s+", " ", pat.sub(lambda m: m.group(0)[1:], text)).strip()
+            new_title = strip_tag_marker(title)
+            new_desc = strip_tag_marker(desc)
+            new_notes = strip_tag_marker(notes)
             if new_title != title or new_desc != desc or new_notes != notes:
                 conn.execute(
                     "UPDATE tasks SET title = ?, description = ?, notes = ?, updated_at = ? WHERE id = ?",

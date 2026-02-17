@@ -322,14 +322,10 @@
         <button type="button" id="description-modal-close" class="modal-close" aria-label="Close">&times;</button>
       </div>
       <div class="modal-body description-modal-body">
-        <div class="description-modal-tabs">
-          <button type="button" id="description-tab-edit" class="description-tab active" aria-pressed="true">Edit</button>
-          <button type="button" id="description-tab-preview" class="description-tab" aria-pressed="false">Preview</button>
+        <div id="description-notes-editor" class="description-notes-editor">
+          <textarea id="description-edit-textarea" class="description-edit-textarea-hidden" placeholder="Add a description (Markdown supported)…" aria-hidden="true"></textarea>
+          <div id="description-notes-lines" class="description-notes-lines"></div>
         </div>
-        <div id="description-edit-pane" class="description-pane">
-          <textarea id="description-edit-textarea" placeholder="Add a description (Markdown supported)…" rows="12"></textarea>
-        </div>
-        <div id="description-preview-pane" class="description-pane hidden description-preview-content"></div>
       </div>
       <div class="modal-footer">
         <button type="button" id="description-modal-save" class="btn-primary">Save</button>

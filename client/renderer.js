@@ -128,11 +128,9 @@
   const descriptionModalOverlay = document.getElementById('description-modal-overlay');
   const descriptionModalClose = document.getElementById('description-modal-close');
   const descriptionEditTextarea = document.getElementById('description-edit-textarea');
-  const descriptionEditPane = document.getElementById('description-edit-pane');
-  const descriptionPreviewPane = document.getElementById('description-preview-pane');
-  const descriptionTabEdit = document.getElementById('description-tab-edit');
-  const descriptionTabPreview = document.getElementById('description-tab-preview');
+  const descriptionNotesLines = document.getElementById('description-notes-lines');
   const descriptionModalSave = document.getElementById('description-modal-save');
+  let descriptionActiveLineIndex = null;
   const connectionIndicator = document.getElementById('connection-indicator');
   const themeBtn = document.getElementById('theme-btn');
   const inboxItem = document.getElementById('inbox-item');
@@ -236,17 +234,49 @@
     return out;
   }
 
-  function renderMarkdown(text) {
-    if (!text || typeof text !== 'string') return '';
-    const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    let out = escape(text);
+  const escapeHtml = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  function renderMarkdownInline(text) {
+    if (text == null || text === '') return '';
+    let out = escapeHtml(text);
+    out = out.replace(/(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
     out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
     out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-    out = out.replace(/\n\n/g, '</p><p>');
-    out = out.replace(/\n/g, '<br>');
-    return '<p>' + out + '</p>';
+    return out;
+  }
+  /** Render a single line for display: headings, task checkbox, or inline. Returns { html, isCheckbox, checked } for checkbox lines. */
+  function renderMarkdownLine(line) {
+    const s = line;
+    const headingMatch = s.match(/^(#{1,6})\s+(.*)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length;
+      const inner = renderMarkdownInline(headingMatch[2].trim());
+      return { html: `<h${level} class="description-line-heading">${inner}</h${level}>`, isCheckbox: false };
+    }
+    const checkboxMatch = s.match(/^(\s*)([-*])\s+\[([ xX])\]\s+(.*)$/);
+    if (checkboxMatch) {
+      const checked = checkboxMatch[3].toLowerCase() === 'x';
+      const rest = renderMarkdownInline(checkboxMatch[5]);
+      return {
+        html: `<label class="description-line-checkbox"><input type="checkbox" ${checked ? 'checked' : ''} data-line-index /><span class="description-line-checkbox-text">${rest}</span></label>`,
+        isCheckbox: true,
+        checked,
+      };
+    }
+    if (s.trim() === '') return { html: '<div class="description-line description-line-empty">&nbsp;</div>', isCheckbox: false };
+    const inner = renderMarkdownInline(s);
+    return { html: `<div class="description-line description-line-p">${inner}</div>`, isCheckbox: false };
+  }
+  function renderMarkdown(text) {
+    if (!text || typeof text !== 'string') return '';
+    const lines = text.split('\n');
+    const parts = [];
+    for (let i = 0; i < lines.length; i++) {
+      const { html } = renderMarkdownLine(lines[i]);
+      parts.push(html);
+    }
+    return parts.join('');
   }
 
   function formatDate(dateStr) {
@@ -686,9 +716,9 @@
       }
     });
   }
-  if (descriptionTabEdit) descriptionTabEdit.addEventListener('click', () => switchDescriptionTab(false));
-  if (descriptionTabPreview) descriptionTabPreview.addEventListener('click', () => switchDescriptionTab(true));
-  if (descriptionEditTextarea) attachHashtagAutocomplete(descriptionEditTextarea);
+  if (descriptionEditTextarea) {
+    attachHashtagAutocomplete(descriptionEditTextarea);
+  }
 
   const TAG_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
   function validateTagName(name) {
@@ -1761,16 +1791,16 @@
     document.removeEventListener('click', taskTagsDropdownOutside);
   }
   function taskTagsDropdownOutside(ev) {
-    if (taskTagsDropdownEl && !taskTagsDropdownEl.contains(ev.target) && !ev.target.closest('.tags-cell') && !ev.target.closest('.inspector-tags-btn')) closeTaskTagsDropdown();
+    if (taskTagsDropdownEl && !taskTagsDropdownEl.contains(ev.target) && !ev.target.closest('.tags-cell') && !ev.target.closest('.inspector-tags-btn') && !ev.target.closest('.new-task-tags-btn')) closeTaskTagsDropdown();
   }
   async function openTaskTagsDropdown(ev, anchorEl, options) {
     ev.stopPropagation();
     closeTaskTagsDropdown();
     closeProjectsDropdown();
-    const taskId = options && options.taskId ? String(options.taskId) : null;
-    if (!taskId) return;
-    const currentTags = Array.isArray(options.currentTags) ? options.currentTags : [];
-    const selectedSet = new Set(currentTags.map((t) => String(t).trim()).filter(Boolean));
+    const taskId = options && options.taskId != null && options.taskId !== '' ? String(options.taskId) : null;
+    const forNewTask = options && options.forNewTask;
+    if (!taskId && !forNewTask) return;
+    let currentTags = (Array.isArray(options.currentTags) ? options.currentTags : []).map((t) => String(t).trim()).filter(Boolean);
     const onAfterApply = options && options.onAfterApply;
 
     const dropdown = document.createElement('div');
@@ -1778,21 +1808,12 @@
     dropdown.setAttribute('role', 'dialog');
     dropdown.setAttribute('aria-label', 'Assign tags');
 
-    const section = document.createElement('div');
-    section.className = 'task-tags-dropdown-section';
-    const title = document.createElement('div');
-    title.className = 'task-tags-dropdown-section-title';
-    title.textContent = 'Tags';
-    section.appendChild(title);
-    const list = document.createElement('div');
-    list.className = 'task-tags-dropdown-list';
-
-    function collectSelected() {
-      const sel = [];
-      list.querySelectorAll('input[type="checkbox"]').forEach((cb) => { if (cb.checked && cb.dataset.tag) sel.push(cb.dataset.tag); });
-      return sel;
-    }
     async function applyTags(tags) {
+      if (forNewTask) {
+        currentTags = tags;
+        if (onAfterApply) onAfterApply(tags);
+        return;
+      }
       try {
         const updated = await updateTask(taskId, { tags });
         updateTaskInLists(updated);
@@ -1802,69 +1823,122 @@
       }
     }
 
+    // --- Current tags (same structure as projects: list + remove button each) ---
+    const currentSection = document.createElement('div');
+    currentSection.className = 'task-projects-section';
+    const currentTitle = document.createElement('div');
+    currentTitle.className = 'task-projects-section-title';
+    currentTitle.textContent = 'Current tags';
+    currentSection.appendChild(currentTitle);
+    const currentList = document.createElement('div');
+    currentList.className = 'task-projects-current-list';
+
+    function renderCurrentTags() {
+      currentList.innerHTML = '';
+      const sorted = [...currentTags].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+      sorted.forEach((tag) => {
+        const item = document.createElement('div');
+        item.className = 'task-projects-current-item';
+        const label = '#' + String(tag).replace(/</g, '&lt;');
+        item.innerHTML = `<span class="task-projects-current-label">${label}</span> <button type="button" class="task-projects-remove" aria-label="Remove">×</button>`;
+        const removeBtn = item.querySelector('button');
+        removeBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          currentTags = currentTags.filter((t) => t !== tag);
+          applyTags(currentTags).then(() => {
+            closeTaskTagsDropdown();
+            if (!forNewTask && onAfterApply) onAfterApply();
+          });
+        });
+        currentList.appendChild(item);
+      });
+      if (currentTags.length === 0) currentList.innerHTML = '<span class="task-projects-empty">None</span>';
+    }
+    renderCurrentTags();
+    currentSection.appendChild(currentList);
+    dropdown.appendChild(currentSection);
+
+    // --- Add tag (same structure as projects: search + results) ---
+    const searchSection = document.createElement('div');
+    searchSection.className = 'task-projects-section task-projects-search-section';
+    const searchTitle = document.createElement('div');
+    searchTitle.className = 'task-projects-section-title';
+    searchTitle.textContent = 'Add tag';
+    searchSection.appendChild(searchTitle);
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.placeholder = 'Search or add tag…';
+    searchInput.className = 'task-projects-search-input';
+    searchSection.appendChild(searchInput);
+    const resultsDiv = document.createElement('div');
+    resultsDiv.className = 'task-projects-results';
+    searchSection.appendChild(resultsDiv);
+
+    let allTagNames = [];
     try {
       const allTags = await api('/api/external/tags');
-      const tagNames = Array.isArray(allTags) ? [...new Set(allTags.map((x) => String(x.tag || '').trim()).filter(Boolean))].sort() : [];
-      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-      tagNames.forEach((tag) => {
-        const checked = selectedSet.has(tag);
-        const row = document.createElement('label');
-        row.className = 'task-tags-dropdown-row';
-        row.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''} data-tag="${escape(tag)}" /><span class="task-tags-dropdown-label">#${escape(tag)}</span>`;
-        const cb = row.querySelector('input');
-        cb.addEventListener('change', () => applyTags(collectSelected()));
-        list.appendChild(row);
-      });
-    } catch (e) {
-      list.innerHTML = '<span class="task-tags-dropdown-empty">Failed to load tags</span>';
-    }
-    section.appendChild(list);
-    dropdown.appendChild(section);
+      allTagNames = Array.isArray(allTags) ? [...new Set(allTags.map((x) => String(x.tag || '').trim()).filter(Boolean))].sort() : [];
+    } catch (_) {}
 
-    const newSection = document.createElement('div');
-    newSection.className = 'task-tags-dropdown-new-section';
-    const newInput = document.createElement('input');
-    newInput.type = 'text';
-    newInput.placeholder = 'New tag…';
-    newInput.className = 'task-tags-dropdown-new-input';
-    newInput.setAttribute('aria-label', 'New tag name');
-    newInput.maxLength = 80;
-    const addBtn = document.createElement('button');
-    addBtn.type = 'button';
-    addBtn.className = 'task-tags-dropdown-add-btn';
-    addBtn.textContent = 'Add';
-    addBtn.setAttribute('aria-label', 'Add tag');
-    addBtn.addEventListener('click', () => {
-      const name = validateTagName(newInput.value);
-      if (!name) {
-        alert('Tag must be a single word: letters, numbers, underscore or dash only.');
-        return;
+    function renderSearchResults() {
+      const q = (searchInput.value || '').trim().toLowerCase();
+      resultsDiv.innerHTML = '';
+      if (!q) return;
+      const currentSet = new Set(currentTags.map((t) => t.toLowerCase()));
+      let matches = allTagNames.filter((tag) => {
+        if (currentSet.has(tag.toLowerCase())) return false;
+        return tag.toLowerCase().includes(q);
+      });
+      matches = matches.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+      if (matches.length) {
+        matches.forEach((tag) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'task-projects-result-item';
+          btn.textContent = '#' + tag;
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const next = [...currentTags, tag].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+            applyTags(next).then(() => {
+              closeTaskTagsDropdown();
+              if (!forNewTask && onAfterApply) onAfterApply();
+            });
+          });
+          resultsDiv.appendChild(btn);
+        });
+      } else {
+        const createBtn = document.createElement('button');
+        createBtn.type = 'button';
+        createBtn.className = 'task-projects-result-item task-projects-create';
+        createBtn.textContent = `Add tag "#${q}"`;
+        createBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const name = validateTagName(searchInput.value.trim());
+          if (!name) {
+            alert('Tag must be a single word: letters, numbers, underscore or dash only.');
+            return;
+          }
+          currentTags = [...currentTags, name].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+          await applyTags(currentTags);
+          if (!allTagNames.includes(name)) {
+            allTagNames = [...allTagNames, name].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
+          }
+          closeTaskTagsDropdown();
+          if (!forNewTask && onAfterApply) onAfterApply();
+          loadTags();
+        });
+        resultsDiv.appendChild(createBtn);
       }
-      const existing = list.querySelector(`input[data-tag="${name.replace(/"/g, '&quot;')}"]`);
-      if (existing) {
-        existing.checked = true;
-        applyTags(collectSelected());
-        newInput.value = '';
-        return;
-      }
-      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-      const row = document.createElement('label');
-      row.className = 'task-tags-dropdown-row';
-      row.innerHTML = `<input type="checkbox" checked data-tag="${escape(name)}" /><span class="task-tags-dropdown-label">#${escape(name)}</span>`;
-      const cb = row.querySelector('input');
-      cb.addEventListener('change', () => applyTags(collectSelected()));
-      list.appendChild(row);
-      applyTags(collectSelected());
-      newInput.value = '';
-    });
-    newSection.appendChild(newInput);
-    newSection.appendChild(addBtn);
-    dropdown.appendChild(newSection);
+    }
+    searchInput.addEventListener('input', renderSearchResults);
+    searchInput.addEventListener('focus', renderSearchResults);
+
+    dropdown.appendChild(searchSection);
 
     document.body.appendChild(dropdown);
     taskTagsDropdownEl = dropdown;
     const rect = anchorEl.getBoundingClientRect();
-    const minW = Math.max(rect.width, 200);
+    const minW = Math.max(rect.width, 240);
     const fromInspector = anchorEl.closest('.inspector-content') || anchorEl.closest('.right-panel');
     dropdown.style.position = 'fixed';
     dropdown.style.top = `${rect.bottom + 4}px`;
@@ -1877,11 +1951,111 @@
     } else {
       dropdown.style.left = `${rect.left}px`;
     }
-    requestAnimationFrame(() => document.addEventListener('click', taskTagsDropdownOutside));
+    requestAnimationFrame(() => {
+      document.addEventListener('click', taskTagsDropdownOutside);
+      searchInput.focus();
+    });
   }
 
   let descriptionModalTaskId = null;
   let descriptionModalForNewTask = false;
+
+  function getDescriptionLines() {
+    const raw = descriptionEditTextarea ? descriptionEditTextarea.value : '';
+    return raw.split('\n');
+  }
+  function setDescriptionLines(lines) {
+    if (descriptionEditTextarea) descriptionEditTextarea.value = lines.join('\n');
+  }
+
+  function buildDescriptionNotesView() {
+    if (!descriptionNotesLines || !descriptionEditTextarea) return;
+    const lines = getDescriptionLines();
+    descriptionNotesLines.innerHTML = '';
+    for (let i = 0; i < lines.length; i++) {
+      const wrap = document.createElement('div');
+      wrap.className = 'description-line-wrap';
+      wrap.dataset.lineIndex = String(i);
+      if (i === descriptionActiveLineIndex) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'description-line-input';
+        input.value = lines[i];
+        input.dataset.lineIndex = String(i);
+        input.setAttribute('aria-label', 'Edit line ' + (i + 1));
+        wrap.appendChild(input);
+        input.addEventListener('blur', () => {
+          const idx = parseInt(input.dataset.lineIndex, 10);
+          const newLines = getDescriptionLines();
+          if (idx >= 0 && idx < newLines.length) newLines[idx] = input.value;
+          else if (idx === newLines.length) newLines.push(input.value);
+          setDescriptionLines(newLines);
+          descriptionActiveLineIndex = null;
+          buildDescriptionNotesView();
+        });
+        input.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            input.blur();
+          }
+        });
+        attachHashtagAutocomplete(input);
+        descriptionNotesLines.appendChild(wrap);
+        setTimeout(() => input.focus(), 0);
+      } else {
+        const { html, isCheckbox } = renderMarkdownLine(lines[i]);
+        wrap.innerHTML = html;
+        const inner = wrap.firstElementChild;
+        if (inner) {
+          inner.dataset.lineIndex = String(i);
+          if (!isCheckbox) {
+            wrap.classList.add('description-line-clickable');
+            wrap.addEventListener('click', (e) => {
+              if (e.target.closest('a')) return;
+              descriptionActiveLineIndex = i;
+              buildDescriptionNotesView();
+            });
+          } else {
+            const cb = wrap.querySelector('input[type="checkbox"]');
+            if (cb) {
+              cb.dataset.lineIndex = String(i);
+              cb.addEventListener('click', (e) => e.stopPropagation());
+              cb.addEventListener('change', () => {
+                const idx = parseInt(cb.dataset.lineIndex, 10);
+                const newLines = getDescriptionLines();
+                const line = newLines[idx] || '';
+                const m = line.match(/^(\s*[-*])\s+\[([ xX])\]\s+(.*)$/);
+                if (m) {
+                  newLines[idx] = m[1] + ' [' + (m[2].toLowerCase() === 'x' ? ' ' : 'x') + '] ' + m[3];
+                  setDescriptionLines(newLines);
+                  buildDescriptionNotesView();
+                }
+              });
+            }
+            wrap.addEventListener('click', (e) => {
+              if (e.target.type === 'checkbox') return;
+              e.preventDefault();
+              descriptionActiveLineIndex = i;
+              buildDescriptionNotesView();
+            });
+          }
+        }
+        descriptionNotesLines.appendChild(wrap);
+      }
+    }
+    if (descriptionActiveLineIndex == null && lines.length === 0) {
+      const wrap = document.createElement('div');
+      wrap.className = 'description-line-wrap description-line-clickable description-line-placeholder';
+      wrap.textContent = 'Click to add notes (Markdown: # heading, - [ ] checkbox, **bold**, etc.)';
+      wrap.addEventListener('click', () => {
+        setDescriptionLines(['']);
+        descriptionActiveLineIndex = 0;
+        buildDescriptionNotesView();
+      });
+      descriptionNotesLines.appendChild(wrap);
+    }
+  }
+
   function openDescriptionModal(ev, cell) {
     if (ev && ev.stopPropagation) ev.stopPropagation();
     const taskId = cell && cell.dataset.descriptionTaskId;
@@ -1891,20 +2065,17 @@
     descriptionModalForNewTask = false;
     descriptionModalTaskId = taskId;
     if (descriptionEditTextarea) descriptionEditTextarea.value = desc;
-    if (descriptionPreviewPane) descriptionPreviewPane.innerHTML = renderMarkdown(desc);
-    if (descriptionEditPane) descriptionEditPane.classList.remove('hidden');
-    if (descriptionPreviewPane) descriptionPreviewPane.classList.add('hidden');
-    if (descriptionTabEdit) { descriptionTabEdit.classList.add('active'); descriptionTabEdit.setAttribute('aria-pressed', 'true'); }
-    if (descriptionTabPreview) { descriptionTabPreview.classList.remove('active'); descriptionTabPreview.setAttribute('aria-pressed', 'false'); }
+    descriptionActiveLineIndex = null;
+    buildDescriptionNotesView();
     if (descriptionModalOverlay) {
       descriptionModalOverlay.classList.remove('hidden');
       descriptionModalOverlay.setAttribute('aria-hidden', 'false');
-      if (descriptionEditTextarea) setTimeout(() => descriptionEditTextarea.focus(), 50);
     }
   }
   function closeDescriptionModal() {
     descriptionModalTaskId = null;
     descriptionModalForNewTask = false;
+    descriptionActiveLineIndex = null;
     if (descriptionModalOverlay) {
       descriptionModalOverlay.classList.add('hidden');
       descriptionModalOverlay.setAttribute('aria-hidden', 'true');
@@ -1914,25 +2085,12 @@
     descriptionModalTaskId = null;
     descriptionModalForNewTask = true;
     if (descriptionEditTextarea) descriptionEditTextarea.value = newTaskState.description || '';
-    if (descriptionPreviewPane) descriptionPreviewPane.innerHTML = renderMarkdown(newTaskState.description || '');
-    if (descriptionEditPane) descriptionEditPane.classList.remove('hidden');
-    if (descriptionPreviewPane) descriptionPreviewPane.classList.add('hidden');
-    if (descriptionTabEdit) { descriptionTabEdit.classList.add('active'); descriptionTabEdit.setAttribute('aria-pressed', 'true'); }
-    if (descriptionTabPreview) { descriptionTabPreview.classList.remove('active'); descriptionTabPreview.setAttribute('aria-pressed', 'false'); }
+    descriptionActiveLineIndex = null;
+    buildDescriptionNotesView();
     if (descriptionModalOverlay) {
       descriptionModalOverlay.classList.remove('hidden');
       descriptionModalOverlay.setAttribute('aria-hidden', 'false');
-      if (descriptionEditTextarea) setTimeout(() => descriptionEditTextarea.focus(), 50);
     }
-  }
-  function switchDescriptionTab(toPreview) {
-    if (toPreview && descriptionEditTextarea && descriptionPreviewPane) {
-      descriptionPreviewPane.innerHTML = renderMarkdown(descriptionEditTextarea.value);
-    }
-    if (descriptionEditPane) descriptionEditPane.classList.toggle('hidden', toPreview);
-    if (descriptionPreviewPane) descriptionPreviewPane.classList.toggle('hidden', !toPreview);
-    if (descriptionTabEdit) { descriptionTabEdit.classList.toggle('active', !toPreview); descriptionTabEdit.setAttribute('aria-pressed', !toPreview ? 'true' : 'false'); }
-    if (descriptionTabPreview) { descriptionTabPreview.classList.toggle('active', toPreview); descriptionTabPreview.setAttribute('aria-pressed', toPreview ? 'true' : 'false'); }
   }
 
   async function applyTaskProjects(taskId, projectIds) {
@@ -2676,6 +2834,7 @@
       if (listsList) {
         loadLists();
       }
+      loadTags(tasks);
     } catch (e) {
       projectListCache = [];
       projectsList.innerHTML = `<li class="nav-item placeholder">${e.message || 'Error'}</li>`;
@@ -3089,7 +3248,7 @@
     }
   }
 
-  async function loadTags() {
+  async function loadTags(optionalTasks) {
     if (!tagsListEl) return;
     if (!getApiKey()) {
       tagsListEl.innerHTML = '<li class="nav-item placeholder">Set API key to list tags</li>';
@@ -3097,6 +3256,8 @@
       return;
     }
     try {
+      let tasks = optionalTasks;
+      if (!Array.isArray(tasks)) tasks = await api('/api/external/tasks?limit=1000').catch(() => []);
       let tags = await api('/api/external/tags');
       tags = Array.isArray(tags) ? tags.slice() : [];
       cachedTagNames = tags.map((item) => String(item.tag || '').trim()).filter(Boolean);
@@ -3104,23 +3265,33 @@
         tagsListEl.innerHTML = '<li class="nav-item placeholder">—</li>';
         return;
       }
+      const tagToTasksMap = new Map();
+      tags.forEach((item) => {
+        const rawTag = String(item.tag || '').trim();
+        if (!rawTag) return;
+        const tagTasks = (tasks || []).filter((t) => (t.tags || []).some((x) => String(x).trim() === rawTag));
+        tagToTasksMap.set(rawTag, tagTasks);
+      });
       const sort = getTagSort();
       if (sort === 'name_asc') tags.sort((a, b) => String(a.tag || '').localeCompare(String(b.tag || ''), undefined, { sensitivity: 'base' }));
       else if (sort === 'name_desc') tags.sort((a, b) => String(b.tag || '').localeCompare(String(a.tag || ''), undefined, { sensitivity: 'base' }));
-      else if (sort === 'count_asc') tags.sort((a, b) => (Number(a.count) || 0) - (Number(b.count) || 0));
-      else if (sort === 'count_desc') tags.sort((a, b) => (Number(b.count) || 0) - (Number(a.count) || 0));
+      else if (sort === 'count_asc') tags.sort((a, b) => (tagToTasksMap.get(String(a.tag || '').trim()) || []).length - (tagToTasksMap.get(String(b.tag || '').trim()) || []).length);
+      else if (sort === 'count_desc') tags.sort((a, b) => (tagToTasksMap.get(String(b.tag || '').trim()) || []).length - (tagToTasksMap.get(String(a.tag || '').trim()) || []).length);
 
+      const showDueOverdueCounts = getShowDueOverdueCounts();
+      const countRendererNav = showDueOverdueCounts ? (c) => renderNavCounts(c) : (c) => renderNavCountsSimple(c);
       const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
       tagsListEl.innerHTML = tags.map((item) => {
         const rawTag = String(item.tag || '').trim();
         const tag = escape(rawTag);
-        const count = Number(item.count) || 0;
+        const tagTasks = tagToTasksMap.get(rawTag) || [];
+        const countHtml = countRendererNav(countTasksByBucket(tagTasks)).replace('class="nav-item-count', 'class="nav-item-count nav-item-count-tag');
         const isFav = isInFavorites('tag', rawTag);
         const starIcon = isFav ? STAR_PROHIBITED_SVG_14 : STAR_ADD_SVG_14;
         const favTitle = isFav ? 'Remove from favorites' : 'Add to favorites';
         const favBtn = `<button type="button" class="nav-action-btn nav-item-favorite-toggle" data-favorite="${isFav ? '1' : '0'}" title="${favTitle}" aria-label="${favTitle}">${starIcon}</button>`;
         const actions = `<span class="nav-item-actions">${favBtn}</span>`;
-        return `<li class="nav-item" data-type="tag" data-tag="${tag}">#${tag} <span class="nav-item-count nav-item-count-tag">${count}</span>${actions}</li>`;
+        return `<li class="nav-item" data-type="tag" data-tag="${tag}">#${tag} ${countHtml}${actions}</li>`;
       }).join('');
       tagsListEl.querySelectorAll('.nav-item').forEach((el) => {
         el.addEventListener('click', onTagClick);
@@ -4746,6 +4917,7 @@
     editModeOutsideClickRef = (ev) => {
       if (ev.target.closest('#navigator-edit-btn')) return;
       if (ev.target.closest('.nav-item-actions')) return;
+      if (ev.target.closest('#tags-sort-row') || ev.target.closest('.tags-sort-btn')) return;
       exitEditMode();
     };
     document.addEventListener('click', editModeOutsideClickRef, true);
@@ -4793,6 +4965,7 @@
     description: '',
     recurrence: null,
     projects: [],
+    tags: [],
   };
 
   function closeNewTaskModal() {
@@ -4803,6 +4976,8 @@
   }
 
   function openNewTaskModal() {
+    const fromProject = lastTaskSource && lastTaskSource !== 'inbox' && lastTaskSource !== 'search' && !lastTaskSource.startsWith('list:') && !lastTaskSource.startsWith('tag:');
+    const fromTag = lastTaskSource && lastTaskSource.startsWith('tag:');
     newTaskState = {
       title: '',
       available_date: '',
@@ -4811,9 +4986,8 @@
       flagged: false,
       description: '',
       recurrence: null,
-      projects: (lastTaskSource && lastTaskSource !== 'inbox' && lastTaskSource !== 'search' && !lastTaskSource.startsWith('list:'))
-        ? [lastTaskSource]
-        : [],
+      projects: fromProject ? [lastTaskSource] : [],
+      tags: fromTag ? [lastTaskSource.slice(4)] : [],
     };
     if (!newTaskModalContent) return;
     const hasRecurrence = !!(newTaskState.recurrence && typeof newTaskState.recurrence === 'object' && (newTaskState.recurrence.freq || newTaskState.recurrence.interval));
@@ -4841,6 +5015,9 @@
     html += '<button type="button" class="inspector-action-icon inspector-recurrence-btn muted new-task-recurrence-btn" title="Set recurrence" aria-label="Recurrence">' + RECURRENCE_ICON_SVG + '</button>';
     html += '<span class="inspector-actions-projects inspector-projects-wrap new-task-projects-wrap" data-projects-json="' + escapeAttr(JSON.stringify(newTaskState.projects)) + '">';
     html += '<button type="button" class="inspector-action-icon inspector-projects-btn' + (newTaskState.projects.length ? '' : ' muted') + ' new-task-projects-btn" title="Add or remove projects" aria-haspopup="true" aria-label="Projects">' + INSPECTOR_PROJECTS_ICON_SVG + '</button>';
+    html += '</span>';
+    html += '<span class="inspector-actions-tags new-task-tags-wrap" data-tags-json="' + escapeAttr(JSON.stringify(newTaskState.tags)) + '">';
+    html += '<button type="button" class="inspector-action-icon inspector-tags-btn new-task-tags-btn' + (newTaskState.tags.length ? '' : ' muted') + '" title="Add or remove tags" aria-haspopup="true" aria-label="Tags">' + INSPECTOR_TAG_SVG + '</button>';
     html += '</span>';
     html += '</div>';
     newTaskModalContent.innerHTML = html;
@@ -4894,6 +5071,23 @@
         });
       });
     }
+    const tagsWrap = newTaskModalContent.querySelector('.new-task-tags-wrap');
+    const tagsBtn = newTaskModalContent.querySelector('.new-task-tags-btn');
+    if (tagsWrap && tagsBtn) {
+      tagsBtn.addEventListener('click', (ev) => {
+        openTaskTagsDropdown(ev, tagsBtn, {
+          taskId: null,
+          forNewTask: true,
+          currentTags: newTaskState.tags,
+          anchorEl: tagsBtn,
+          onAfterApply: (tags) => {
+            newTaskState.tags = Array.isArray(tags) ? tags : [];
+            tagsWrap.dataset.tagsJson = JSON.stringify(newTaskState.tags);
+            tagsBtn.classList.toggle('muted', !newTaskState.tags.length);
+          },
+        });
+      });
+    }
     if (availableInput) availableInput.addEventListener('change', () => { newTaskState.available_date = (availableInput.value || '').trim().substring(0, 10); });
     if (dueInput) dueInput.addEventListener('change', () => { newTaskState.due_date = (dueInput.value || '').trim().substring(0, 10); });
 
@@ -4928,6 +5122,7 @@
         description: newTaskState.description || null,
         recurrence: newTaskState.recurrence || null,
         projects: newTaskState.projects && newTaskState.projects.length ? newTaskState.projects : null,
+        tags: newTaskState.tags && newTaskState.tags.length ? newTaskState.tags : null,
       };
       try {
         await api('/api/external/tasks', {
