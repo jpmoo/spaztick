@@ -954,6 +954,7 @@
   setTheme(getTheme());
 
   // --- API fetch helper ---
+  // path must start with / (e.g. /api/external/projects). Base URL = server root where /api/external/* is served.
   async function api(path, options = {}) {
     const base = getApiBase().replace(/\/$/, '');
     const key = getApiKey();

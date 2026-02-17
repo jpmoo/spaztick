@@ -442,6 +442,8 @@ def api_delete_project(project_id: str):
 
 
 # --- External API (authenticated; same app on 8081) ---
+# Client expects these exact paths under the API base URL (e.g. base + "/api/external/projects").
+# All routes require X-API-Key header when config.api_key is set.
 
 def _require_api_key(x_api_key: str | None = Header(None, alias="X-API-Key")) -> None:
     """Dependency: require X-API-Key header to match config. 403 if no key set; 401 if wrong."""
