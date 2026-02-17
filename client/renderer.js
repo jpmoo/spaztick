@@ -237,11 +237,12 @@
   function renderMarkdownInline(text) {
     if (text == null || text === '') return '';
     let out = escapeHtml(text);
-    out = out.replace(/(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
+    out = out.replace(/(^|[\s>(])(https?:\/\/[^\s<>"\']+)/g, (_, before, url) => before + '<a href="' + escapeAttr(url) + '" target="_blank" rel="noopener">' + url + '</a>');
+    out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, url) => '<a href="' + escapeAttr(url) + '" target="_blank" rel="noopener">' + label + '</a>');
+    out = out.replace(/(?<![.:/A-Za-z0-9-])(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
     out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     out = out.replace(/`([^`]+)`/g, '<code>$1</code>');
-    out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
     return out;
   }
   /** Render a single line for display: headings, task checkbox, or inline. lineIndex optional, for checkbox data-line-index. */
@@ -704,7 +705,7 @@
       }
       if (!descriptionModalTaskId) return;
       try {
-        const updated = await updateTask(descriptionModalTaskId, { description: text });
+        const updated = await updateTask(descriptionModalTaskId, { notes: text });
         updateTaskInLists(updated);
         const row = document.querySelector(`.task-row[data-id="${descriptionModalTaskId}"]`);
         const inspectorDiv = document.getElementById('inspector-content');
@@ -1987,7 +1988,8 @@
     const taskId = cell && cell.dataset.descriptionTaskId;
     if (!taskId) return;
     const task = getTaskById(taskId);
-    const desc = (task && (task.description != null)) ? String(task.description) : '';
+    const notesOrDesc = (task && (task.notes != null && task.notes !== '' ? task.notes : task.description));
+    const desc = notesOrDesc != null ? String(notesOrDesc) : '';
     descriptionModalForNewTask = false;
     descriptionModalTaskId = taskId;
     if (descriptionEditTextarea) descriptionEditTextarea.value = desc;
@@ -2209,7 +2211,7 @@
   function formatTitleWithTagPills(titleText) {
     if (!titleText) return '';
     const escaped = titleText.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    return escaped.replace(/(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
+    return escaped.replace(/(?<![.:/A-Za-z0-9-])(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
   }
 
   function buildTaskRow(t) {
@@ -2312,8 +2314,8 @@
         addCell(key, html, { dateField: 'due_date', dateValue: dateVal || '' });
         return;
       } else if (key === 'description') {
-        const d = (t.description || '').trim();
-        let tooltip = d ? d.replace(/"/g, '&quot;').replace(/</g, '&lt;') : 'No description (click to add)';
+        const d = (t.notes || t.description || '').trim();
+        let tooltip = d ? d.replace(/"/g, '&quot;').replace(/</g, '&lt;') : 'No notes (click to add)';
         if (tooltip.length > 500) tooltip = tooltip.substring(0, 500) + '…';
         const iconClass = 'description-icon-wrap ' + (d ? '' : 'empty');
         html = `<span class="${iconClass}" title="${tooltip}">${documentIconSvg}</span>`;
@@ -2631,7 +2633,7 @@
       const termLower = term.toLowerCase();
       const tasks = list.filter((t) => {
         const title = (t.title || '').toLowerCase();
-        const desc = (t.description || '').toLowerCase();
+        const desc = (t.notes || t.description || '').toLowerCase();
         const tags = (t.tags || []).map((tag) => String(tag).toLowerCase());
         if (isTag) return tags.some((tag) => tag === termLower || tag.includes(termLower));
         return title.includes(termLower) || desc.includes(termLower) || tags.some((tag) => tag.includes(termLower));
@@ -3909,6 +3911,7 @@
     currentInspectorTag = null;
     try {
       const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+      updateTaskInLists(t);
       const div = document.getElementById('inspector-content');
       div.dataset.taskId = taskId;
       const createdVal = t.created_at ? formatDateTimeForInspector(t.created_at) : '—';
@@ -3923,7 +3926,7 @@
       const projectsListStr = projectShortIds.join(', ') || '—';
       const statusComplete = isTaskCompleted(t);
       const flagged = t.flagged === true || t.flagged === 1;
-      const hasDescription = (t.description || '').toString().trim().length > 0;
+      const hasDescription = (t.notes || t.description || '').toString().trim().length > 0;
       const recText = formatRecurrenceForDisplay(t.recurrence);
       const hasRecurrence = !!(t.recurrence && typeof t.recurrence === 'object' && (t.recurrence.freq || t.recurrence.interval));
 
@@ -5038,13 +5041,15 @@
       newTaskState.title = title;
       newTaskState.available_date = (availableEl && availableEl.value) ? (availableEl.value || '').trim().substring(0, 10) : '';
       newTaskState.due_date = (dueEl && dueEl.value) ? (dueEl.value || '').trim().substring(0, 10) : '';
+      const notesVal = newTaskState.description || null;
       const body = {
         title: newTaskState.title,
         available_date: newTaskState.available_date || null,
         due_date: newTaskState.due_date || null,
         status: newTaskState.status,
         flagged: newTaskState.flagged,
-        description: newTaskState.description || null,
+        description: notesVal,
+        notes: notesVal,
         recurrence: newTaskState.recurrence || null,
         projects: newTaskState.projects && newTaskState.projects.length ? newTaskState.projects : null,
         tags: newTaskState.tags && newTaskState.tags.length ? newTaskState.tags : null,

@@ -177,9 +177,8 @@ def _tags_for_task(
     description: str | None = None,
     notes: str | None = None,
 ) -> list[str]:
-    """Return tags for a task: from task_tags plus #word in title/description/notes. Case-insensitive dedupe (canonical lowercase)."""
+    """Return tags for a task: from task_tags plus #word in title/description/notes (skip # inside URLs). Case-insensitive dedupe."""
     from_tags = [r[0] for r in conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (task_id,))]
-    hashtag_re = re.compile(r"#([a-zA-Z0-9_-]+)")
     seen: set[str] = set()
     out: list[str] = []
     for t in from_tags:
@@ -190,8 +189,8 @@ def _tags_for_task(
     for text in (title or "", description or "", notes or ""):
         if not text:
             continue
-        for m in hashtag_re.finditer(text):
-            tagname = m.group(1).lower()
+        for m in _HASHTAG_NOT_IN_URL_RE.finditer(text):
+            tagname = m.group(2).lower()
             if tagname not in seen:
                 seen.add(tagname)
                 out.append(tagname)
@@ -555,6 +554,19 @@ def _hashtag_regex(tag: str, case_insensitive: bool = False) -> re.Pattern:
     return re.compile(r"#" + re.escape(tag) + r"(?![a-zA-Z0-9_-])", flags)
 
 
+# Match #word only when not inside a URL (not after ., :, /, or alphanumeric). Used for tag extraction.
+_HASHTAG_NOT_IN_URL_RE = re.compile(r"(?:^|[^.:/A-Za-z0-9-])(#([a-zA-Z0-9_-]+))")
+
+
+def _hashtag_not_in_url_regex(tag: str, case_insensitive: bool = False) -> re.Pattern:
+    """Match #tag as whole word only when not inside a URL. For use in sub (rename/remove)."""
+    flags = re.IGNORECASE if case_insensitive else 0
+    return re.compile(
+        r"(?<![.:/A-Za-z0-9-])#" + re.escape(tag) + r"(?![a-zA-Z0-9_-])",
+        flags,
+    )
+
+
 def _like_escape(tag: str) -> str:
     """Escape % and _ for use in SQLite LIKE (use ESCAPE '\\')."""
     return tag.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -570,8 +582,8 @@ def _sql_hashtag_in_text_condition(tag: str) -> tuple[str, list[Any]]:
         return ("0", [])
     t_lower = t.lower()
     needle = "#" + _like_escape(t_lower)
-    # Whole-word #tag: at start, after space, at end (pattern in lowercase for case-insensitive match)
-    pats = [needle, needle + " %", "% " + needle, "% " + needle + " %", "%" + needle]
+    # Whole-word #tag: at start or after space (exclude "%" + needle so we don't match #tag inside URLs like x.com#tag)
+    pats = [needle, needle + " %", "% " + needle, "% " + needle + " %"]
     frags: list[str] = []
     params: list[Any] = []
     for col in ("title", "description", "notes"):
@@ -597,13 +609,12 @@ def tag_list() -> list[dict[str, Any]]:
             if key not in tag_to_task_ids:
                 tag_to_task_ids[key] = set()
             tag_to_task_ids[key].add(tid)
-        # From title, description, notes: extract #word
-        hashtag_re = re.compile(r"#([a-zA-Z0-9_-]+)")
+        # From title, description, notes: extract #word (skip when inside a URL)
         for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
             tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
             for text in (title, desc, notes):
-                for m in hashtag_re.finditer(text):
-                    tagname = m.group(1).lower()
+                for m in _HASHTAG_NOT_IN_URL_RE.finditer(text):
+                    tagname = m.group(2).lower()
                     if tagname not in tag_to_task_ids:
                         tag_to_task_ids[tagname] = set()
                     tag_to_task_ids[tagname].add(tid)
@@ -632,8 +643,8 @@ def tag_rename(old_tag: str, new_tag: str) -> int:
         conn.execute("DELETE FROM task_tags WHERE LOWER(tag) = LOWER(?)", (old_tag,))
         for tid in task_ids_with_old:
             conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (tid, new_tag))
-        # Replace #old_tag with #new_tag in title, description, notes (whole-word, case-insensitive)
-        pat = _hashtag_regex(old_tag, case_insensitive=True)
+        # Replace #old_tag with #new_tag in title, description, notes (skip when inside URL)
+        pat = _hashtag_not_in_url_regex(old_tag, case_insensitive=True)
         repl = "#" + new_tag
         updated = 0
         now = _now_iso()
@@ -667,12 +678,12 @@ def tag_delete(tag: str) -> int:
     conn = get_connection()
     try:
         conn.execute("DELETE FROM task_tags WHERE LOWER(tag) = LOWER(?)", (tag,))
-        pat = _hashtag_regex(tag, case_insensitive=True)
+        pat = _hashtag_not_in_url_regex(tag, case_insensitive=True)
         updated = 0
         now = _now_iso()
         for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
             tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
-            # Replace #tag with tag (remove only the #), preserve casing in text; collapse adjacent spaces
+            # Replace #tag with tag (remove only the #) when not inside URL; collapse adjacent spaces
             def strip_tag_marker(text: str) -> str:
                 if not text:
                     return text

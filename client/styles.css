@@ -1514,10 +1514,6 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
 .left-panel-edit-mode .nav-item-count {
   display: none !important;
 }
-/* Tags list: always show task count (even in edit mode) */
-.left-panel-edit-mode #tags-list .nav-item-count.nav-item-count-tag {
-  display: inline !important;
-}
 .nav-item-actions {
   display: none;
   margin-left: auto;
