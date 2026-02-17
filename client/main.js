@@ -2,6 +2,10 @@ const { app, BrowserWindow, shell, ipcMain } = require('electron');
 const path = require('path');
 const { exec } = require('child_process');
 
+// Reduce "tile memory limits exceeded" warnings from Chromium compositor (e.g. with many task cards).
+// Omit this if you prefer maximum GPU compositing and don't see drawing issues.
+app.commandLine.appendSwitch('disable-gpu-compositing');
+
 function openExternalUrl(url) {
   const u = typeof url === 'string' ? url.trim() : '';
   if (!u.startsWith('http://') && !u.startsWith('https://')) return Promise.resolve();

@@ -270,7 +270,7 @@
     const checkboxMatch = s.match(/^(\s*)([-*])\s+\[([ xX])\]\s+(.*)$/);
     if (checkboxMatch) {
       const checked = checkboxMatch[3].toLowerCase() === 'x';
-      const rest = renderMarkdownInline(checkboxMatch[5]);
+      const rest = renderMarkdownInline(checkboxMatch[4] || '');
       const idx = lineIndex != null ? String(lineIndex) : '';
       return {
         html: `<label class="description-line-checkbox"><input type="checkbox" ${checked ? 'checked' : ''} data-line-index="${escapeHtml(idx)}" /><span class="description-line-checkbox-text">${rest}</span></label>`,
@@ -431,100 +431,7 @@
     }
     settingsOverlay.classList.remove('hidden');
     settingsOverlay.setAttribute('aria-hidden', 'false');
-    loadSettingsTags();
   }
-
-  const settingsTagsList = document.getElementById('settings-tags-list');
-  const settingsTagsRefresh = document.getElementById('settings-tags-refresh');
-  async function loadSettingsTags() {
-    if (!settingsTagsList) return;
-    if (!getApiKey()) {
-      settingsTagsList.innerHTML = '<li class="settings-tags-empty">Set API key above to list tags.</li>';
-      return;
-    }
-    try {
-      const tags = await api('/api/external/tags');
-      if (!Array.isArray(tags) || !tags.length) {
-        settingsTagsList.innerHTML = '<li class="settings-tags-empty">No tags yet. Tags come from task tags or #tag in titles/notes.</li>';
-        return;
-      }
-      const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-      settingsTagsList.innerHTML = tags.map((item) => {
-        const tag = escape(item.tag || '');
-        const count = Number(item.count) || 0;
-        return `<li class="settings-tags-row" data-tag="${tag}" data-count="${count}">
-          <span class="settings-tags-name">#${tag}</span>
-          <span class="settings-tags-count">${count} task(s)</span>
-          <button type="button" class="btn-secondary btn-sm settings-tag-rename" data-action="rename" aria-label="Rename tag">Rename</button>
-          <button type="button" class="btn-secondary btn-sm settings-tag-delete" data-action="delete" aria-label="Delete tag">Delete</button>
-        </li>`;
-      }).join('');
-      settingsTagsList.querySelectorAll('.settings-tag-rename').forEach((btn) => {
-        btn.addEventListener('click', onSettingsTagRename);
-      });
-      settingsTagsList.querySelectorAll('.settings-tag-delete').forEach((btn) => {
-        btn.addEventListener('click', onSettingsTagDelete);
-      });
-    } catch (e) {
-      settingsTagsList.innerHTML = '<li class="settings-tags-empty">Failed to load tags: ' + (e.message || 'network error') + '</li>';
-    }
-  }
-
-  async function onSettingsTagRename(ev) {
-    const row = ev.target.closest('.settings-tags-row');
-    if (!row) return;
-    const oldTag = row.dataset.tag;
-    const count = Number(row.dataset.count) || 0;
-    const newTag = (prompt(`Rename tag #${oldTag} to:`, oldTag) || '').trim();
-    if (!newTag || newTag === oldTag) return;
-    const msg = `Rename tag "#${oldTag}" to "#${newTag}"? This will update task tags and any #${oldTag} in titles/notes (${count} task(s)).`;
-    if (!confirm(msg)) return;
-    try {
-      const res = await api('/api/execute-pending-confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tool: 'tag_rename', old_tag: oldTag, new_tag: newTag }),
-      });
-      const data = typeof res === 'object' ? res : {};
-      if (data.ok) {
-        loadSettingsTags();
-        if (lastTaskSource) refreshTaskList();
-        alert(data.message || 'Tag renamed.');
-      } else {
-        alert(data.message || 'Rename failed.');
-      }
-    } catch (e) {
-      alert(e.message || 'Failed to rename tag.');
-    }
-  }
-
-  async function onSettingsTagDelete(ev) {
-    const row = ev.target.closest('.settings-tags-row');
-    if (!row) return;
-    const tag = row.dataset.tag;
-    const count = Number(row.dataset.count) || 0;
-    const msg = `Delete tag "#${tag}"? It will be removed from all task tags and any #${tag} in titles/notes (${count} task(s)).`;
-    if (!confirm(msg)) return;
-    try {
-      const res = await api('/api/execute-pending-confirm', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tool: 'tag_delete', tag }),
-      });
-      const data = typeof res === 'object' ? res : {};
-      if (data.ok) {
-        loadSettingsTags();
-        if (lastTaskSource) refreshTaskList();
-        alert(data.message || 'Tag removed.');
-      } else {
-        alert(data.message || 'Delete failed.');
-      }
-    } catch (e) {
-      alert(e.message || 'Failed to delete tag.');
-    }
-  }
-
-  if (settingsTagsRefresh) settingsTagsRefresh.addEventListener('click', loadSettingsTags);
 
   function closeSettings() {
     settingsOverlay.classList.add('hidden');
@@ -571,6 +478,55 @@
       customFormatPreview.textContent = '—';
     }
   }
+
+  function exportAppData() {
+    const data = {};
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('spaztick_')) data[key] = localStorage.getItem(key);
+    }
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'spaztick-data-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function importAppData() {
+    const input = document.getElementById('settings-import-data-file');
+    if (!input) return;
+    input.value = '';
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const data = JSON.parse(reader.result);
+          if (typeof data !== 'object' || data === null) throw new Error('Invalid format');
+          for (const key of Object.keys(data)) {
+            if (key.startsWith('spaztick_') && typeof data[key] === 'string') {
+              localStorage.setItem(key, data[key]);
+            }
+          }
+          closeSettings();
+          window.location.reload();
+        } catch (e) {
+          alert(e.message || 'Invalid or corrupted file.');
+        }
+      };
+      reader.readAsText(file);
+    };
+    input.click();
+  }
+
+  const settingsExportData = document.getElementById('settings-export-data');
+  const settingsImportData = document.getElementById('settings-import-data');
+  if (settingsExportData) settingsExportData.addEventListener('click', exportAppData);
+  if (settingsImportData) settingsImportData.addEventListener('click', importAppData);
 
   settingsBtn.addEventListener('click', openSettings);
   settingsClose.addEventListener('click', closeSettings);
@@ -732,8 +688,11 @@
   }
   if (descriptionEditTextarea) {
     attachHashtagAutocomplete(descriptionEditTextarea);
-    descriptionEditTextarea.addEventListener('input', updateDescriptionPreview);
-    descriptionEditTextarea.addEventListener('change', updateDescriptionPreview);
+    descriptionEditTextarea.addEventListener('input', scheduleDescriptionPreview);
+    descriptionEditTextarea.addEventListener('change', scheduleDescriptionPreview);
+  }
+  if (descriptionNotesLines) {
+    descriptionNotesLines.addEventListener('change', onDescriptionPreviewCheckboxChange);
   }
 
   const TAG_NAME_REGEX = /^[a-zA-Z0-9_-]+$/;
@@ -990,7 +949,10 @@
     localStorage.setItem(THEME_KEY, theme);
     if (theme === 'light') document.body.removeAttribute('data-theme');
     else document.body.setAttribute('data-theme', theme);
-    if (themeBtn) themeBtn.title = 'Theme: ' + theme + ' (click to cycle)';
+    const themeTitle = 'Theme: ' + theme + ' (click to cycle)';
+    if (themeBtn) themeBtn.title = themeTitle;
+    const boardThemeBtnEl = document.getElementById('board-theme-btn');
+    if (boardThemeBtnEl) boardThemeBtnEl.title = themeTitle;
   }
   function cycleTheme() {
     const i = THEMES.indexOf(getTheme());
@@ -1026,11 +988,18 @@
   }
 
   async function updateTask(taskId, body) {
-    return api(`/api/external/tasks/${encodeURIComponent(taskId)}`, {
+    const result = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
+    if (currentBoardId) {
+      refreshBoardTasks(currentBoardId).then(() => {
+        syncBoardCardsToQualifyingTasks(currentBoardId);
+        renderBoardCards(currentBoardId);
+      });
+    }
+    return result;
   }
 
   // --- Display settings (task properties & order) by context: inbox, project, list:<id>, tag:<name> ---
@@ -1340,7 +1309,8 @@
       const row = center.querySelector(`.task-row[data-id="${selectedId}"]`);
       if (row) {
         row.classList.add('selected');
-        loadTaskDetails(selectedId);
+        // Do not call loadTaskDetails here: inspector is already showing this task. Calling it
+        // would trigger updateTaskInLists -> redrawDisplayedTasks -> loadTaskDetails again (loop).
       }
     }
   }
@@ -1353,7 +1323,7 @@
     const idxDisp = (displayedTasks || []).findIndex((t) => String(t.id) === id);
     if (idxDisp >= 0) displayedTasks[idxDisp] = updatedTask;
     redrawDisplayedTasks();
-    refreshLeftAndCenter();
+    scheduleRefreshAfterTaskChange();
   }
 
   const DISPLAY_SETTINGS_ICON = '<svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8L15 8M15 8C15 9.65686 16.3431 11 18 11C19.6569 11 21 9.65685 21 8C21 6.34315 19.6569 5 18 5C16.3431 5 15 6.34315 15 8ZM9 16L21 16M9 16C9 17.6569 7.65685 19 6 19C4.34315 19 3 17.6569 3 16C3 14.3431 4.34315 13 6 13C7.65685 13 9 14.3431 9 16Z"/></svg>';
@@ -1370,6 +1340,15 @@
     if (displayDropdown && isList) displayDropdown.classList.add('hidden');
   }
 
+  const REFRESH_AFTER_TASK_DELAY_MS = 400;
+  let refreshAfterTaskTimeoutId = null;
+  function refreshLeftPanel() {
+    loadProjects();
+    loadLists();
+    loadBoards();
+    loadTags();
+    loadFavorites();
+  }
   function refreshCenterView() {
     if (lastTaskSource === 'inbox') loadInboxTasks();
     else if (lastTaskSource === 'search' && lastSearchQuery) runSearch(lastSearchQuery);
@@ -1381,10 +1360,16 @@
       if (tagName) loadTagTasks(tagName);
     } else if (lastTaskSource) loadProjectTasks(lastTaskSource);
   }
-
+  function scheduleRefreshAfterTaskChange() {
+    if (refreshAfterTaskTimeoutId) clearTimeout(refreshAfterTaskTimeoutId);
+    refreshAfterTaskTimeoutId = setTimeout(() => {
+      refreshAfterTaskTimeoutId = null;
+      refreshLeftPanel();
+      refreshCenterView();
+    }, REFRESH_AFTER_TASK_DELAY_MS);
+  }
   function refreshLeftAndCenter() {
-    loadProjects();
-    loadLists();
+    refreshLeftPanel();
     refreshCenterView();
   }
 
@@ -1456,7 +1441,7 @@
 
   const RECURRENCE_ICON_SVG = '<svg class="recurrence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4.06 13C4.02 12.67 4 12.34 4 12c0-4.42 3.58-8 8-8 2.5 0 4.73 1.15 6.2 2.94M19.94 11C19.98 11.33 20 11.66 20 12c0 4.42-3.58 8-8 8-2.5 0-4.73-1.15-6.2-2.94M9 17H6v.29M18.2 4v2.94M18.2 6.94V7L15.2 7M6 20v-2.71"/></svg>';
 
-  const PRIORITY_CIRCLE_SVG = '<svg class="priority-circle-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="8"/></svg>';
+  const PRIORITY_CIRCLE_SVG = '<svg class="priority-circle-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="8" fill="currentColor" stroke="none"/></svg>';
   function priorityClass(p) {
     if (p == null || p === '' || p === undefined) return 'priority-empty';
     const n = Number(p);
@@ -1765,7 +1750,7 @@
     requestAnimationFrame(() => document.addEventListener('click', dateDropdownOutside));
   }
 
-  function openInspectorDateDropdown(ev, wrapEl) {
+  function openInspectorDateDropdown(ev, wrapEl, onAfterApply) {
     ev.stopPropagation();
     closeDateDropdown();
     const taskId = wrapEl.dataset.taskId;
@@ -1775,7 +1760,10 @@
     if (!/^\d{4}-\d{2}-\d{2}$/.test(currentVal)) currentVal = todayDateStr();
     if (!taskId || !field) return;
 
-    const dropdown = buildDateDropdownContent(taskId, field, currentVal, () => loadTaskDetails(taskId));
+    const afterApply = onAfterApply || (() => loadTaskDetails(taskId));
+    const dropdown = buildDateDropdownContent(taskId, field, currentVal, () => {
+      afterApply();
+    });
     document.body.appendChild(dropdown);
     dateDropdownEl = dropdown;
 
@@ -1980,20 +1968,33 @@
     if (!descriptionNotesLines || !descriptionEditTextarea) return;
     const raw = descriptionEditTextarea.value;
     descriptionNotesLines.innerHTML = raw.trim() ? renderMarkdown(raw) : '<p class="description-preview-empty">Type above to see a live preview of headings, checkboxes, and #tags.</p>';
-    descriptionNotesLines.querySelectorAll('input[type="checkbox"][data-line-index]').forEach((cb) => {
-      cb.addEventListener('change', () => {
-        const idx = parseInt(cb.getAttribute('data-line-index'), 10);
-        if (Number.isNaN(idx)) return;
-        const lines = descriptionEditTextarea.value.split('\n');
-        const line = lines[idx] || '';
-        const m = line.match(/^(\s*[-*])\s+\[([ xX])\]\s+(.*)$/);
-        if (m) {
-          lines[idx] = m[1] + ' [' + (m[2].toLowerCase() === 'x' ? ' ' : 'x') + '] ' + m[3];
-          descriptionEditTextarea.value = lines.join('\n');
-          updateDescriptionPreview();
-        }
-      });
-    });
+    // Checkbox toggles are handled by a single delegated listener on descriptionNotesLines (see setup below).
+  }
+
+  /** Debounced preview for typing: avoids re-rendering on every keystroke. */
+  let descriptionPreviewDebounceTimer = null;
+  function scheduleDescriptionPreview() {
+    if (descriptionPreviewDebounceTimer != null) clearTimeout(descriptionPreviewDebounceTimer);
+    descriptionPreviewDebounceTimer = setTimeout(() => {
+      descriptionPreviewDebounceTimer = null;
+      updateDescriptionPreview();
+    }, 120);
+  }
+
+  /** Single delegated handler for checkbox toggles in the preview (no per-render listeners). */
+  function onDescriptionPreviewCheckboxChange(ev) {
+    const cb = ev.target;
+    if (!cb.matches || !cb.matches('input[type="checkbox"][data-line-index]')) return;
+    const idx = parseInt(cb.getAttribute('data-line-index'), 10);
+    if (Number.isNaN(idx)) return;
+    const lines = descriptionEditTextarea.value.split('\n');
+    const line = lines[idx] || '';
+    const m = line.match(/^(\s*[-*])\s+\[([ xX])\]\s+(.*)$/);
+    if (m) {
+      lines[idx] = m[1] + ' [' + (m[2].toLowerCase() === 'x' ? ' ' : 'x') + '] ' + m[3];
+      descriptionEditTextarea.value = lines.join('\n');
+      updateDescriptionPreview();
+    }
   }
 
   function openDescriptionModal(ev, cell) {
@@ -3100,16 +3101,26 @@
   const boardViewEl = document.getElementById('board-view');
   const boardViewTitleEl = document.getElementById('board-view-title');
   const boardViewCloseBtn = document.getElementById('board-view-close');
+  const boardDuplicateBtn = document.getElementById('board-duplicate-btn');
+  const boardDeleteBtn = document.getElementById('board-delete-btn');
   const boardViewCanvasEl = document.getElementById('board-view-canvas');
   const boardCanvasInnerEl = document.getElementById('board-canvas-inner');
+  const boardRegionsLayerEl = document.getElementById('board-regions-layer');
+  const boardConnectionsLayerEl = document.getElementById('board-connections-layer');
   const boardCardsLayerEl = document.getElementById('board-cards-layer');
   const boardAddTaskBtn = document.getElementById('board-add-task-btn');
+  const boardAddRegionBtn = document.getElementById('board-add-region-btn');
   const boardAddTaskPopover = document.getElementById('board-add-task-popover');
   const boardAddTaskListEl = document.getElementById('board-add-task-list');
   const boardZoomOutBtn = document.getElementById('board-zoom-out');
   const boardZoomInBtn = document.getElementById('board-zoom-in');
   const boardZoomSelect = document.getElementById('board-zoom-select');
+  const boardThemeBtn = document.getElementById('board-theme-btn');
+  const boardGridBtn = document.getElementById('board-grid-btn');
+  const boardGridLayerEl = document.getElementById('board-grid-layer');
   const bottomBarEl = document.querySelector('.bottom-bar');
+  const BOARD_GRID_VISIBLE_KEY = 'spaztick_board_grid_visible';
+  const BOARD_GRID_SIZE = 30;
   let boardTasksCache = {};
   const BOARD_DEFAULT_CARD_WIDTH = 260;
   const BOARD_DEFAULT_CARD_HEIGHT = 160;
@@ -3132,6 +3143,44 @@
     saveBoards(boards);
   }
 
+  const BOARD_REGION_DEFAULT_SIZE = 220;
+  const BOARD_REGION_COLORS = ['#e5e7eb', '#fef3c7', '#d1fae5', '#dbeafe', '#e9d5ff', '#fce7f3', '#fed7aa', '#d6d3d1'];
+  function getBoardRegions(boardId) {
+    const board = getBoards().find((b) => String(b.id) === String(boardId));
+    if (!board) return [];
+    if (!Array.isArray(board.regions)) board.regions = [];
+    return board.regions;
+  }
+  function setBoardRegions(boardId, regions) {
+    const boards = getBoards();
+    const board = boards.find((b) => String(b.id) === String(boardId));
+    if (!board) return;
+    board.regions = regions;
+    saveBoards(boards);
+  }
+
+  function getBoardConnections(boardId) {
+    const board = getBoards().find((b) => String(b.id) === String(boardId));
+    if (!board) return [];
+    if (!Array.isArray(board.connections)) board.connections = [];
+    return board.connections;
+  }
+  function setBoardConnections(boardId, connections) {
+    const boards = getBoards();
+    const board = boards.find((b) => String(b.id) === String(boardId));
+    if (!board) return;
+    board.connections = connections;
+    saveBoards(boards);
+  }
+
+  /** Task IDs that are currently on the board (as cards or in region lines). Connections only show when both ends are visible. */
+  function getBoardVisibleTaskIds(boardId) {
+    const ids = new Set();
+    getBoardCards(boardId).forEach((c) => ids.add(String(c.taskId)));
+    (getBoardRegions(boardId) || []).forEach((r) => (r.lines || []).forEach((line) => ids.add(String(line.taskId))));
+    return ids;
+  }
+
   async function refreshBoardTasks(boardId) {
     const board = getBoards().find((b) => String(b.id) === String(boardId));
     if (!board || !board.baseId) return [];
@@ -3151,11 +3200,68 @@
     }
   }
 
+  function refreshBoardAfterTaskUpdate(boardId) {
+    return refreshBoardTasks(boardId).then(() => {
+      syncBoardCardsToQualifyingTasks(boardId);
+      renderBoardRegions(boardId);
+      renderBoardCards(boardId);
+      renderBoardConnections(boardId);
+    });
+  }
+
+  /** Keep only cards/region lines whose task still meets board criteria (list/project). Call after refreshBoardTasks. */
+  function syncBoardCardsToQualifyingTasks(boardId) {
+    const qualifyingIds = new Set((boardTasksCache[boardId] || []).map((t) => String(t.id)));
+    const cards = getBoardCards(boardId);
+    const kept = cards.filter((c) => qualifyingIds.has(String(c.taskId)));
+    if (kept.length !== cards.length) setBoardCards(boardId, kept);
+    const regions = getBoardRegions(boardId);
+    let regionsChanged = false;
+    regions.forEach((r) => {
+      if (!Array.isArray(r.lines)) return;
+      const before = r.lines.length;
+      r.lines = r.lines.filter((line) => qualifyingIds.has(String(line.taskId)));
+      if (r.lines.length !== before) regionsChanged = true;
+    });
+    if (regionsChanged) setBoardRegions(boardId, regions);
+  }
+
   let boardPanZoom = { x: 0, y: 0, scale: 1 };
   function applyBoardTransform() {
     if (!boardCanvasInnerEl) return;
     const { x, y, scale } = boardPanZoom;
     boardCanvasInnerEl.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+  }
+  function getBoardViewportCenter() {
+    if (!boardViewCanvasEl) return { x: 0, y: 0 };
+    const rect = boardViewCanvasEl.getBoundingClientRect();
+    const scale = boardPanZoom.scale;
+    return {
+      x: (rect.width / 2 - boardPanZoom.x) / scale,
+      y: (rect.height / 2 - boardPanZoom.y) / scale
+    };
+  }
+  function setBoardZoomTowardPoint(clientX, clientY, newScale) {
+    if (!boardViewCanvasEl) return;
+    const rect = boardViewCanvasEl.getBoundingClientRect();
+    const cx = (clientX - rect.left - boardPanZoom.x) / boardPanZoom.scale;
+    const cy = (clientY - rect.top - boardPanZoom.y) / boardPanZoom.scale;
+    boardPanZoom.scale = newScale;
+    boardPanZoom.x = clientX - rect.left - cx * newScale;
+    boardPanZoom.y = clientY - rect.top - cy * newScale;
+    applyBoardTransform();
+    const pct = Math.round(boardPanZoom.scale * 100);
+    if (boardZoomSelect) {
+      boardZoomSelect.value = String(pct);
+      const opt = Array.from(boardZoomSelect.options).find((o) => o.value === String(pct));
+      if (!opt) {
+        const o = document.createElement('option');
+        o.value = String(pct);
+        o.textContent = pct + '%';
+        boardZoomSelect.appendChild(o);
+        boardZoomSelect.value = String(pct);
+      }
+    }
   }
   function setBoardZoom(percentOrScale) {
     const pct = typeof percentOrScale === 'number' && percentOrScale >= 1 && percentOrScale <= 300
@@ -3193,9 +3299,29 @@
       if (boardLi) boardLi.classList.add('selected');
     }
     if (boardViewTitleEl) boardViewTitleEl.textContent = board.name || 'Board';
-    boardPanZoom = { x: 0, y: 0, scale: 1 };
-    applyBoardTransform();
-    setBoardZoom(100);
+    const savedScale = typeof board.viewScale === 'number' && board.viewScale >= BOARD_ZOOM_MIN / 100 && board.viewScale <= BOARD_ZOOM_MAX / 100 ? board.viewScale : null;
+    const savedX = typeof board.viewX === 'number' ? board.viewX : null;
+    const savedY = typeof board.viewY === 'number' ? board.viewY : null;
+    if (savedScale != null && savedX != null && savedY != null) {
+      boardPanZoom = { x: savedX, y: savedY, scale: savedScale };
+      applyBoardTransform();
+      const pct = Math.round(boardPanZoom.scale * 100);
+      if (boardZoomSelect) {
+        boardZoomSelect.value = String(pct);
+        const opt = Array.from(boardZoomSelect.options).find((o) => o.value === String(pct));
+        if (!opt) {
+          const o = document.createElement('option');
+          o.value = String(pct);
+          o.textContent = pct + '%';
+          boardZoomSelect.appendChild(o);
+          boardZoomSelect.value = String(pct);
+        }
+      }
+    } else {
+      boardPanZoom = { x: 0, y: 0, scale: 1 };
+      applyBoardTransform();
+      setBoardZoom(100);
+    }
     if (boardAddTaskPopover) boardAddTaskPopover.classList.add('hidden');
     if (mainArea) mainArea.classList.add('hidden');
     if (bottomBarEl) bottomBarEl.classList.add('hidden');
@@ -3204,12 +3330,91 @@
       boardViewEl.classList.remove('hidden');
       boardViewEl.setAttribute('aria-hidden', 'false');
     }
-    refreshBoardTasks(boardId).then(() => renderBoardCards(boardId));
+    refreshBoardTasks(boardId).then(() => {
+      syncBoardCardsToQualifyingTasks(boardId);
+      renderBoardRegions(boardId);
+      renderBoardCards(boardId);
+    });
+    renderBoardGrid();
     setupBoardCanvasPanZoom();
     setupBoardZoomControls();
+    setupBoardGrid();
+    setupBoardDuplicateDelete(boardId);
+    setupBoardTitleEdit(boardId);
     setupBoardAddTask(boardId);
+    setupBoardRegions(boardId);
+  }
+  function setupBoardTitleEdit(boardId) {
+    if (!boardViewTitleEl) return;
+    boardViewTitleEl.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      const currentName = (boardViewTitleEl.textContent || '').trim() || 'Board';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.value = currentName;
+      input.className = 'board-view-title-edit';
+      input.setAttribute('aria-label', 'Board name');
+      boardViewTitleEl.textContent = '';
+      boardViewTitleEl.appendChild(input);
+      input.focus();
+      input.select();
+      function finish() {
+        const val = (input.value || '').trim() || 'Board';
+        const boards = getBoards();
+        const board = boards.find((b) => String(b.id) === String(boardId));
+        if (board) {
+          board.name = val;
+          saveBoards(boards);
+          const favs = getFavorites();
+          const updated = favs.map((f) => (f.type === 'board' && String(f.id) === String(boardId)) ? { ...f, label: val } : f);
+          if (updated.some((f, i) => f !== favs[i])) {
+            saveFavorites(updated);
+          }
+        }
+        if (input.parentElement === boardViewTitleEl) boardViewTitleEl.removeChild(input);
+        boardViewTitleEl.textContent = val;
+        loadBoards();
+        loadFavorites();
+      }
+      function cancel() {
+        if (input.parentElement === boardViewTitleEl) boardViewTitleEl.removeChild(input);
+        boardViewTitleEl.textContent = currentName;
+      }
+      input.addEventListener('blur', finish);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+        if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+      });
+    });
+  }
+  function setupBoardDuplicateDelete(boardId) {
+    if (boardDuplicateBtn) {
+      boardDuplicateBtn.onclick = () => openNewBoardModal(boardId);
+    }
+    if (boardDeleteBtn) {
+      boardDeleteBtn.onclick = () => {
+        if (!confirm('Delete this board? This cannot be undone.')) return;
+        const boards = getBoards().filter((b) => String(b.id) !== String(boardId));
+        saveBoards(boards);
+        saveBoardOrder(getBoardOrder().filter((bid) => bid !== boardId));
+        removeFromFavorites('board', boardId);
+        loadBoards();
+        loadFavorites();
+        if (currentBoardId === boardId) closeBoardView();
+      };
+    }
   }
   function closeBoardView() {
+    if (currentBoardId) {
+      const boards = getBoards();
+      const board = boards.find((b) => String(b.id) === String(currentBoardId));
+      if (board) {
+        board.viewScale = boardPanZoom.scale;
+        board.viewX = boardPanZoom.x;
+        board.viewY = boardPanZoom.y;
+        saveBoards(boards);
+      }
+    }
     currentBoardId = null;
     if (mainArea) mainArea.classList.remove('hidden');
     if (bottomBarEl) bottomBarEl.classList.remove('hidden');
@@ -3224,12 +3429,49 @@
   function setupBoardCanvasPanZoom() {
     if (!boardViewCanvasEl || !boardCanvasInnerEl) return;
     let panStart = null;
+    let connectionRedirectTarget = null;
+    function findElementUnderRegions(clientX, clientY) {
+      const connLayer = document.getElementById('board-connections-layer');
+      const cardsLayer = document.getElementById('board-cards-layer');
+      const regionsLayer = document.getElementById('board-regions-layer');
+      if (!connLayer || !cardsLayer || !regionsLayer) return null;
+      const saveConn = connLayer.style.pointerEvents;
+      const saveCards = cardsLayer.style.pointerEvents;
+      const saveRegions = regionsLayer.style.pointerEvents;
+      connLayer.style.pointerEvents = 'none';
+      cardsLayer.style.pointerEvents = 'none';
+      regionsLayer.style.pointerEvents = 'auto';
+      const under = document.elementFromPoint(clientX, clientY);
+      connLayer.style.pointerEvents = saveConn;
+      cardsLayer.style.pointerEvents = saveCards;
+      regionsLayer.style.pointerEvents = saveRegions;
+      return under && under.closest('.board-region') ? under : null;
+    }
     boardViewCanvasEl.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if (e.target.closest('.board-card')) return;
-      if (e.target.closest('.board-zoom-btn') || e.target.closest('.board-zoom-select') || e.target.closest('.board-add-task-btn') || e.target.closest('.board-add-task-popover')) return;
+      if (e.target.closest('.board-connections-svg-hit path') || e.target.closest('.board-connections-svg-hit circle')) return;
+      if (e.target.closest('.board-connections-layer')) {
+        const targetEl = findElementUnderRegions(e.clientX, e.clientY);
+        if (targetEl) {
+          connectionRedirectTarget = targetEl;
+          const opts = { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY, button: e.button, buttons: e.buttons };
+          targetEl.dispatchEvent(new MouseEvent('mousedown', opts));
+          return;
+        }
+      }
+      if (e.target.closest('.board-zoom-btn') || e.target.closest('.board-grid-btn') || e.target.closest('.board-zoom-select') || e.target.closest('.board-add-task-btn') || e.target.closest('.board-add-region-btn') || e.target.closest('.board-add-task-popover')) return;
       panStart = { x: e.clientX - boardPanZoom.x, y: e.clientY - boardPanZoom.y };
       boardViewCanvasEl.classList.add('panning');
+    });
+    boardViewCanvasEl.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.board-connections-svg-hit path') || e.target.closest('.board-connections-svg-hit circle')) return;
+      if (e.target.closest('.board-connections-layer')) {
+        const regionEl = findElementUnderRegions(e.clientX, e.clientY)?.closest('.board-region');
+        if (regionEl) {
+          regionEl.dispatchEvent(new MouseEvent('dblclick', { ...e, bubbles: true }));
+        }
+      }
     });
     document.addEventListener('mousemove', (e) => {
       if (panStart === null) return;
@@ -3237,22 +3479,82 @@
       boardPanZoom.y = e.clientY - panStart.y;
       applyBoardTransform();
     });
-    document.addEventListener('mouseup', () => {
+    document.addEventListener('mouseup', (e) => {
+      if (connectionRedirectTarget) {
+        const target = connectionRedirectTarget;
+        connectionRedirectTarget = null;
+        const opts = { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY, button: e.button, buttons: e.buttons };
+        target.dispatchEvent(new MouseEvent('mouseup', opts));
+        target.dispatchEvent(new MouseEvent('click', opts));
+      }
       panStart = null;
       if (boardViewCanvasEl) boardViewCanvasEl.classList.remove('panning');
     });
     boardViewCanvasEl.addEventListener('wheel', (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
       if (e.target.closest('.board-card')) return;
-      if (e.target.closest('.board-view-zoom')) return;
+      if (e.target.closest('.board-view-zoom') || e.target.closest('.board-grid-btn')) return;
       e.preventDefault();
-      const delta = e.deltaY > 0 ? -BOARD_ZOOM_STEP : BOARD_ZOOM_STEP;
-      setBoardZoom(Math.round(boardPanZoom.scale * 100) + delta);
+      const pct = boardPanZoom.scale * 100;
+      const newPct = Math.max(BOARD_ZOOM_MIN, Math.min(BOARD_ZOOM_MAX, pct - e.deltaY));
+      setBoardZoomTowardPoint(e.clientX, e.clientY, newPct / 100);
     }, { passive: false });
+
+    let pinchStart = null;
+    boardViewCanvasEl.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        const rect = boardViewCanvasEl.getBoundingClientRect();
+        const dist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
+        const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        pinchStart = { dist, scale: boardPanZoom.scale, x: boardPanZoom.x, y: boardPanZoom.y, centerX, centerY, rectLeft: rect.left, rectTop: rect.top };
+      }
+    }, { passive: true });
+    boardViewCanvasEl.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && pinchStart) {
+        e.preventDefault();
+        const dist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
+        const ratio = dist / pinchStart.dist;
+        const newScale = Math.max(BOARD_ZOOM_MIN / 100, Math.min(BOARD_ZOOM_MAX / 100, pinchStart.scale * ratio));
+        const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+        const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+        const cx = (centerX - pinchStart.rectLeft - pinchStart.x) / pinchStart.scale;
+        const cy = (centerY - pinchStart.rectTop - pinchStart.y) / pinchStart.scale;
+        boardPanZoom.scale = newScale;
+        boardPanZoom.x = centerX - pinchStart.rectLeft - cx * newScale;
+        boardPanZoom.y = centerY - pinchStart.rectTop - cy * newScale;
+        applyBoardTransform();
+        const pct = Math.round(boardPanZoom.scale * 100);
+        if (boardZoomSelect) {
+          boardZoomSelect.value = String(pct);
+          const opt = Array.from(boardZoomSelect.options).find((o) => o.value === String(pct));
+          if (!opt) {
+            const o = document.createElement('option');
+            o.value = String(pct);
+            o.textContent = pct + '%';
+            boardZoomSelect.appendChild(o);
+            boardZoomSelect.value = String(pct);
+          }
+        }
+      }
+    }, { passive: false });
+    boardViewCanvasEl.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) pinchStart = null;
+    }, { passive: true });
   }
   function setupBoardZoomControls() {
+    if (boardThemeBtn) boardThemeBtn.addEventListener('click', cycleTheme);
     if (boardZoomOutBtn) boardZoomOutBtn.addEventListener('click', () => setBoardZoom(Math.round(boardPanZoom.scale * 100) - BOARD_ZOOM_STEP));
     if (boardZoomInBtn) boardZoomInBtn.addEventListener('click', () => setBoardZoom(Math.round(boardPanZoom.scale * 100) + BOARD_ZOOM_STEP));
     if (boardZoomSelect) boardZoomSelect.addEventListener('change', () => setBoardZoom(Number(boardZoomSelect.value)));
+  }
+  function setupBoardGrid() {
+    if (!boardGridBtn) return;
+    boardGridBtn.onclick = () => {
+      const cur = localStorage.getItem(BOARD_GRID_VISIBLE_KEY) === '1';
+      localStorage.setItem(BOARD_GRID_VISIBLE_KEY, cur ? '0' : '1');
+      renderBoardGrid();
+    };
   }
   function setupBoardAddTask(boardId) {
     if (!boardAddTaskBtn || !boardAddTaskPopover || !boardAddTaskListEl) return;
@@ -3263,6 +3565,7 @@
         const board = getBoards().find((b) => String(b.id) === String(boardId));
         const cards = getBoardCards(boardId);
         const placedIds = new Set(cards.map((c) => c.taskId));
+        (getBoardRegions(boardId) || []).forEach((r) => (r.lines || []).forEach((line) => placedIds.add(String(line.taskId))));
         const tasks = boardTasksCache[boardId] || [];
         const unplaced = tasks.filter((t) => !placedIds.has(String(t.id)));
         boardAddTaskListEl.innerHTML = unplaced.length
@@ -3276,8 +3579,10 @@
           li.addEventListener('click', () => {
             const taskId = li.dataset.taskId;
             const cards = getBoardCards(boardId);
-            const maxX = cards.length ? Math.max(...cards.map((c) => c.x + (c.width || BOARD_DEFAULT_CARD_WIDTH))) : 0;
-            const newCard = { taskId, x: maxX + 24, y: 80, width: BOARD_DEFAULT_CARD_WIDTH, height: BOARD_DEFAULT_CARD_HEIGHT };
+            const center = getBoardViewportCenter();
+            const w = BOARD_DEFAULT_CARD_WIDTH;
+            const h = BOARD_DEFAULT_CARD_HEIGHT;
+            const newCard = { taskId, x: Math.round(center.x - w / 2), y: Math.round(center.y - h / 2), width: w, height: h };
             cards.push(newCard);
             setBoardCards(boardId, cards);
             renderBoardCards(boardId);
@@ -3290,6 +3595,519 @@
       if (boardAddTaskPopover.classList.contains('hidden')) return;
       if (!boardAddTaskPopover.contains(e.target) && !boardAddTaskBtn.contains(e.target)) boardAddTaskPopover.classList.add('hidden');
     });
+  }
+
+  function setupBoardRegions(boardId) {
+    if (!boardAddRegionBtn || !boardRegionsLayerEl) return;
+    boardAddRegionBtn.onclick = () => {
+      const regions = getBoardRegions(boardId);
+      const id = 'region-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      const center = getBoardViewportCenter();
+      const sz = BOARD_REGION_DEFAULT_SIZE;
+      const newRegion = { id, x: Math.round(center.x - sz / 2), y: Math.round(center.y - sz / 2), w: sz, h: sz, title: '', color: BOARD_REGION_COLORS[0], lines: [] };
+      regions.push(newRegion);
+      setBoardRegions(boardId, regions);
+      renderBoardRegions(boardId);
+    };
+    const overlay = document.getElementById('board-region-edit-overlay');
+    const titleInput = document.getElementById('board-region-edit-title-input');
+    const colorsEl = document.getElementById('board-region-edit-colors');
+    const showPriorityCb = document.getElementById('board-region-edit-show-priority');
+    const showFlagCb = document.getElementById('board-region-edit-show-flag');
+    const saveBtn = document.getElementById('board-region-edit-save');
+    const deleteBtn = document.getElementById('board-region-edit-delete');
+    const duplicateBtn = document.getElementById('board-region-edit-duplicate');
+    const closeBtn = document.getElementById('board-region-edit-close');
+    if (saveBtn) saveBtn.innerHTML = INSPECTOR_SAVE_SVG;
+    if (deleteBtn) deleteBtn.innerHTML = INSPECTOR_TRASH_SVG;
+    if (duplicateBtn) duplicateBtn.innerHTML = INSPECTOR_DUPLICATE_SVG;
+    let editingRegionId = null;
+    function openRegionEdit(region) {
+      editingRegionId = region.id;
+      if (titleInput) titleInput.value = region.title || '';
+      if (showPriorityCb) showPriorityCb.checked = region.showPriority !== false;
+      if (showFlagCb) showFlagCb.checked = region.showFlag !== false;
+      if (colorsEl) {
+        colorsEl.innerHTML = BOARD_REGION_COLORS.map((c) => `<button type="button" class="board-region-color-swatch ${c === (region.color || BOARD_REGION_COLORS[0]) ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="Color ${c}"></button>`).join('');
+        colorsEl.querySelectorAll('.board-region-color-swatch').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            colorsEl.querySelectorAll('.board-region-color-swatch').forEach((b) => b.classList.remove('selected'));
+            btn.classList.add('selected');
+          });
+        });
+      }
+      if (overlay) { overlay.classList.remove('hidden'); overlay.setAttribute('aria-hidden', 'false'); }
+      if (titleInput) setTimeout(() => titleInput.focus(), 50);
+    }
+    function closeRegionEdit() {
+      editingRegionId = null;
+      if (overlay) { overlay.classList.add('hidden'); overlay.setAttribute('aria-hidden', 'true'); }
+    }
+    function saveRegionEdit() {
+      if (!editingRegionId || !currentBoardId) { closeRegionEdit(); return; }
+      const regions = getBoardRegions(currentBoardId);
+      const r = regions.find((x) => x.id === editingRegionId);
+      if (r) {
+        r.title = (titleInput && titleInput.value) ? String(titleInput.value).trim() : '';
+        const sel = colorsEl && colorsEl.querySelector('.board-region-color-swatch.selected');
+        r.color = sel && sel.dataset.color ? sel.dataset.color : (r.color || BOARD_REGION_COLORS[0]);
+        r.showPriority = showPriorityCb ? showPriorityCb.checked : true;
+        r.showFlag = showFlagCb ? showFlagCb.checked : true;
+        setBoardRegions(currentBoardId, regions);
+        renderBoardRegions(currentBoardId);
+      }
+      closeRegionEdit();
+    }
+    function deleteRegionEdit() {
+      if (!editingRegionId || !currentBoardId) { closeRegionEdit(); return; }
+      if (!confirm('Delete this region? Tasks in it can be re-added to the board from the add task list.')) return;
+      const regions = getBoardRegions(currentBoardId).filter((r) => r.id !== editingRegionId);
+      setBoardRegions(currentBoardId, regions);
+      renderBoardRegions(currentBoardId);
+      renderBoardConnections(currentBoardId);
+      closeRegionEdit();
+    }
+    function duplicateRegionEdit() {
+      if (!editingRegionId || !currentBoardId) return;
+      const regions = getBoardRegions(currentBoardId);
+      const src = regions.find((r) => r.id === editingRegionId);
+      if (!src) return;
+      const originalTitle = (src.title || '').trim() || 'Region';
+      const newTitle = originalTitle + ' - Copy';
+      const newId = 'region-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      const copy = {
+        id: newId,
+        title: newTitle,
+        color: src.color || BOARD_REGION_COLORS[0],
+        x: (src.x || 0) + 24,
+        y: (src.y || 0) + 24,
+        w: src.w || BOARD_REGION_DEFAULT_SIZE,
+        h: src.h || BOARD_REGION_DEFAULT_SIZE,
+        lines: [],
+        showPriority: src.showPriority !== false,
+        showFlag: src.showFlag !== false
+      };
+      regions.push(copy);
+      setBoardRegions(currentBoardId, regions);
+      renderBoardRegions(currentBoardId);
+      renderBoardConnections(currentBoardId);
+    }
+    if (saveBtn) saveBtn.onclick = saveRegionEdit;
+    if (deleteBtn) deleteBtn.onclick = deleteRegionEdit;
+    if (duplicateBtn) duplicateBtn.onclick = duplicateRegionEdit;
+    if (closeBtn) closeBtn.onclick = closeRegionEdit;
+    if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay) closeRegionEdit(); });
+    if (titleInput) titleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveRegionEdit(); } });
+    window.openBoardRegionEdit = openRegionEdit;
+    window.closeBoardRegionEdit = closeRegionEdit;
+  }
+
+  function renderBoardRegions(boardId) {
+    if (!boardRegionsLayerEl) return;
+    const regions = getBoardRegions(boardId);
+    const tasks = boardTasksCache[boardId] || [];
+    const taskMap = new Map(tasks.map((t) => [String(t.id), t]));
+    boardRegionsLayerEl.innerHTML = '';
+    regions.forEach((region, regionIndex) => {
+      const el = document.createElement('div');
+      el.className = 'board-region';
+      el.dataset.regionId = region.id;
+      el.dataset.regionIndex = String(regionIndex);
+      el.style.left = (region.x || 0) + 'px';
+      el.style.top = (region.y || 0) + 'px';
+      el.style.width = (region.w || BOARD_REGION_DEFAULT_SIZE) + 'px';
+      el.style.height = (region.h || BOARD_REGION_DEFAULT_SIZE) + 'px';
+      el.style.backgroundColor = region.color || BOARD_REGION_COLORS[0];
+      const title = (region.title || '').replace(/</g, '&lt;');
+      el.innerHTML = `<div class="board-region-header"><span class="board-region-title">${title || 'Region'}</span></div><div class="board-region-lines"></div><div class="board-region-resize-handle"></div>`;
+      const linesEl = el.querySelector('.board-region-lines');
+      const headerEl = el.querySelector('.board-region-header');
+      const titleSpan = el.querySelector('.board-region-title');
+      if (titleSpan && headerEl) {
+        titleSpan.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          const input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'board-region-title-edit';
+          input.value = region.title || '';
+          input.setAttribute('aria-label', 'Region title');
+          const finish = (save) => {
+            if (save) {
+              const newTitle = (input.value || '').trim();
+              const regions = getBoardRegions(boardId);
+              const r = regions[regionIndex];
+              if (r) r.title = newTitle;
+              setBoardRegions(boardId, regions);
+            }
+            renderBoardRegions(boardId);
+          };
+          input.addEventListener('keydown', (k) => {
+            if (k.key === 'Enter') { k.preventDefault(); finish(true); }
+            if (k.key === 'Escape') { k.preventDefault(); finish(false); }
+          });
+          input.addEventListener('blur', () => finish(true));
+          titleSpan.style.display = 'none';
+          headerEl.appendChild(input);
+          input.focus();
+          input.select();
+        });
+      }
+      const showPriority = region.showPriority !== false;
+      const showFlag = region.showFlag !== false;
+      (region.lines || []).forEach((line, lineIndex) => {
+        const taskId = String(line.taskId);
+        const t = taskMap.get(taskId);
+        const lineDiv = document.createElement('div');
+        lineDiv.className = 'board-region-line';
+        lineDiv.dataset.taskId = taskId;
+        lineDiv.dataset.regionId = region.id;
+        lineDiv.dataset.lineIndex = String(lineIndex);
+        const statusSvg = t && isTaskCompleted(t) ? INSPECTOR_STATUS_TICK_SVG : INSPECTOR_STATUS_OPEN_SVG;
+        const titleText = (t && t.title) ? String(t.title).replace(/</g, '&lt;') : 'Task ' + taskId;
+        const priorityCls = t ? priorityClass(t.priority) : 'priority-empty';
+        const flagged = t && (t.flagged === true || t.flagged === 1);
+        const flagHtml = showFlag ? ('<span class="board-region-line-flagged' + (flagged ? '' : ' empty') + '">★</span>') : '';
+        const priorityHtml = showPriority ? (`<span class="board-region-line-priority priority-circle-wrap ${priorityCls}" data-priority-task-id="${(taskId || '').replace(/"/g, '&quot;')}" title="Priority (click to change)">${PRIORITY_CIRCLE_SVG}</span>`) : '';
+        const av = t && (t.available_date || '').toString().trim().substring(0, 10);
+        const due = t && (t.due_date || '').toString().trim().substring(0, 10);
+        const avStr = av ? formatDate(av) : '';
+        const dueStr = due ? formatDate(due) : '';
+        const datesStr = [avStr && `Avail: ${avStr}`, dueStr && `Due: ${dueStr}`].filter(Boolean).join(' · ') || '—';
+        const taskIdEsc = (taskId || '').replace(/"/g, '&quot;');
+        lineDiv.innerHTML = priorityHtml + flagHtml + `<span class="board-region-line-status">${statusSvg}</span><div class="board-region-line-text"><span class="board-region-line-title">${titleText}</span><span class="board-region-line-dates">${datesStr}</span></div><button type="button" class="board-region-line-expand" data-task-id="${taskIdEsc}" title="Expand" aria-label="Expand">${BOARD_CARD_EXPAND_SVG}</button>`;
+        const expandBtn = lineDiv.querySelector('.board-region-line-expand');
+        if (expandBtn) expandBtn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); openBoardTaskInspectorModal(taskId, () => refreshBoardAfterTaskUpdate(boardId)); });
+        const prioritySpan = lineDiv.querySelector('.board-region-line-priority');
+        const flagSpan = lineDiv.querySelector('.board-region-line-flagged');
+        const statusSpan = lineDiv.querySelector('.board-region-line-status');
+        if (prioritySpan && t) prioritySpan.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); openPriorityDropdown(e, prioritySpan, { onAfterApply: () => refreshBoardAfterTaskUpdate(boardId) }); });
+        if (flagSpan && t) flagSpan.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); updateTask(taskId, { flagged: !flagged }).then(() => refreshBoardAfterTaskUpdate(boardId)); });
+        if (statusSpan && t) statusSpan.addEventListener('click', (e) => { e.stopPropagation(); const newStatus = isTaskCompleted(t) ? 'incomplete' : 'complete'; updateTask(taskId, { status: newStatus }).then(() => refreshBoardAfterTaskUpdate(boardId)); });
+        linesEl.appendChild(lineDiv);
+        attachBoardRegionLineDrag(lineDiv, boardId, regionIndex, lineIndex);
+      });
+      el.addEventListener('dblclick', (e) => { if (!e.target.closest('.board-region-line') && !e.target.closest('.board-region-resize-handle')) window.openBoardRegionEdit && window.openBoardRegionEdit(region); });
+      const resizeHandle = el.querySelector('.board-region-resize-handle');
+      if (resizeHandle) attachBoardRegionResize(resizeHandle, el, boardId, regionIndex);
+      if (headerEl) attachBoardRegionMove(headerEl, el, boardId, regionIndex);
+      boardRegionsLayerEl.appendChild(el);
+    });
+  }
+  function attachBoardRegionMove(headerEl, regionEl, boardId, regionIndex) {
+    headerEl.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const regions = getBoardRegions(boardId);
+      const region = regions[regionIndex];
+      if (!region) return;
+      const startX = region.x || 0;
+      const startY = region.y || 0;
+      const startMouseX = e.clientX;
+      const startMouseY = e.clientY;
+      const scale = boardPanZoom.scale;
+      function onMove(ev) {
+        const dx = (ev.clientX - startMouseX) / scale;
+        const dy = (ev.clientY - startMouseY) / scale;
+        region.x = Math.round(startX + dx);
+        region.y = Math.round(startY + dy);
+        regionEl.style.left = region.x + 'px';
+        regionEl.style.top = region.y + 'px';
+        setBoardRegions(boardId, regions);
+      }
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+  function attachBoardRegionResize(handleEl, regionEl, boardId, regionIndex) {
+    handleEl.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const regions = getBoardRegions(boardId);
+      const region = regions[regionIndex];
+      if (!region) return;
+      const startW = regionEl.offsetWidth;
+      const startH = regionEl.offsetHeight;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const scale = boardPanZoom.scale;
+      function onMove(ev) {
+        const dw = (ev.clientX - startX) / scale;
+        const dh = (ev.clientY - startY) / scale;
+        region.w = Math.max(120, Math.round(startW + dw));
+        region.h = Math.max(80, Math.round(startH + dh));
+        regionEl.style.width = region.w + 'px';
+        regionEl.style.height = region.h + 'px';
+        setBoardRegions(boardId, regions);
+      }
+      function onUp() { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  }
+  function attachBoardRegionLineDrag(lineEl, boardId, regionIndex, lineIndex) {
+    lineEl.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.board-region-line-expand') || e.target.closest('.board-region-line-priority') || e.target.closest('.board-region-line-flagged') || e.target.closest('.board-region-line-status')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const regions = getBoardRegions(boardId);
+      const region = regions[regionIndex];
+      const line = (region.lines || [])[lineIndex];
+      if (!line) return;
+      const taskId = line.taskId;
+      const rect = lineEl.getBoundingClientRect();
+      const startY = e.clientY;
+      let dragGhost = null;
+      function onMove(ev) {
+        if (!dragGhost) {
+          dragGhost = document.createElement('div');
+          dragGhost.className = 'board-region-line board-region-line-dragging';
+          dragGhost.innerHTML = lineEl.innerHTML;
+          dragGhost.style.position = 'fixed';
+          dragGhost.style.left = rect.left + 'px';
+          dragGhost.style.top = rect.top + 'px';
+          dragGhost.style.width = rect.width + 'px';
+          dragGhost.style.zIndex = '9999';
+          dragGhost.style.pointerEvents = 'none';
+          dragGhost.style.opacity = '0.9';
+          document.body.appendChild(dragGhost);
+          lineEl.style.opacity = '0.4';
+        }
+        dragGhost.style.top = (ev.clientY - rect.height / 2) + 'px';
+        dragGhost.style.left = (ev.clientX - rect.width / 2) + 'px';
+      }
+      function onUp(ev) {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (dragGhost && dragGhost.parentNode) dragGhost.parentNode.removeChild(dragGhost);
+        lineEl.style.opacity = '';
+        const canvasRect = boardViewCanvasEl.getBoundingClientRect();
+        const scale = boardPanZoom.scale;
+        const dropCanvasX = (ev.clientX - canvasRect.left - boardPanZoom.x) / scale;
+        const dropCanvasY = (ev.clientY - canvasRect.top - boardPanZoom.y) / scale;
+        const regions = getBoardRegions(boardId);
+        let targetRegionIndex = -1;
+        for (let i = 0; i < regions.length; i++) {
+          const r = regions[i];
+          const rx = r.x || 0, ry = r.y || 0, rw = r.w || 200, rh = r.h || 200;
+          if (dropCanvasX >= rx && dropCanvasX <= rx + rw && dropCanvasY >= ry && dropCanvasY <= ry + rh) { targetRegionIndex = i; break; }
+        }
+        const fromRegion = regions[regionIndex];
+        fromRegion.lines = fromRegion.lines.filter((_, i) => i !== lineIndex);
+        if (targetRegionIndex >= 0) {
+          if (targetRegionIndex === regionIndex) {
+            const regionEl = boardRegionsLayerEl.querySelectorAll('.board-region')[regionIndex];
+            const lineEls = regionEl ? Array.from(regionEl.querySelectorAll('.board-region-line')).filter((el) => el !== lineEl) : [];
+            let insertIdx = lineEls.length;
+            for (let i = 0; i < lineEls.length; i++) {
+              const r = lineEls[i].getBoundingClientRect();
+              if (ev.clientY < r.top + r.height / 2) { insertIdx = i; break; }
+            }
+            fromRegion.lines.splice(insertIdx, 0, { taskId });
+          } else {
+            regions[targetRegionIndex].lines.push({ taskId });
+          }
+        } else {
+          const cards = getBoardCards(boardId);
+          cards.push({ taskId, x: Math.round(dropCanvasX - BOARD_DEFAULT_CARD_WIDTH / 2), y: Math.round(dropCanvasY - 40), width: BOARD_DEFAULT_CARD_WIDTH, height: BOARD_DEFAULT_CARD_HEIGHT });
+          setBoardCards(boardId, cards);
+        }
+        setBoardRegions(boardId, regions);
+        renderBoardRegions(boardId);
+        renderBoardCards(boardId);
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp, { once: true });
+    });
+  }
+
+  const BOARD_CONNECTIONS_SVG_SIZE = 100000;
+  function renderBoardConnections(boardId) {
+    if (!boardConnectionsLayerEl || !boardCardsLayerEl) return;
+    const visibleIds = getBoardVisibleTaskIds(boardId);
+    const connections = getBoardConnections(boardId).filter((c) => visibleIds.has(String(c.fromTaskId)) && visibleIds.has(String(c.toTaskId)));
+    function getCardEl(taskId) {
+      return boardCardsLayerEl.querySelector(`.board-card[data-task-id="${String(taskId).replace(/"/g, '\\"')}"]`);
+    }
+    function anchor(cardEl, side) {
+      if (!cardEl) return null;
+      const l = cardEl.offsetLeft;
+      const t = cardEl.offsetTop;
+      const w = cardEl.offsetWidth;
+      const h = cardEl.offsetHeight;
+      if (side === 'left') return { x: l, y: t + h / 2 };
+      if (side === 'right') return { x: l + w, y: t + h / 2 };
+      if (side === 'top') return { x: l + w / 2, y: t };
+      if (side === 'bottom') return { x: l + w / 2, y: t + h };
+      return { x: l + w, y: t + h / 2 };
+    }
+    boardConnectionsLayerEl.innerHTML = '';
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'board-connections-svg');
+    svg.setAttribute('width', BOARD_CONNECTIONS_SVG_SIZE);
+    svg.setAttribute('height', BOARD_CONNECTIONS_SVG_SIZE);
+    svg.setAttribute('style', 'position:absolute;left:0;top:0;pointer-events:none;overflow:visible;');
+    const svgHit = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svgHit.setAttribute('class', 'board-connections-svg-hit');
+    svgHit.setAttribute('width', BOARD_CONNECTIONS_SVG_SIZE);
+    svgHit.setAttribute('height', BOARD_CONNECTIONS_SVG_SIZE);
+    svgHit.setAttribute('style', 'position:absolute;left:0;top:0;overflow:visible;');
+    const connectionElements = new Map();
+    connections.forEach((conn) => {
+      const fromEl = getCardEl(conn.fromTaskId);
+      const toEl = getCardEl(conn.toTaskId);
+      if (!fromEl || !toEl) return;
+      const p1 = anchor(fromEl, conn.fromSide || 'right');
+      const p2 = anchor(toEl, conn.toSide || 'left');
+      if (!p1 || !p2) return;
+      const cx = conn.controlX != null ? conn.controlX : (p1.x + p2.x) / 2;
+      const cy = conn.controlY != null ? conn.controlY : (p1.y + p2.y) / 2;
+      const d = `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`;
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', 'var(--text-muted)');
+      path.setAttribute('stroke-width', '2');
+      path.setAttribute('marker-end', 'url(#board-arrow)');
+      svg.appendChild(path);
+      const midT = 0.5;
+      let midX = (1 - midT) * (1 - midT) * p1.x + 2 * (1 - midT) * midT * cx + midT * midT * p2.x;
+      let midY = (1 - midT) * (1 - midT) * p1.y + 2 * (1 - midT) * midT * cy + midT * midT * p2.y;
+      let labelEl = null;
+      if (conn.label) {
+        labelEl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        labelEl.setAttribute('x', midX);
+        labelEl.setAttribute('y', midY);
+        labelEl.setAttribute('text-anchor', 'middle');
+        labelEl.setAttribute('dominant-baseline', 'middle');
+        labelEl.setAttribute('font-size', '11');
+        labelEl.setAttribute('fill', 'var(--text)');
+        labelEl.textContent = conn.label;
+        svg.appendChild(labelEl);
+      }
+      const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      group.setAttribute('class', 'board-connection-group');
+      group.setAttribute('data-connection-id', conn.id);
+      const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      hitPath.setAttribute('d', d);
+      hitPath.setAttribute('fill', 'none');
+      hitPath.setAttribute('stroke', 'transparent');
+      hitPath.setAttribute('stroke-width', '16');
+      hitPath.setAttribute('data-connection-id', conn.id);
+      hitPath.style.cursor = 'pointer';
+      hitPath.style.pointerEvents = 'stroke';
+      hitPath.style.display = 'block';
+      hitPath.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const label = prompt('Connection label:', conn.label || '') || '';
+        conn.label = label;
+        setBoardConnections(boardId, getBoardConnections(boardId));
+        renderBoardConnections(boardId);
+      });
+      hitPath.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (!confirm('Delete this connection?')) return;
+        const conns = getBoardConnections(boardId).filter((c) => c.id !== conn.id);
+        setBoardConnections(boardId, conns);
+        renderBoardConnections(boardId);
+      });
+      group.appendChild(hitPath);
+      const controlCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      controlCircle.setAttribute('cx', cx);
+      controlCircle.setAttribute('cy', cy);
+      controlCircle.setAttribute('r', '14');
+      controlCircle.setAttribute('fill', 'rgba(37, 99, 235, 0.2)');
+      controlCircle.setAttribute('stroke', 'rgba(37, 99, 235, 0.6)');
+      controlCircle.setAttribute('stroke-width', '1.5');
+      controlCircle.setAttribute('data-connection-id', conn.id);
+      controlCircle.setAttribute('class', 'board-connection-control');
+      controlCircle.style.cursor = 'move';
+      controlCircle.style.pointerEvents = 'all';
+      controlCircle.style.display = 'block';
+      connectionElements.set(conn.id, { path, hitPath, controlCircle, labelEl, p1, p2 });
+      controlCircle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startCX = conn.controlX != null ? conn.controlX : (p1.x + p2.x) / 2;
+        const startCY = conn.controlY != null ? conn.controlY : (p1.y + p2.y) / 2;
+        const scale = boardPanZoom.scale;
+        const el = connectionElements.get(conn.id);
+        function onMove(ev) {
+          conn.controlX = startCX + (ev.clientX - startX) / scale;
+          conn.controlY = startCY + (ev.clientY - startY) / scale;
+          const ncx = conn.controlX;
+          const ncy = conn.controlY;
+          const nd = `M ${p1.x} ${p1.y} Q ${ncx} ${ncy} ${p2.x} ${p2.y}`;
+          const nmidX = (1 - midT) * (1 - midT) * p1.x + 2 * (1 - midT) * midT * ncx + midT * midT * p2.x;
+          const nmidY = (1 - midT) * (1 - midT) * p1.y + 2 * (1 - midT) * midT * ncy + midT * midT * p2.y;
+          if (el) {
+            el.path.setAttribute('d', nd);
+            el.hitPath.setAttribute('d', nd);
+            el.controlCircle.setAttribute('cx', ncx);
+            el.controlCircle.setAttribute('cy', ncy);
+            if (el.labelEl) {
+              el.labelEl.setAttribute('x', nmidX);
+              el.labelEl.setAttribute('y', nmidY);
+            }
+          }
+        }
+        function onUp() {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          setBoardConnections(boardId, getBoardConnections(boardId));
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      group.appendChild(controlCircle);
+      svgHit.appendChild(group);
+    });
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+    marker.setAttribute('id', 'board-arrow');
+    marker.setAttribute('markerWidth', '10');
+    marker.setAttribute('markerHeight', '10');
+    marker.setAttribute('refX', '9');
+    marker.setAttribute('refY', '3');
+    marker.setAttribute('orient', 'auto');
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', '0 0, 10 3, 0 6');
+    poly.setAttribute('fill', 'var(--text-muted)');
+    marker.appendChild(poly);
+    defs.appendChild(marker);
+    svg.insertBefore(defs, svg.firstChild);
+    boardConnectionsLayerEl.appendChild(svg);
+    boardConnectionsLayerEl.appendChild(svgHit);
+  }
+
+  function renderBoardGrid() {
+    if (!boardGridLayerEl) return;
+    const visible = localStorage.getItem(BOARD_GRID_VISIBLE_KEY) === '1';
+    if (boardGridLayerEl.classList) boardGridLayerEl.classList.toggle('hidden', !visible);
+    if (boardGridLayerEl.setAttribute) boardGridLayerEl.setAttribute('aria-hidden', visible ? 'false' : 'true');
+    if (boardGridBtn) boardGridBtn.classList.toggle('active', visible);
+    if (!visible) {
+      boardGridLayerEl.innerHTML = '';
+      boardGridLayerEl.classList.remove('board-grid-visible');
+      boardGridLayerEl.style.width = '';
+      boardGridLayerEl.style.height = '';
+      boardGridLayerEl.style.left = '';
+      boardGridLayerEl.style.top = '';
+      return;
+    }
+    boardGridLayerEl.innerHTML = '';
+    boardGridLayerEl.classList.add('board-grid-visible');
+    const gridHalf = Math.floor(BOARD_CONNECTIONS_SVG_SIZE / 2);
+    boardGridLayerEl.style.left = -gridHalf + 'px';
+    boardGridLayerEl.style.top = -gridHalf + 'px';
+    boardGridLayerEl.style.width = BOARD_CONNECTIONS_SVG_SIZE + 'px';
+    boardGridLayerEl.style.height = BOARD_CONNECTIONS_SVG_SIZE + 'px';
   }
 
   function renderBoardCards(boardId) {
@@ -3328,6 +4146,7 @@
       boardCardsLayerEl.appendChild(el);
       attachBoardCardBehavior(el, task, boardId, idx);
     });
+    renderBoardConnections(boardId);
   }
   function buildBoardCardHtml(t, taskId, expandSvg) {
     const title = (t.title || '(no title)').replace(/</g, '&lt;');
@@ -3337,20 +4156,26 @@
     const av = (t.available_date || '').toString().trim().substring(0, 10);
     const due = (t.due_date || '').toString().trim().substring(0, 10);
     const statusSvg = statusComplete ? INSPECTOR_STATUS_TICK_SVG : INSPECTOR_STATUS_OPEN_SVG;
-    const flagHtml = flagged ? '<span class="board-card-flagged">★</span>' : '';
+    const flagHtml = '<span class="board-card-flagged' + (flagged ? '' : ' empty') + '">★</span>';
     const avStr = av ? formatDate(av) : '';
     const dueStr = due ? formatDate(due) : '';
     const datesStr = [avStr && `Avail: ${avStr}`, dueStr && `Due: ${dueStr}`].filter(Boolean).join(' · ') || '—';
+    const taskIdEsc = (taskId || '').replace(/"/g, '&quot;');
     return `
+      <span class="board-connection-handle board-connection-handle-left" data-side="left" title="Drag to connect to another task" aria-label="Connection handle left"></span>
+      <span class="board-connection-handle board-connection-handle-right" data-side="right" title="Drag to connect to another task" aria-label="Connection handle right"></span>
+      <span class="board-connection-handle board-connection-handle-top" data-side="top" title="Drag to connect to another task" aria-label="Connection handle top"></span>
+      <span class="board-connection-handle board-connection-handle-bottom" data-side="bottom" title="Drag to connect to another task" aria-label="Connection handle bottom"></span>
       <div class="board-card-header">
-        <span class="board-card-priority priority-circle-wrap ${priorityCls}">${PRIORITY_CIRCLE_SVG}</span>
+        <span class="board-card-priority priority-circle-wrap ${priorityCls}" data-priority-task-id="${taskIdEsc}" title="Priority (click to change)">${PRIORITY_CIRCLE_SVG}</span>
         ${flagHtml}
         <span class="board-card-status">${statusSvg}</span>
         <span class="board-card-title">${title}</span>
       </div>
       <div class="board-card-dates">${datesStr}</div>
       <div class="board-card-footer">
-        <button type="button" class="board-card-expand" data-task-id="${(taskId || '').replace(/"/g, '&quot;')}" title="Expand" aria-label="Expand">${expandSvg}</button>
+        <button type="button" class="board-card-archive" data-task-id="${taskIdEsc}" title="Remove from board" aria-label="Remove from board">${INSPECTOR_ARCHIVE_SVG}</button>
+        <button type="button" class="board-card-expand" data-task-id="${taskIdEsc}" title="Expand" aria-label="Expand">${expandSvg}</button>
       </div>
       <div class="board-card-resize-handle"></div>
     `;
@@ -3367,10 +4192,23 @@
     const titleEl = el.querySelector('.board-card-title');
     const datesEl = el.querySelector('.board-card-dates');
     const expandBtn = el.querySelector('.board-card-expand');
+    const archiveBtn = el.querySelector('.board-card-archive');
     const resizeHandle = el.querySelector('.board-card-resize-handle');
+    if (archiveBtn) {
+      archiveBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!confirm('Remove this task from the board? It will appear in the "Add task" list again.')) return;
+        const cards = getBoardCards(boardId);
+        cards.splice(cardIndex, 1);
+        setBoardCards(boardId, cards);
+        renderBoardCards(boardId);
+        renderBoardConnections(boardId);
+      });
+    }
     if (header) {
       header.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.board-card-expand') || e.target.closest('.board-card-resize-handle')) return;
+        if (e.target.closest('.board-card-expand') || e.target.closest('.board-card-resize-handle') || e.target.closest('.board-connection-handle') || e.target.closest('.board-card-archive') || e.target.closest('.board-card-priority') || e.target.closest('.board-card-flagged') || e.target.closest('.board-card-status')) return;
         e.preventDefault();
         const cards = getBoardCards(boardId);
         const card = cards[cardIndex];
@@ -3387,11 +4225,31 @@
           el.style.left = card.x + 'px';
           el.style.top = card.y + 'px';
           setBoardCards(boardId, cards);
+          renderBoardConnections(boardId);
         }
         function onUp() {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
-          setBoardCards(boardId, cards);
+          const cx = card.x + (el.offsetWidth / 2);
+          const cy = card.y + (el.offsetHeight / 2);
+          const regions = getBoardRegions(boardId);
+          let droppedIntoRegion = null;
+          for (let i = 0; i < regions.length; i++) {
+            const r = regions[i];
+            const rx = r.x || 0, ry = r.y || 0, rw = r.w || 200, rh = r.h || 200;
+            if (cx >= rx && cx <= rx + rw && cy >= ry && cy <= ry + rh) { droppedIntoRegion = i; break; }
+          }
+          if (droppedIntoRegion !== null) {
+            cards.splice(cardIndex, 1);
+            if (!regions[droppedIntoRegion].lines) regions[droppedIntoRegion].lines = [];
+            regions[droppedIntoRegion].lines.push({ taskId });
+            setBoardCards(boardId, cards);
+            setBoardRegions(boardId, regions);
+            renderBoardRegions(boardId);
+            renderBoardCards(boardId);
+          } else {
+            setBoardCards(boardId, cards);
+          }
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
@@ -3410,8 +4268,8 @@
         function onMove(ev) {
           const dw = ev.clientX - startX;
           const dh = ev.clientY - startY;
-          const nw = Math.max(180, startW + dw);
-          const nh = Math.max(100, startH + dh);
+          const nw = Math.max(187, startW + dw);
+          const nh = Math.max(108, startH + dh);
           card.width = Math.round(nw);
           card.height = Math.round(nh);
           el.style.width = card.width + 'px';
@@ -3430,29 +4288,90 @@
     if (expandBtn) {
       expandBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        openBoardTaskInspectorModal(taskId, () => renderBoardCards(boardId));
+        openBoardTaskInspectorModal(taskId, () => { renderBoardCards(boardId); renderBoardConnections(boardId); });
       });
     }
+    el.querySelectorAll('.board-connection-handle').forEach((handle) => {
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const side = handle.dataset.side || 'right';
+        const l = el.offsetLeft;
+        const t = el.offsetTop;
+        const w = el.offsetWidth;
+        const h = el.offsetHeight;
+        const startX = side === 'left' ? l : side === 'right' ? l + w : l + w / 2;
+        const startY = side === 'top' ? t : side === 'bottom' ? t + h : t + h / 2;
+        let previewPath = null;
+        const canvasRect = boardViewCanvasEl.getBoundingClientRect();
+        const scale = boardPanZoom.scale;
+        function clientToCanvas(cx, cy) {
+          return { x: (cx - canvasRect.left - boardPanZoom.x) / scale, y: (cy - canvasRect.top - boardPanZoom.y) / scale };
+        }
+        function onMove(ev) {
+          const end = clientToCanvas(ev.clientX, ev.clientY);
+          if (!previewPath && boardConnectionsLayerEl) {
+            const svg = boardConnectionsLayerEl.querySelector('svg');
+            if (!svg) return;
+            previewPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            previewPath.setAttribute('class', 'board-connection-preview');
+            previewPath.setAttribute('stroke', 'var(--accent)');
+            previewPath.setAttribute('stroke-width', '2');
+            previewPath.setAttribute('fill', 'none');
+            svg.appendChild(previewPath);
+          }
+          if (previewPath) {
+            const mx = (startX + end.x) / 2;
+            const my = (startY + end.y) / 2;
+            previewPath.setAttribute('d', `M ${startX} ${startY} Q ${mx} ${my} ${end.x} ${end.y}`);
+          }
+        }
+        function onUp(ev) {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          if (previewPath && previewPath.parentNode) previewPath.parentNode.removeChild(previewPath);
+          const target = document.elementFromPoint(ev.clientX, ev.clientY);
+          const toHandle = target && target.closest('.board-connection-handle');
+          const toCard = toHandle && toHandle.closest('.board-card');
+          if (toCard && toCard !== el) {
+            const toTaskId = toCard.dataset.taskId;
+            const toSide = toHandle.dataset.side || 'right';
+            if (toTaskId && String(toTaskId) !== String(taskId)) {
+              const connections = getBoardConnections(boardId);
+              const id = 'conn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+              connections.push({ id, fromTaskId: taskId, toTaskId, fromSide: side, toSide, label: '' });
+              setBoardConnections(boardId, connections);
+              renderBoardConnections(boardId);
+            }
+          }
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+    });
     const priorityEl = el.querySelector('.board-card-priority');
     const statusEl = el.querySelector('.board-card-status');
     const flagEl = el.querySelector('.board-card-flagged');
     if (priorityEl) {
       priorityEl.addEventListener('click', (e) => {
         e.stopPropagation();
-        openPriorityDropdown(e, priorityEl, { onAfterApply: () => api(`/api/external/tasks/${encodeURIComponent(taskId)}`).then((t2) => updateBoardCardContent(el, t2, boardId)) });
+        e.preventDefault();
+        openPriorityDropdown(e, priorityEl, { onAfterApply: () => refreshBoardAfterTaskUpdate(boardId) });
       });
     }
     if (statusEl) {
       statusEl.addEventListener('click', (e) => {
         e.stopPropagation();
+        e.preventDefault();
         const newStatus = isTaskCompleted(task) ? 'incomplete' : 'complete';
-        updateTask(taskId, { status: newStatus }).then((t2) => updateBoardCardContent(el, t2, boardId));
+        updateTask(taskId, { status: newStatus }).then(() => refreshBoardAfterTaskUpdate(boardId));
       });
     }
     if (flagEl) {
       flagEl.addEventListener('click', (e) => {
         e.stopPropagation();
-        updateTask(taskId, { flagged: !task.flagged }).then((t2) => updateBoardCardContent(el, t2, boardId));
+        e.preventDefault();
+        updateTask(taskId, { flagged: !(task.flagged === true || task.flagged === 1) }).then(() => refreshBoardAfterTaskUpdate(boardId));
       });
     }
     if (titleEl) {
@@ -4575,7 +5494,7 @@
           });
         }
         row.querySelectorAll('.inspector-date-dropdown-trigger').forEach((trigger) => {
-          trigger.addEventListener('click', (ev) => openInspectorDateDropdown(ev, row));
+          trigger.addEventListener('click', (ev) => openInspectorDateDropdown(ev, row, () => loadTaskDetails(taskId, opts)));
         });
       });
 
@@ -4644,7 +5563,7 @@
             const mainInspector = document.getElementById('inspector-content');
             if (mainInspector) mainInspector.innerHTML = '<div class="inspector-content-inner"><p class="placeholder">Select an item to inspect.</p></div>';
             refreshTaskList();
-            refreshCenterView();
+            scheduleRefreshAfterTaskChange();
           } catch (err) {
             alert(err.message || 'Failed to delete task.');
           }
@@ -5352,7 +6271,7 @@
   }
 
   function refreshNavigator() {
-    loadProjects();
+    refreshLeftPanel();
     refreshCenterView();
   }
   const navigatorRefreshBtn = document.getElementById('navigator-refresh-btn');
@@ -5431,10 +6350,12 @@
   const duplicateListCreate = document.getElementById('duplicate-list-create');
   let duplicateListSource = null;
   const newBoardOverlay = document.getElementById('new-board-overlay');
+  const newBoardTitleEl = document.getElementById('new-board-title');
   const newBoardName = document.getElementById('new-board-name');
   const newBoardBase = document.getElementById('new-board-base');
   const newBoardClose = document.getElementById('new-board-close');
   const newBoardCreate = document.getElementById('new-board-create');
+  let newBoardDuplicateSourceId = null;
 
   function closeAddPopover() {
     if (navigatorAddPopover) {
@@ -5467,8 +6388,19 @@
   }
 
   function openNewTaskModal() {
+    // Auto-assign project when a project is active in the view; same for tag.
     const fromProject = lastTaskSource && lastTaskSource !== 'inbox' && lastTaskSource !== 'search' && !lastTaskSource.startsWith('list:') && !lastTaskSource.startsWith('tag:');
     const fromTag = lastTaskSource && lastTaskSource.startsWith('tag:');
+    let initialProjects = fromProject ? [lastTaskSource] : [];
+    let initialTags = fromTag ? [lastTaskSource.slice(4)] : [];
+    if (!initialProjects.length && projectsList) {
+      const sel = projectsList.querySelector('.nav-item.selected');
+      if (sel && sel.dataset.type === 'project' && sel.dataset.id) initialProjects = [sel.dataset.id];
+    }
+    if (!initialTags.length && tagsListEl) {
+      const sel = tagsListEl.querySelector('.nav-item.selected');
+      if (sel && sel.dataset.type === 'tag' && sel.dataset.tag) initialTags = [sel.dataset.tag];
+    }
     newTaskState = {
       title: '',
       available_date: '',
@@ -5477,8 +6409,8 @@
       flagged: false,
       description: '',
       recurrence: null,
-      projects: fromProject ? [lastTaskSource] : [],
-      tags: fromTag ? [lastTaskSource.slice(4)] : [],
+      projects: initialProjects,
+      tags: initialTags,
     };
     if (!newTaskModalContent) return;
     const hasRecurrence = !!(newTaskState.recurrence && typeof newTaskState.recurrence === 'object' && (newTaskState.recurrence.freq || newTaskState.recurrence.interval));
@@ -5624,7 +6556,7 @@
           body: JSON.stringify(body),
         });
         closeNewTaskModal();
-        refreshLeftAndCenter();
+        scheduleRefreshAfterTaskChange();
       } catch (e) {
         alert(e.message || 'Failed to create task.');
       }
@@ -5676,8 +6608,10 @@
       });
     });
   }
-  function openNewBoardModal() {
+  function openNewBoardModal(sourceBoardId) {
     if (!newBoardOverlay || !newBoardBase) return;
+    newBoardDuplicateSourceId = sourceBoardId || null;
+    if (newBoardTitleEl) newBoardTitleEl.textContent = newBoardDuplicateSourceId ? 'Duplicate board' : 'New board';
     const select = newBoardBase;
     select.innerHTML = '<option value="">— Select a list or project —</option>';
     const projects = projectListCache || [];
@@ -5700,6 +6634,8 @@
     setTimeout(() => newBoardName && newBoardName.focus(), 50);
   }
   function closeNewBoardModal() {
+    newBoardDuplicateSourceId = null;
+    if (newBoardTitleEl) newBoardTitleEl.textContent = 'New board';
     if (newBoardOverlay) {
       newBoardOverlay.classList.add('hidden');
       newBoardOverlay.setAttribute('aria-hidden', 'true');
@@ -5720,7 +6656,17 @@
       const [baseType, baseId] = baseVal.startsWith('list:') ? ['list', baseVal.slice(5)] : ['project', baseVal.slice(8)];
       const id = 'board_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
       const boards = getBoards();
-      boards.push({ id, name, baseType, baseId });
+      const newBoard = { id, name, baseType, baseId };
+      boards.push(newBoard);
+      if (newBoardDuplicateSourceId) {
+        const source = boards.find((b) => String(b.id) === String(newBoardDuplicateSourceId));
+        if (source) {
+          newBoard.regions = Array.isArray(source.regions) ? JSON.parse(JSON.stringify(source.regions)) : [];
+          if (typeof source.viewScale === 'number') newBoard.viewScale = source.viewScale;
+          if (typeof source.viewX === 'number') newBoard.viewX = source.viewX;
+          if (typeof source.viewY === 'number') newBoard.viewY = source.viewY;
+        }
+      }
       saveBoards(boards);
       const order = getBoardOrder();
       if (!order.includes(id)) {

@@ -226,16 +226,26 @@
     <div id="board-view" class="board-view hidden" aria-hidden="true">
       <div class="board-view-header">
         <h1 id="board-view-title" class="board-view-title"></h1>
-        <button type="button" id="board-view-close" class="board-view-close" title="Close board" aria-label="Close board">&times;</button>
+        <div class="board-view-header-actions">
+          <button type="button" id="board-duplicate-btn" class="board-header-btn" title="Duplicate board" aria-label="Duplicate board"><svg class="board-header-btn-icon" viewBox="64 42.67 384 427" fill="currentColor" xmlns="http://www.w3.org/2000/svg" width="20" height="20"><g transform="translate(64, 42.666667)"><path d="M320,128 L384,192 L384,426.666667 L128,426.666667 L128,128 L320,128 Z M302.314667,170.666667 L170.666667,170.666667 L170.666667,384 L341.333333,384 L341.333333,209.685333 L302.314667,170.666667 Z M277.333333,213.333333 L277.333,256 L320,256 L320,298.666667 L277.333,298.666 L277.333333,341.333333 L234.666667,341.333333 L234.666,298.666 L192,298.666667 L192,256 L234.666,256 L234.666667,213.333333 L277.333333,213.333333 Z M192,-2.13162821e-14 L256,64 L256,106.666 L213.333,106.666 L213.333333,81.6853333 L174.314667,42.6666667 L42.6666667,42.6666667 L42.6666667,256 L106.666,256 L106.666,298.666 L1.42108547e-14,298.666667 L1.42108547e-14,-2.13162821e-14 L192,-2.13162821e-14 Z"/></g></svg></button>
+          <button type="button" id="board-delete-btn" class="board-header-btn board-delete-btn" title="Delete board" aria-label="Delete board"><svg class="board-header-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" width="20" height="20"><path d="M18 6L17.1991 18.0129C17.129 19.065 17.0939 19.5911 16.8667 19.99C16.6666 20.3412 16.3648 20.6235 16.0011 20.7998C15.588 21 15.0607 21 14.0062 21H9.99377C8.93927 21 8.41202 21 7.99889 20.7998C7.63517 20.6235 7.33339 20.3412 7.13332 19.99C6.90607 19.5911 6.871 19.065 6.80086 18.0129L6 6M4 6H20M16 6L15.7294 5.18807C15.4671 4.40125 15.3359 4.00784 15.0927 3.71698C14.8779 3.46013 14.6021 3.26132 14.2905 3.13878C13.9376 3 13.523 3 12.6936 3H11.3064C10.477 3 10.0624 3 9.70951 3.13878C9.39792 3.26132 9.12208 3.46013 8.90729 3.71698C8.66405 4.00784 8.53292 4.40125 8.27064 5.18807L8 6M14 10V17M10 10V17"/></svg></button>
+        </div>
+        <button type="button" id="board-view-close" class="board-view-close" title="Close board" aria-label="Close board"><svg class="board-view-close-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
       </div>
       <div id="board-view-canvas" class="board-view-canvas">
         <div id="board-canvas-inner" class="board-canvas-inner">
+          <div id="board-grid-layer" class="board-grid-layer" aria-hidden="true"></div>
+          <div id="board-regions-layer" class="board-regions-layer"></div>
+          <div id="board-connections-layer" class="board-connections-layer"></div>
           <div id="board-cards-layer" class="board-cards-layer"></div>
         </div>
       </div>
-      <div class="board-view-toolbar board-view-toolbar-center">
+      <div class="board-view-toolbar board-view-toolbar-left">
         <button type="button" id="board-add-task-btn" class="board-add-task-btn" title="Add task to board" aria-label="Add task to board">
-          <svg class="board-add-task-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M8 12H12M12 12H16M12 12V16M12 12V8M12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12C21 16.9706 16.9706 21 12 21Z"/></svg>
+          <svg class="board-add-task-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="24" height="24"><path d="M12 5v14M5 12h14"/></svg>
+        </button>
+        <button type="button" id="board-add-region-btn" class="board-add-region-btn" title="Add region" aria-label="Add region">
+          <svg class="board-add-region-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M18.2513521,2.49820514 C19.9843968,2.49820514 21.4006513,3.85452629 21.4962634,5.56367469 L21.5014083,5.74810161 L21.5008077,17.7519229 C21.5005988,19.5467519 20.0455893,21.0018356 18.2507042,21.0018356 L6.25005624,21.0018356 C4.51701151,21.0018356 3.10075697,19.6455145 3.00514494,17.9363661 L3,17.7519391 L3.00060063,5.74811784 C3.00080955,3.9532889 4.45581897,2.49820514 6.25064792,2.49820514 L18.2513521,2.49820514 Z M11.5,9.49820514 L4.5,9.49920514 L4.50010353,17.7518667 L4.50727563,17.9125936 C4.58838653,18.803788 5.33765319,19.5018356 6.25,19.5018356 L11.5,19.5012051 L11.5,9.49820514 Z M20,15.4982051 L13,15.4992051 L13,19.5012051 L18.2506479,19.5018356 C19.2171619,19.5018356 20.0006952,18.7182622 20.0008077,17.7518046 L20,15.4982051 Z M18.2514083,3.99820514 L13,3.99720514 L13,13.9992051 L20,13.9982051 L20.0013048,5.74817408 L19.9941327,5.58744715 C19.9130218,4.69625278 19.1637551,3.99820514 18.2514083,3.99820514 Z M11.5,3.99720514 L6.25073228,3.99820514 L6.10723072,4.00401666 C5.20785168,4.0770851 4.5007075,4.83010139 4.50060063,5.7482362 L4.5,7.99920514 L11.5,7.99820514 L11.5,3.99720514 Z"/></svg>
         </button>
       </div>
       <div id="board-add-task-popover" class="board-add-task-popover hidden" role="listbox" aria-hidden="true">
@@ -243,7 +253,9 @@
         <ul id="board-add-task-list" class="board-add-task-list"></ul>
       </div>
       <div class="board-view-zoom">
-        <button type="button" id="board-zoom-out" class="board-zoom-btn" title="Zoom out" aria-label="Zoom out">−</button>
+        <button type="button" id="board-theme-btn" class="board-zoom-btn board-theme-btn" title="Theme (click to cycle)" aria-label="Theme"><svg class="board-theme-icon" viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 16q0 3.264 1.28 6.24t3.392 5.088 5.12 3.424 6.208 1.248q3.264 0 6.24-1.248t5.088-3.424 3.392-5.088 1.28-6.24-1.28-6.208-3.392-5.12-5.088-3.392-6.24-1.28q-3.264 0-6.208 1.28t-5.12 3.392-3.392 5.12-1.28 6.208zM4 16q0-3.264 1.6-6.016t4.384-4.352 6.016-1.632 6.016 1.632 4.384 4.352 1.6 6.016-1.6 6.048-4.384 4.352-6.016 1.6-6.016-1.6-4.384-4.352-1.6-6.048zM16 26.016q2.72 0 5.024-1.344t3.648-3.648 1.344-5.024-1.344-4.992-3.648-3.648-5.024-1.344v20z"/></svg></button>
+        <button type="button" id="board-grid-btn" class="board-zoom-btn board-grid-btn" title="Toggle grid" aria-label="Toggle grid"><svg class="board-grid-icon" viewBox="0 0 8 8" fill="currentColor" xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M0 0v1h1V0H0zm2 0v1h1V0H2zm2 0v1h1V0H4zm2 0v1h1V0H6zM0 2v1h1V2H0zm2 0v1h1V2H2zm2 0v1h1V2H4zm2 0v1h1V2H6zM0 4v1h1V4H0zm2 0v1h1V4H2zm2 0v1h1V4H4zm2 0v1h1V4H6zM0 6v1h1V6H0zm2 0v1h1V6H2zm2 0v1h1V6H4zm2 0v1h1V6H6z"/></svg></button>
+        <button type="button" id="board-zoom-out" class="board-zoom-btn" title="Zoom out" aria-label="Zoom out"><svg class="board-zoom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M5 12h14"/></svg></button>
         <select id="board-zoom-select" class="board-zoom-select" title="Zoom level" aria-label="Zoom level">
           <option value="25">25%</option>
           <option value="50">50%</option>
@@ -254,11 +266,44 @@
           <option value="200">200%</option>
           <option value="300">300%</option>
         </select>
-        <button type="button" id="board-zoom-in" class="board-zoom-btn" title="Zoom in" aria-label="Zoom in">+</button>
+        <button type="button" id="board-zoom-in" class="board-zoom-btn" title="Zoom in" aria-label="Zoom in"><svg class="board-zoom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M12 5v14M5 12h14"/></svg></button>
       </div>
     </div>
   </div>
 
+  <div id="board-region-edit-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-small" role="dialog" aria-labelledby="board-region-edit-title">
+      <div class="modal-header">
+        <h2 id="board-region-edit-title">Region</h2>
+        <button type="button" id="board-region-edit-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="setting-row">
+          <label for="board-region-edit-title-input">Title</label>
+          <input type="text" id="board-region-edit-title-input" class="inspector-edit-input" placeholder="Region title" aria-label="Region title" />
+        </div>
+        <div class="setting-row">
+          <label>Color</label>
+          <div id="board-region-edit-colors" class="board-region-color-palette" role="group" aria-label="Region color"></div>
+        </div>
+        <div class="setting-row board-region-edit-checkboxes">
+          <label class="setting-checkbox-label">
+            <input type="checkbox" id="board-region-edit-show-priority" class="board-region-edit-checkbox" aria-label="Show priority on snapped tasks" />
+            <span>Show priority</span>
+          </label>
+          <label class="setting-checkbox-label">
+            <input type="checkbox" id="board-region-edit-show-flag" class="board-region-edit-checkbox" aria-label="Show flag on snapped tasks" />
+            <span>Show flag</span>
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer board-region-edit-footer">
+        <button type="button" id="board-region-edit-delete" class="board-region-edit-delete" title="Delete region" aria-label="Delete region"></button>
+        <button type="button" id="board-region-edit-duplicate" class="board-region-edit-duplicate" title="Duplicate region" aria-label="Duplicate region"></button>
+        <button type="button" id="board-region-edit-save" class="board-region-edit-save" title="Save" aria-label="Save"></button>
+      </div>
+    </div>
+  </div>
   <div id="board-task-inspector-overlay" class="modal-overlay hidden" aria-hidden="true">
     <div class="modal modal-board-inspector" role="dialog" aria-labelledby="board-task-inspector-title">
       <div class="modal-header">
@@ -334,12 +379,13 @@
           </div>
         </section>
         <section class="settings-section">
-          <h3>Tags</h3>
-          <p class="setting-hint">Tags from task tags or #tag in titles/notes. Rename or delete requires confirmation.</p>
+          <h3>Data</h3>
+          <p class="setting-hint">App data (settings, boards, favorites, layout) is stored on this computer. Export to back up or move to another computer; import to restore.</p>
           <div class="setting-row">
-            <button type="button" id="settings-tags-refresh" class="btn-secondary">Refresh list</button>
+            <button type="button" id="settings-export-data" class="btn-secondary">Export app data…</button>
+            <button type="button" id="settings-import-data" class="btn-secondary">Import app data…</button>
           </div>
-          <ul id="settings-tags-list" class="settings-tags-list" aria-label="Tags with task counts"></ul>
+          <input type="file" id="settings-import-data-file" accept=".json,application/json" class="hidden" aria-hidden="true" />
         </section>
       </div>
       <div class="modal-footer">

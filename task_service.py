@@ -933,8 +933,25 @@ def complete_recurring_task(task_id: str, advance_recurrence: bool = True) -> di
                                 next_avail_str = next_due_str
                         else:
                             next_avail_str = next_due_str if prev_avail_str else None
-                        # Commit and release lock before create_task(); otherwise create_task's
-                        # own connection blocks on the DB lock and can timeout.
+                        copy_project_ids = [
+                            str(r[0]).strip()
+                            for r in conn.execute(
+                                "SELECT project_id FROM task_projects WHERE task_id = ?",
+                                (task_id,),
+                            ).fetchall()
+                            if r[0]
+                        ]
+                        copy_tags = [
+                            str(r[0]).strip()
+                            for r in conn.execute(
+                                "SELECT tag FROM task_tags WHERE task_id = ?",
+                                (task_id,),
+                            ).fetchall()
+                            if r[0]
+                        ]
+                        copy_flagged = bool(row.get("flagged"))
+                        # Recurrence copy: same projects, tags, priority, description, notes, flagged;
+                        # only dates are advanced. Commit before create_task() to avoid DB lock.
                         conn.commit()
                         create_task(
                             row["title"],
@@ -946,6 +963,9 @@ def complete_recurring_task(task_id: str, advance_recurrence: bool = True) -> di
                             due_date=next_due_str,
                             recurrence=rec,
                             recurrence_parent_id=recurrence_parent_id,
+                            projects=copy_project_ids if copy_project_ids else None,
+                            tags=copy_tags if copy_tags else None,
+                            flagged=copy_flagged,
                         )
                     # else: no next (past end_date or count exhausted); only mark complete
         conn.commit()
