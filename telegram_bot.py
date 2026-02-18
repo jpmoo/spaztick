@@ -167,8 +167,8 @@ def _run_orchestrator(
     model: str,
     system_prefix: str,
     history: list[dict[str, str]],
-) -> tuple[str, bool, dict | None]:
-    """Sync orchestrator call (run in executor). Returns (response_text, tool_used, pending_confirm)."""
+) -> tuple[str, bool, dict | None, bool]:
+    """Sync orchestrator call (run in executor). Returns (response_text, tool_used, pending_confirm, used_fallback)."""
     from orchestrator import run_orchestrator
     return run_orchestrator(user_message, base_url, model, system_prefix, history=history)
 
@@ -251,10 +251,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     effective_history = history if USE_HISTORY else []
     try:
         loop = asyncio.get_event_loop()
-        response, tool_used, pending_confirm = await loop.run_in_executor(
+        response, tool_used, pending_confirm, used_fallback = await loop.run_in_executor(
             None,
             lambda: _run_orchestrator(text, base_url, model, system_prefix, effective_history),
         )
+        if used_fallback and response:
+            response = "Used quick-add from your message.\n\n" + response
         if pending_confirm:
             # Store context so on "yes" we can send one-turn history and let the model confirm
             _set_pending_confirm(chat_id, {

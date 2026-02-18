@@ -3776,8 +3776,16 @@ body[data-theme="cupertino"] .board-region-line:hover {
   background: var(--surface);
   color: var(--text);
 }
+/* Date filter row: text field (e.g. "today+3") shorter so date picker has more room */
+.list-settings-filter-row .filter-value-wrap:has(.list-filter-date-picker) input[type="text"] {
+  flex: 0 1 50%;
+  max-width: 50%;
+}
 .list-settings-filter-row .filter-value-wrap input[type="date"] {
   max-width: 70px;
+}
+.list-settings-filter-row .filter-value-wrap:has(.list-filter-date-picker) input[type="date"] {
+  max-width: 140px;
 }
 .list-settings-filter-row .date-picker-btn,
 .btn-sm {
@@ -4342,6 +4350,15 @@ h6.description-line-heading { font-size: 0.95em; }
 }
 .board-region-edit-remove-tags-row {
   margin-top: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: normal;
+}
+.board-region-edit-remove-tags-row .board-region-edit-checkbox {
+  width: auto;
+  margin: 0;
 }
 .board-region-edit-priority-select {
   padding: 6px 10px;

@@ -112,7 +112,104 @@ def resolve_relative_date(value: str | None, tz_name: str = "UTC") -> str | None
         if days_ahead == 0:
             days_ahead = 7  # "next" Monday if today is Monday
         return (today + timedelta(days=days_ahead)).isoformat()
+    # "next Friday" / "next monday" etc. (same as bare weekday = next occurrence)
+    m = re.match(r"^next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?$", raw)
+    if m:
+        return resolve_relative_date(m.group(1), tz_name)
+    # "this Friday" = this week's occurrence (or next if already past)
+    m = re.match(r"^this\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?$", raw)
+    if m:
+        wd = m.group(1)
+        target_weekday = weekdays.index(wd)
+        current_weekday = today.weekday()
+        days_ahead = (target_weekday - current_weekday) % 7
+        if days_ahead == 0:
+            days_ahead = 7
+        return (today + timedelta(days=days_ahead)).isoformat()
+    # "end of month" / "eom" = last day of current month
+    if raw in ("end of month", "eom", "end of this month"):
+        try:
+            next_month = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
+            last_day = next_month - timedelta(days=1)
+            return last_day.isoformat()
+        except Exception:
+            pass
+    # "start of next month" / "next month"
+    if raw in ("start of next month", "next month"):
+        try:
+            next_month = (today.replace(day=28) + timedelta(days=4)).replace(day=1)
+            return next_month.isoformat()
+        except Exception:
+            pass
     return None
+
+
+def parse_date_condition(phrase: str | None, tz_name: str = "UTC") -> dict[str, Any]:
+    """
+    Parse a natural-language date condition for task queries (task_when / task_list).
+    Returns a dict with one or more of: due_by, due_before, available_by, available_by_required, overdue.
+
+    - "due Friday" / "due by Friday" -> due_by = next Friday (on or before that day)
+    - "due before next Friday" -> due_before = next Friday (strictly before)
+    - "available today" / "available now" -> available_by = today, available_by_required = True
+      (only tasks that have an available_date on or before today; excludes NULL so you get "on my plate today")
+    - "available tomorrow" -> available_by = tomorrow, available_by_required = False
+    - "overdue" -> overdue = True
+    """
+    out: dict[str, Any] = {}
+    if not phrase or not str(phrase).strip():
+        return out
+    raw = str(phrase).strip().lower()
+    try:
+        today = _today_in_tz((tz_name or "").strip() or "UTC")
+    except Exception:
+        today = date.today()
+
+    # Overdue
+    if raw == "overdue" or re.match(r"^overdue\s*tasks?$", raw):
+        out["overdue"] = True
+        return out
+
+    # "due before X" / "due before next Friday" -> due_before (strictly before X)
+    m = re.match(r"^due\s+before\s+(.+)$", raw)
+    if m:
+        date_expr = m.group(1).strip()
+        resolved = resolve_relative_date(date_expr, tz_name)
+        if resolved:
+            out["due_before"] = resolved
+            return out
+
+    # "available today" / "available now" -> available_by = today, require available_date set
+    if raw in ("available today", "available now"):
+        out["available_by"] = today.isoformat()
+        out["available_by_required"] = True
+        return out
+
+    # "available X" (tomorrow, Friday, next week, etc.)
+    if raw.startswith("available "):
+        date_expr = raw[9:].strip()
+        date_expr = re.sub(r"^by\s+", "", date_expr)
+        resolved = resolve_relative_date(date_expr, tz_name)
+        if resolved:
+            out["available_by"] = resolved
+            out["available_by_required"] = False
+            return out
+
+    # "due by X" / "due X" / "due on X" -> due_by (on or before)
+    if raw.startswith("due "):
+        date_expr = re.sub(r"^due\s+(?:by|on)\s+", "", raw)
+        date_expr = re.sub(r"^due\s+", "", date_expr)
+        date_expr = re.sub(r"^within\s+", "within ", date_expr)
+        resolved = resolve_relative_date(date_expr, tz_name)
+        if resolved:
+            out["due_by"] = resolved
+            return out
+
+    # Bare date phrase -> assume due_by
+    resolved = resolve_relative_date(raw, tz_name)
+    if resolved:
+        out["due_by"] = resolved
+    return out
 
 
 def resolve_task_dates(

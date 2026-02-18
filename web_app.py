@@ -463,7 +463,9 @@ def external_list_tasks(
     inbox: bool = False,
     tag: str | None = None,
     due_by: str | None = None,
+    due_before: str | None = None,
     available_by: str | None = None,
+    available_by_required: bool = False,
     title_contains: str | None = None,
     search: str | None = None,
     q: str | None = None,
@@ -487,7 +489,9 @@ def external_list_tasks(
             inbox=use_inbox,
             tag=tag,
             due_by=due_by,
+            due_before=due_before,
             available_by=available_by,
+            available_by_required=available_by_required,
             title_contains=title_contains,
             search=search,
             q=q,
@@ -815,12 +819,14 @@ def external_chat(request: Request, body: ChatRequest):
     else:
         system_prefix = f"{date_line}\n\n{system_prefix}".strip()
     try:
-        response_text, tool_used, pending_confirm = run_orchestrator(msg, base_url, model, system_prefix, history=[])
+        response_text, tool_used, pending_confirm, used_fallback = run_orchestrator(msg, base_url, model, system_prefix, history=[])
         if pending_confirm and api_key:
             _external_pending[api_key] = pending_confirm
         if tool_used and api_key:
             _external_pending.pop(api_key, None)
-        return {"response": response_text or "", "tool_used": tool_used}
+        if used_fallback and response_text:
+            response_text = "Used quick-add from your message.\n\n" + response_text
+        return {"response": response_text or "", "tool_used": tool_used, "source": "fallback" if used_fallback else "ai"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

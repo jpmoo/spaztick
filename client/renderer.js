@@ -3157,6 +3157,8 @@
   let boardTasksCache = {};
   const BOARD_DEFAULT_CARD_WIDTH = 260;
   const BOARD_DEFAULT_CARD_HEIGHT = 160;
+  const BOARD_MIN_CARD_WIDTH = 187;
+  const BOARD_MIN_CARD_HEIGHT = 108;
   const BOARD_ZOOM_MIN = 25;
   const BOARD_ZOOM_MAX = 300;
   const BOARD_ZOOM_STEP = 25;
@@ -3203,10 +3205,18 @@
     return getTaskById(taskId);
   }
 
-  /** Apply region addTags (only if task doesn't have them) and setPriority to a single task. */
-  async function applyRegionSettingsToTask(taskId, region, boardId) {
+  /** Apply region addTags (only if task doesn't have them) and setPriority to a single task.
+   *  options.useFreshTask: if true, fetch task from API before applying (use after cross-region drop so tags are up to date). */
+  async function applyRegionSettingsToTask(taskId, region, boardId, options) {
     if (!region || !taskId) return;
-    const task = getTaskForBoard(boardId, taskId);
+    let task = getTaskForBoard(boardId, taskId);
+    if (options && options.useFreshTask) {
+      try {
+        task = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+      } catch (_) {
+        if (!task) return;
+      }
+    }
     const addTags = Array.isArray(region.addTags) ? region.addTags : [];
     const currentTags = Array.isArray(task && task.tags) ? task.tags : [];
     const tagSet = new Set(currentTags.map((t) => String(t).toLowerCase()));
@@ -3229,12 +3239,20 @@
   }
 
   /** When a task is unsnapped from a region, remove region addTags from the task if removeTagsOnUnsnap is set. */
-  async function onTaskUnsnappedFromRegion(taskId, region) {
+  async function onTaskUnsnappedFromRegion(taskId, region, boardIdForCache) {
     if (!taskId || !region) return;
     if (!region.removeTagsOnUnsnap) return;
     const addTags = Array.isArray(region.addTags) ? region.addTags : [];
     if (addTags.length === 0) return;
-    const task = getTaskForBoard(currentBoardId, taskId);
+    const boardId = boardIdForCache != null ? boardIdForCache : currentBoardId;
+    let task = boardId ? getTaskForBoard(boardId, taskId) : getTaskById(taskId);
+    if (!task || !Array.isArray(task.tags)) {
+      try {
+        task = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+      } catch (_) {
+        return;
+      }
+    }
     if (!task) return;
     const currentTags = Array.isArray(task.tags) ? task.tags : [];
     const removeSet = new Set(addTags.map((t) => String(t).toLowerCase()));
@@ -3307,7 +3325,7 @@
       r.lines = r.lines.filter((line) => qualifyingIds.has(String(line.taskId)));
       const afterIds = new Set((r.lines || []).map((line) => String(line.taskId)));
       beforeIds.forEach((taskId) => {
-        if (!afterIds.has(taskId)) onTaskUnsnappedFromRegion(taskId, r);
+        if (!afterIds.has(taskId)) onTaskUnsnappedFromRegion(taskId, r, boardId);
       });
       if (r.lines.length !== beforeIds.size) regionsChanged = true;
     });
@@ -3328,6 +3346,60 @@
       x: (rect.width / 2 - boardPanZoom.x) / scale,
       y: (rect.height / 2 - boardPanZoom.y) / scale
     };
+  }
+  /** Viewport in canvas coordinates: { left, top, width, height }. */
+  function getBoardViewportBounds() {
+    if (!boardViewCanvasEl) return { left: 0, top: 0, width: 400, height: 300 };
+    const rect = boardViewCanvasEl.getBoundingClientRect();
+    const scale = boardPanZoom.scale;
+    return {
+      left: -boardPanZoom.x / scale,
+      top: -boardPanZoom.y / scale,
+      width: rect.width / scale,
+      height: rect.height / scale
+    };
+  }
+  /** Obstacles = cards (x,y,width,height) and regions (x,y,w,h). Returns first position in viewport where a rect of size cardW×cardH fits with gap from obstacles, or viewport center. */
+  function findEmptySpotInViewport(boardId, cardW, cardH) {
+    const gap = 12;
+    const step = 40;
+    const bounds = getBoardViewportBounds();
+    const obstacles = [];
+    getBoardCards(boardId).forEach((c) => {
+      obstacles.push({
+        left: (c.x || 0) - gap,
+        top: (c.y || 0) - gap,
+        width: (c.width || BOARD_DEFAULT_CARD_WIDTH) + 2 * gap,
+        height: (c.height || BOARD_DEFAULT_CARD_HEIGHT) + 2 * gap
+      });
+    });
+    (getBoardRegions(boardId) || []).forEach((r) => {
+      const rw = r.w || 200;
+      const rh = r.h || 200;
+      obstacles.push({
+        left: (r.x || 0) - gap,
+        top: (r.y || 0) - gap,
+        width: rw + 2 * gap,
+        height: rh + 2 * gap
+      });
+    });
+    function overlaps(aLeft, aTop, aW, aH) {
+      return obstacles.some((o) => !(aLeft + aW < o.left || o.left + o.width < aLeft || aTop + aH < o.top || o.top + o.height < aTop));
+    }
+    const padding = 16;
+    let top = Math.floor((bounds.top + padding) / step) * step;
+    const bottom = bounds.top + bounds.height - cardH - padding;
+    const rightLimit = bounds.left + bounds.width - cardW - padding;
+    while (top <= bottom) {
+      let left = Math.floor((bounds.left + padding) / step) * step;
+      while (left <= rightLimit) {
+        if (!overlaps(left, top, cardW, cardH)) return { x: Math.round(left), y: Math.round(top) };
+        left += step;
+      }
+      top += step;
+    }
+    const center = getBoardViewportCenter();
+    return { x: Math.round(center.x - cardW / 2), y: Math.round(center.y - cardH / 2) };
   }
   function setBoardZoomTowardPoint(clientX, clientY, newScale) {
     if (!boardViewCanvasEl) return;
@@ -3682,10 +3754,10 @@
           li.addEventListener('click', () => {
             const taskId = li.dataset.taskId;
             const cards = getBoardCards(boardId);
-            const center = getBoardViewportCenter();
-            const w = BOARD_DEFAULT_CARD_WIDTH;
-            const h = BOARD_DEFAULT_CARD_HEIGHT;
-            const newCard = { taskId, x: Math.round(center.x - w / 2), y: Math.round(center.y - h / 2), width: w, height: h };
+            const w = BOARD_MIN_CARD_WIDTH;
+            const h = BOARD_MIN_CARD_HEIGHT;
+            const pos = findEmptySpotInViewport(boardId, w, h);
+            const newCard = { taskId, x: pos.x, y: pos.y, width: w, height: h };
             cards.push(newCard);
             setBoardCards(boardId, cards);
             renderBoardCards(boardId);
@@ -3820,7 +3892,7 @@
       const regions = getBoardRegions(currentBoardId);
       const doomed = regions.find((r) => r.id === editingRegionId);
       if (doomed && (doomed.lines || []).length) {
-        doomed.lines.forEach((line) => { if (line.taskId) onTaskUnsnappedFromRegion(line.taskId, doomed); });
+        doomed.lines.forEach((line) => { if (line.taskId) onTaskUnsnappedFromRegion(line.taskId, doomed, currentBoardId); });
       }
       const next = regions.filter((r) => r.id !== editingRegionId);
       setBoardRegions(currentBoardId, next);
@@ -4044,7 +4116,7 @@
         dragGhost.style.top = (ev.clientY - rect.height / 2) + 'px';
         dragGhost.style.left = (ev.clientX - rect.width / 2) + 'px';
       }
-      function onUp(ev) {
+      async function onUp(ev) {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         if (dragGhost && dragGhost.parentNode) dragGhost.parentNode.removeChild(dragGhost);
@@ -4061,7 +4133,10 @@
           if (dropCanvasX >= rx && dropCanvasX <= rx + rw && dropCanvasY >= ry && dropCanvasY <= ry + rh) { targetRegionIndex = i; break; }
         }
         const fromRegion = regions[regionIndex];
-        if (targetRegionIndex < 0 || targetRegionIndex !== regionIndex) onTaskUnsnappedFromRegion(taskId, fromRegion);
+        const droppingIntoOtherRegion = targetRegionIndex >= 0 && targetRegionIndex !== regionIndex;
+        if (targetRegionIndex < 0 || droppingIntoOtherRegion) {
+          await onTaskUnsnappedFromRegion(taskId, fromRegion, boardId);
+        }
         fromRegion.lines = fromRegion.lines.filter((_, i) => i !== lineIndex);
         if (targetRegionIndex >= 0) {
           if (targetRegionIndex === regionIndex) {
@@ -4075,7 +4150,7 @@
             fromRegion.lines.splice(insertIdx, 0, { taskId });
           } else {
             regions[targetRegionIndex].lines.push({ taskId });
-            applyRegionSettingsToTask(taskId, regions[targetRegionIndex], boardId);
+            await applyRegionSettingsToTask(taskId, regions[targetRegionIndex], boardId, { useFreshTask: true });
           }
         } else {
           const cards = getBoardCards(boardId);
@@ -4364,7 +4439,6 @@
       archiveBtn.addEventListener('click', (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!confirm('Remove this task from the board? It will appear in the "Add task" list again.')) return;
         const cards = getBoardCards(boardId);
         cards.splice(cardIndex, 1);
         setBoardCards(boardId, cards);
@@ -6101,8 +6175,8 @@
       { op: 'equals', label: 'equals' }, { op: 'greater_than', label: '>' }, { op: 'less_than', label: '<' }, { op: 'greater_or_equal', label: '>=' }, { op: 'less_or_equal', label: '<=' }
     ]},
     { field: 'flagged', label: 'Focused', valueType: 'flagged', operators: [{ op: 'equals', label: 'is' }] },
-    { field: 'tags', label: 'Tags', valueType: 'tags', operators: [{ op: 'is_empty', label: 'is empty' }, { op: 'includes', label: 'includes' }, { op: 'excludes', label: 'excludes' }] },
-    { field: 'project', label: 'Project', valueType: 'projects', operators: [{ op: 'is_empty', label: 'is empty' }, { op: 'includes', label: 'includes' }, { op: 'excludes', label: 'excludes' }] },
+    { field: 'tags', label: 'Tags', valueType: 'tags', operators: [{ op: 'is_empty', label: 'has no tags' }, { op: 'includes', label: 'is tagged' }, { op: 'excludes', label: 'is not tagged' }] },
+    { field: 'project', label: 'Project', valueType: 'projects', operators: [{ op: 'is_empty', label: 'is empty' }, { op: 'includes', label: 'is in' }, { op: 'excludes', label: 'is not in' }] },
   ];
   const LIST_SORT_FIELDS = [
     { key: 'due_date', label: 'Due date' }, { key: 'available_date', label: 'Available date' }, { key: 'created_at', label: 'Created' }, { key: 'completed_at', label: 'Completed' }, { key: 'title', label: 'Name' }, { key: 'priority', label: 'Priority' }, { key: 'status', label: 'Status' }
@@ -6124,7 +6198,7 @@
         ? `<div class="filter-value-wrap"><select class="list-filter-value"><option value="incomplete" ${valueStr === 'incomplete' ? 'selected' : ''}>Incomplete</option><option value="complete" ${valueStr === 'complete' ? 'selected' : ''}>Complete</option></select></div>`
         : fieldConfig.valueType === 'flagged'
           ? `<div class="filter-value-wrap"><select class="list-filter-value"><option value="false" ${valueStr === 'false' || valueStr === '0' ? 'selected' : ''}>No</option><option value="true" ${valueStr === 'true' || valueStr === '1' ? 'selected' : ''}>Yes</option></select></div>`
-          : `<div class="filter-value-wrap"><input type="text" class="list-filter-value" placeholder="${fieldConfig.valueType === 'tags' ? 'comma-separated tags' : fieldConfig.valueType === 'number' ? '0-3' : 'value'}" value="${(valueStr || '').replace(/"/g, '&quot;')}" /></div>`;
+          : `<div class="filter-value-wrap"><input type="text" class="list-filter-value" placeholder="${fieldConfig.valueType === 'tags' ? 'e.g. work, urgent' : fieldConfig.valueType === 'projects' ? 'comma-separated short ids, e.g. 1off, work' : fieldConfig.valueType === 'number' ? '0-3' : 'value'}" value="${(valueStr || '').replace(/"/g, '&quot;')}" /></div>`;
     return `<div class="list-settings-filter-row" data-field="${fieldConfig.field}">
       <select class="list-filter-field" aria-label="Field">${fieldOpts}</select>
       <select class="list-filter-op" aria-label="Operator">${opOpts}</select>
@@ -6329,7 +6403,7 @@
               ? `<select class="list-filter-value"><option value="incomplete">Incomplete</option><option value="complete">Complete</option></select>`
               : f.valueType === 'flagged'
                 ? `<select class="list-filter-value"><option value="false">No</option><option value="true">Yes</option></select>`
-                : `<input type="text" class="list-filter-value" placeholder="${f.valueType === 'tags' ? 'comma-separated tags' : f.valueType === 'number' ? '0-3' : 'value'}" />`;
+                : `<input type="text" class="list-filter-value" placeholder="${f.valueType === 'tags' ? 'e.g. work, urgent' : f.valueType === 'projects' ? 'short ids: 1off, work' : f.valueType === 'number' ? '0-3' : 'value'}" />`;
           valueWrap.innerHTML = newValueHtml;
           bindDatePickerInRow(row);
         };

@@ -255,7 +255,9 @@ def list_tasks(
     tags: list[str] | None = None,
     tag_mode: str = "any",
     due_by: str | None = None,
+    due_before: str | None = None,
     available_by: str | None = None,
+    available_by_required: bool = False,
     available_or_due_by: str | None = None,
     completed_by: str | None = None,
     completed_after: str | None = None,
@@ -268,7 +270,9 @@ def list_tasks(
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """List tasks with optional filters. Returns minimal task dicts (no projects/tags/deps).
-    due_by, available_by, available_or_due_by, completed_by, completed_after are ISO date strings (YYYY-MM-DD).
+    due_by, due_before, available_by, available_or_due_by, completed_by, completed_after are ISO date strings (YYYY-MM-DD).
+    due_before: tasks with due_date strictly before this date (exclusive).
+    available_by_required: if True with available_by, only tasks that have available_date set and <= date (excludes NULL; "available today" = on my plate today).
     title_contains: substring match on title (case-insensitive).
     search: substring match on title OR description (case-insensitive).
     q: match tag exactly OR title OR description OR notes (substring). Use for combined/tag search.
@@ -332,8 +336,14 @@ def list_tasks(
         if due_by:
             sql += " AND due_date IS NOT NULL AND date(due_date) <= date(?)"
             params.append(due_by)
+        if due_before:
+            sql += " AND due_date IS NOT NULL AND date(due_date) < date(?)"
+            params.append(due_before)
         if available_by:
-            sql += " AND (available_date IS NULL OR date(available_date) <= date(?))"
+            if available_by_required:
+                sql += " AND available_date IS NOT NULL AND date(available_date) <= date(?)"
+            else:
+                sql += " AND (available_date IS NULL OR date(available_date) <= date(?))"
             params.append(available_by)
         if available_or_due_by:
             sql += " AND ((available_date IS NULL OR date(available_date) <= date(?)) OR (due_date IS NULL OR date(due_date) <= date(?)))"

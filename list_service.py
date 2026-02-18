@@ -322,21 +322,21 @@ def _compile_condition(cond: dict[str, Any], params: list[Any], tz_name: str, co
     if field == "tags":
         if op == "is_empty":
             return "NOT EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id)"
-        if op in ("includes", "excludes") and isinstance(value, list) and value:
+        if op in ("includes", "excludes", "is", "is_not") and isinstance(value, list) and value:
             tags = [str(v).strip() for v in value if str(v).strip()]
             if not tags:
-                return "1=1" if op == "excludes" else "1=0"
-            placeholders = ",".join("?" * len(tags))
+                return "1=1" if op in ("excludes", "is_not") else "1=0"
+            or_parts = " OR ".join(["LOWER(tt.tag) = LOWER(?)" for _ in tags])
             params.extend(tags)
-            if op == "includes":
-                return f"EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag IN ({placeholders}))"
-            return f"NOT EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag IN ({placeholders}))"
+            if op in ("includes", "is"):
+                return f"EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND ({or_parts}))"
+            return f"NOT EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND ({or_parts}))"
         return "1=0"
 
     if field == "project":
         if op == "is_empty":
             return "NOT EXISTS (SELECT 1 FROM task_projects tp WHERE tp.task_id = t.id)"
-        if op in ("includes", "excludes") and value is not None:
+        if op in ("includes", "excludes", "is", "is_not") and value is not None:
             ids_or_short_ids = value if isinstance(value, list) else [value]
             project_ids: list[str] = []
             for x in ids_or_short_ids:
@@ -347,10 +347,10 @@ def _compile_condition(cond: dict[str, Any], params: list[Any], tz_name: str, co
                 if row:
                     project_ids.append(row[0])
             if not project_ids:
-                return "1=1" if op == "excludes" else "1=0"
+                return "1=1" if op in ("excludes", "is_not") else "1=0"
             placeholders = ",".join("?" * len(project_ids))
             params.extend(project_ids)
-            if op == "includes":
+            if op in ("includes", "is"):
                 return f"EXISTS (SELECT 1 FROM task_projects tp WHERE tp.task_id = t.id AND tp.project_id IN ({placeholders}))"
             return f"NOT EXISTS (SELECT 1 FROM task_projects tp WHERE tp.task_id = t.id AND tp.project_id IN ({placeholders}))"
         return "1=0"
@@ -477,8 +477,11 @@ def run_list(
             if tid:
                 projs = conn.execute("SELECT project_id FROM task_projects WHERE task_id = ?", (tid,)).fetchall()
                 t["projects"] = [p[0] for p in projs]
+                tags_rows = conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (tid,)).fetchall()
+                t["tags"] = [r[0] for r in tags_rows]
             else:
                 t["projects"] = []
+                t["tags"] = []
 
         sort_def = lst.get("sort_definition")
         if isinstance(sort_def, str):

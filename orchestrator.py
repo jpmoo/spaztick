@@ -135,11 +135,13 @@ Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume th
 AVAILABLE_TOOLS_SECTION = """
 Available tools: task_create, task_list, task_when, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists, tag_list, tag_rename, tag_delete.
 
+task_create: Use when the user says "add task", "create task", "new task" with a title. Required: title. Optional: due_date, available_date, project or short_id (single project by short_id, e.g. hous, 1off), projects (array of short_ids), tags (array), priority, description, notes, flagged. You MAY include as many optional parameters as the user provides. Parse the full phrase: "add task roast coffee due today in hous" -> title "roast coffee", due_date "today", project "hous". "create task buy milk in 1off" -> title "buy milk", short_id "1off". Use natural language for dates (today, tomorrow, next week). Output: {"name": "task_create", "parameters": {"title": "...", "due_date": "today", "short_id": "hous"}} with every option the user mentioned.
+
 CRITICAL: When the user asks for TASKS with a date or time bound (due, available, overdue, this week, next week, today, tomorrow, within the next N days), use task_when—NOT task_list and NEVER tag_list. tag_list returns tag names and counts; use tag_list ONLY when the user explicitly asks to "list tags", "show tags", "what tags", or "tag counts". Any request for "tasks due X", "tasks available Y", "overdue tasks", "give me tasks due within the next week" is task_when.
 
-task_when: Use for ANY date-bounded task question. Single required parameter: when (string). You CAN and SHOULD combine when with other filters: tag, tags (array), tag_mode ("any"/"all"), short_id, project_ids, project_mode, sort_by, flagged, priority (3=high/top, 2=medium high, 1=medium low, 0=low). "available now" means available today. The "when" expression is parsed automatically.
-Output format: {"name": "task_when", "parameters": {"when": "..."}} and add any optional filters the user asked for (tag, tags, priority, short_id, etc.).
-Examples: "Give me all of my tasks due within the next week" -> {"name": "task_when", "parameters": {"when": "due within the next week"}}. "Tasks due within the next 5 days that are tagged Robert" -> {"name": "task_when", "parameters": {"when": "due in 5 days", "tag": "Robert"}}. "Tasks available now that are top priority" -> {"name": "task_when", "parameters": {"when": "available now", "priority": 3}}. "Tasks due today in project 1off" -> {"name": "task_when", "parameters": {"when": "due today", "short_id": "1off"}}. "Overdue tasks" -> {"name": "task_when", "parameters": {"when": "overdue"}}.
+task_when: Use for ANY date-bounded task question. Single required parameter: when (string). Natural-language dates are parsed broadly: "due Friday" / "due by Friday" (on or before that day), "due before next Friday" (strictly before), "available today" / "available now" (only tasks that have an available_date on or before today—i.e. on my plate today), "available tomorrow", "overdue", "due in 5 days", "next week", "end of month", etc. Combine when with other filters: tag, tags, short_id, priority (3=top), etc.
+Output format: {"name": "task_when", "parameters": {"when": "..."}} and add optional filters.
+Examples: "Tasks due Friday" -> {"name": "task_when", "parameters": {"when": "due Friday"}}. "Tasks due before next Friday" -> {"name": "task_when", "parameters": {"when": "due before next Friday"}}. "Tasks available today" -> {"name": "task_when", "parameters": {"when": "available today"}}. "Tasks due within the next 5 days tagged Robert" -> {"name": "task_when", "parameters": {"when": "due in 5 days", "tag": "Robert"}}. "Overdue tasks" -> {"name": "task_when", "parameters": {"when": "overdue"}}.
 
 task_list: Use when the user asks for tasks WITHOUT a date bound (e.g. "list my tasks", "show tasks in 1off", "flagged tasks") or when they want completed/by date filters (completed_by, completed_after). For any "due X", "available X", "overdue", "this week", "next week" use task_when instead.
 Never include completed tasks unless the user explicitly asks for them (e.g. "completed", "done", "finished") or asks for "all" tasks. When no status is given, always use status "incomplete". Do not send status "complete" unless the user clearly asked for completed/done tasks or "all tasks".
@@ -348,7 +350,7 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
                 out["due_by"] = (d - timedelta(days=1)).isoformat()
             except (ValueError, TypeError):
                 pass
-    for key in ("due_by", "available_by", "available_or_due_by", "completed_by", "completed_after"):
+    for key in ("due_by", "due_before", "available_by", "available_or_due_by", "completed_by", "completed_after"):
         if key in out:
             continue  # already set (e.g. from overdue)
         val = params.get(key)
@@ -357,6 +359,8 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
         resolved = resolve_relative_date(str(val).strip(), tz_name)
         if resolved:
             out[key] = resolved
+    if params.get("available_by_required") in (True, 1) or (isinstance(params.get("available_by_required"), str) and str(params.get("available_by_required")).strip().lower() in ("true", "1", "yes")):
+        out["available_by_required"] = True
     if params.get("title_contains") is not None and str(params["title_contains"]).strip():
         out["title_contains"] = str(params["title_contains"]).strip()
     if params.get("sort_by") and str(params["sort_by"]).strip():
@@ -377,43 +381,24 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
 def _parse_when_to_task_list_params(when: str, tz_name: str = "UTC") -> dict[str, Any]:
     """
     Parse a natural-language "when" expression into task_list date/overdue params.
-    Used by task_when. Returns a dict with at most one of: due_by, available_by,
-    available_or_due_by, overdue. Examples:
-      "due within the next week" -> {due_by: "YYYY-MM-DD"}
-      "available tomorrow" -> {available_by: "YYYY-MM-DD"}
-      "overdue" -> {overdue: true}
+    Uses date_utils.parse_date_condition for broad NL support: "due Friday", "due before next Friday",
+    "available today" (with available_by_required so only tasks with an available date on or before today), etc.
     """
+    from date_utils import parse_date_condition
+    out = parse_date_condition(when, tz_name)
+    if out:
+        return out
+    # Fallback: try legacy resolve_relative_date for bare phrases
     from date_utils import resolve_relative_date
-    out: dict[str, Any] = {}
-    if not when or not str(when).strip():
-        return out
     raw = str(when).strip().lower()
-    # Overdue: "overdue", "overdue tasks"
-    if raw == "overdue" or (raw.startswith("overdue") and "due" not in raw[7:12]):
-        out["overdue"] = True
-        return out
-    # Normalize common phrases for date resolution (strip "due "/"available ")
     date_expr = re.sub(r"^(due|available)\s+", "", raw).strip()
     date_expr = re.sub(r"^due\s+within\s+", "within ", date_expr)
-    date_expr = re.sub(r"^available\s+within\s+", "within ", date_expr)
     resolved = resolve_relative_date(date_expr, tz_name)
-    if not resolved:
-        return out
-    # "available X" -> available_by
-    if raw.startswith("available"):
-        out["available_by"] = resolved
-        return out
-    # "due or available X" / "available or due X" -> available_or_due_by
-    if "due or available" in raw or "available or due" in raw:
-        out["available_or_due_by"] = resolved
-        return out
-    # "due X" (including "due within the next week", "due today")
-    if raw.startswith("due") or raw == date_expr:
-        out["due_by"] = resolved
-        return out
-    # Bare date phrase (e.g. "today", "next week") -> assume due_by
-    out["due_by"] = resolved
-    return out
+    if resolved:
+        if raw.startswith("available"):
+            return {"available_by": resolved, "available_by_required": False}
+        return {"due_by": resolved}
+    return {}
 
 
 def _parse_confirm(params: dict[str, Any]) -> bool:
@@ -454,6 +439,17 @@ def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(params["projects"], list):
             raise ValueError("projects must be an array")
         out["projects"] = [str(x) for x in params["projects"] if str(x).strip()]
+    if "project" in params and params["project"] is not None and str(params["project"]).strip():
+        ref = str(params["project"]).strip()
+        if ref.lower() != "inbox":
+            out["projects"] = out.get("projects") or []
+            out["projects"].append(ref)
+    if "short_id" in params and params["short_id"] is not None and str(params["short_id"]).strip():
+        ref = str(params["short_id"]).strip()
+        if ref.lower() != "inbox":
+            out["projects"] = out.get("projects") or []
+            if ref not in out["projects"]:
+                out["projects"].append(ref)
     if "tags" in params and params["tags"] is not None:
         if not isinstance(params["tags"], list):
             raise ValueError("tags must be an array")
@@ -604,6 +600,39 @@ def _extract_list_identifier_from_message(user_message: str) -> str | None:
     return None
 
 
+def _infer_add_task_from_message(user_message: str) -> tuple[str, dict[str, Any]] | None:
+    """Parse 'add task X due Y in Z' style messages into task_create params. Returns (task_create, params) or None."""
+    if not user_message or not isinstance(user_message, str):
+        return None
+    raw = user_message.strip()
+    m = re.search(r"^(?:add|create)\s+task\s+(.+)$", raw, re.I)
+    if not m:
+        return None
+    rest = m.group(1).strip()
+    if not rest:
+        return None
+    title = rest
+    due_phrase = None
+    project = None
+    in_m = re.search(r"\s+in\s+([a-z0-9_-]+)\s*$", rest, re.I)
+    if in_m:
+        project = in_m.group(1).strip()
+        rest = rest[: in_m.start()].strip()
+    due_m = re.search(r"\s+due\s+(.+)$", rest, re.I)
+    if due_m:
+        due_phrase = due_m.group(1).strip()
+        rest = rest[: due_m.start()].strip()
+    title = rest.strip()
+    if not title:
+        return None
+    params: dict[str, Any] = {"title": title}
+    if due_phrase:
+        params["due_date"] = due_phrase
+    if project:
+        params["short_id"] = project
+    return ("task_create", params)
+
+
 def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any]] | None:
     """If the user message is clearly a list/show tasks or list/show projects command, return (tool_name, params) so we can run the tool even when the model replied conversationally. Conservative: only list/show tasks/projects (bare or with trailing filter words)."""
     if not user_message or not isinstance(user_message, str):
@@ -611,6 +640,10 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
     msg = user_message.strip().lower()
     if not msg:
         return None
+    # Add/create task with inline details (e.g. "add task roast coffee due today in hous")
+    inferred = _infer_add_task_from_message(user_message)
+    if inferred:
+        return inferred
     # View/show a specific list by name or short_id (must come before generic "show lists")
     list_id = _extract_list_identifier_from_message(user_message)
     if list_id:
@@ -1026,12 +1059,14 @@ def run_orchestrator(
     model: str,
     system_prefix: str,
     history: list[dict[str, str]] | None = None,
-) -> tuple[str, bool, dict[str, Any] | None]:
+) -> tuple[str, bool, dict[str, Any] | None, bool]:
     """
-    Run the orchestrator. Returns (response_text, tool_used, pending_confirm).
+    Run the orchestrator. Returns (response_text, tool_used, pending_confirm, used_fallback).
     pending_confirm is set when delete_task/delete_project was run without confirm (caller can execute it when user says "yes").
     tool_used is True when a mutating tool was successfully executed (caller should clear history). For delete_* without confirm, tool_used is False.
+    used_fallback is True when the tool was inferred from the user message (quick-add) rather than chosen by the AI.
     """
+    used_fallback = False
     url = f"{ollama_base_url.rstrip('/')}/api/generate"
     # When history is empty (caller can disable conversation history), only the current user message is sent.
     history_list = history or []
@@ -1051,7 +1086,7 @@ def run_orchestrator(
         intent = _parse_intent(intent_response)
     except Exception as e:
         logger.exception("Intent router call failed")
-        return (f"Error calling the model: {e}", False, None)
+        return (f"Error calling the model: {e}", False, None, used_fallback)
     logger.info("Intent router classified as: %s", intent)
 
     if intent == "CHAT":
@@ -1060,9 +1095,9 @@ def run_orchestrator(
             response_text = _call_ollama(CHAT_MODE_PROMPT, chat_prompt, url, model)
         except Exception as e:
             logger.exception("Chat mode call failed")
-            return (f"Error calling the model: {e}", False, None)
+            return (f"Error calling the model: {e}", False, None, used_fallback)
         text = response_text.strip() or "I didn't understand. You can ask me to list or create tasks and projects."
-        return (text, False, None)
+        return (text, False, None, used_fallback)
 
     # Step 2: TOOL — get tool call from orchestrator, then execute
     full_system = (system_prefix.strip() + "\n\n" + TOOL_ORCHESTRATOR_PROMPT).strip() if system_prefix else TOOL_ORCHESTRATOR_PROMPT
@@ -1072,7 +1107,7 @@ def run_orchestrator(
         response_text = _call_ollama(full_system, tool_prompt, url, model)
     except Exception as e:
         logger.exception("Tool orchestrator call failed")
-        return (f"Error calling the model: {e}", False, None)
+        return (f"Error calling the model: {e}", False, None, used_fallback)
 
     parsed = _parse_tool_call(response_text)
     if parsed:
@@ -1082,19 +1117,20 @@ def run_orchestrator(
         if inferred:
             logger.info("LLM did not return tool call; inferred from user message: name=%s parameters=%s", inferred[0], json.dumps(inferred[1]))
             parsed = inferred
+            used_fallback = True
         else:
             logger.info("LLM response is not a tool call, returning as-is")
     if not parsed:
         text = response_text.strip() or "I didn't understand. You can ask me to create or list tasks or projects."
         if _looks_like_json(text):
-            return ("I didn't understand. Try: \"Create a task: [title]\", \"List my tasks\", \"Delete task 1\", \"Create a project: [name]\", \"List my projects\", or \"Delete project 1off\".", False, None)
-        return (text, False, None)
+            return ("I didn't understand. Try: \"Create a task: [title]\", \"List my tasks\", \"Delete task 1\", \"Create a project: [name]\", \"List my projects\", or \"Delete project 1off\".", False, None, used_fallback)
+        return (text, False, None, used_fallback)
 
     name, params = parsed
     if name == "project_info":
         short_id = (params.get("short_id") or params.get("project_id") or "").strip()
         if not short_id:
-            return ("project_info requires short_id (the project's friendly id, e.g. 1off or work).", False, None)
+            return ("project_info requires short_id (the project's friendly id, e.g. 1off or work).", False, None, used_fallback)
         tz_name = "UTC"
         try:
             from config import load as load_config
@@ -1106,88 +1142,90 @@ def run_orchestrator(
             from task_service import list_tasks as svc_list_tasks, get_tasks_that_depend_on
             project = get_project_by_short_id(short_id)
         except Exception as e:
-            return (f"Error loading project: {e}", False, None)
+            return (f"Error loading project: {e}", False, None, used_fallback)
         if not project:
-            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None)
+            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None, used_fallback)
         try:
             tasks = svc_list_tasks(project_id=project["id"], limit=500)
             tasks_with_subtasks: list[tuple[dict[str, Any], list[dict[str, Any]]]] = [
                 (t, get_tasks_that_depend_on(t["id"])) for t in tasks
             ]
-            return (_format_project_info_text(project, tasks_with_subtasks, tz_name), True, None)
+            return (_format_project_info_text(project, tasks_with_subtasks, tz_name), True, None, used_fallback)
         except Exception as e:
-            return (f"Error loading project tasks: {e}", False, None)
+            return (f"Error loading project tasks: {e}", False, None, used_fallback)
     if name == "project_list":
         try:
             from project_service import list_projects
             projects = list_projects(status="active")
         except Exception as e:
-            return (f"Error listing projects: {e}", False, None)
-        return (_format_project_list_for_telegram(projects), True, None)
+            return (f"Error listing projects: {e}", False, None, used_fallback)
+        return (_format_project_list_for_telegram(projects), True, None, used_fallback)
     if name == "project_archived":
         try:
             from project_service import list_projects
             projects = list_projects(status="archived")
         except Exception as e:
-            return (f"Error listing archived projects: {e}", False, None)
-        return (_format_archived_project_list_for_telegram(projects, tz_name), True, None)
+            return (f"Error listing archived projects: {e}", False, None, used_fallback)
+        return (_format_archived_project_list_for_telegram(projects, tz_name), True, None, used_fallback)
     if name == "project_archive":
         short_id = (params.get("short_id") or params.get("project_id") or "").strip()
         if not short_id:
-            return ("project_archive requires short_id (e.g. 1off or work).", False, None)
+            return ("project_archive requires short_id (e.g. 1off or work).", False, None, used_fallback)
         try:
             from project_service import get_project_by_short_id, update_project
             project = get_project_by_short_id(short_id)
         except Exception as e:
-            return (f"Error looking up project: {e}", False, None)
+            return (f"Error looking up project: {e}", False, None, used_fallback)
         if not project:
-            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None)
+            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None, used_fallback)
         if project.get("status") == "archived":
-            return (f"Project {short_id} is already archived.", True, None)
+            return (f"Project {short_id} is already archived.", True, None, used_fallback)
         if not _parse_confirm(params):
             name_str = (project.get("name") or "").strip() or short_id
             return (
                 f"Archive project {short_id} ({name_str})? It will be hidden from the project list until you unarchive it. Reply \"yes\" to confirm.",
                 False,
                 {"tool": "project_archive", "short_id": short_id},
+                used_fallback,
             )
         try:
             update_project(project["id"], status="archived")
         except ValueError as e:
-            return (str(e), False, None)
+            return (str(e), False, None, used_fallback)
         except Exception as e:
-            return (f"Error archiving project: {e}", False, None)
-        return (f"Project {short_id} archived. It is now hidden from the project list.", True, None)
+            return (f"Error archiving project: {e}", False, None, used_fallback)
+        return (f"Project {short_id} archived. It is now hidden from the project list.", True, None, used_fallback)
     if name == "project_unarchive":
         short_id = (params.get("short_id") or params.get("project_id") or "").strip()
         if not short_id:
-            return ("project_unarchive requires short_id (e.g. 1off or work).", False, None)
+            return ("project_unarchive requires short_id (e.g. 1off or work).", False, None, used_fallback)
         try:
             from project_service import get_project_by_short_id, update_project
             project = get_project_by_short_id(short_id)
         except Exception as e:
-            return (f"Error looking up project: {e}", False, None)
+            return (f"Error looking up project: {e}", False, None, used_fallback)
         if not project:
-            return (f"No project with id \"{short_id}\". List archived projects to see short_ids.", False, None)
+            return (f"No project with id \"{short_id}\". List archived projects to see short_ids.", False, None, used_fallback)
         if project.get("status") != "archived":
-            return (f"Project {short_id} is not archived.", True, None)
+            return (f"Project {short_id} is not archived.", True, None, used_fallback)
         if not _parse_confirm(params):
             name_str = (project.get("name") or "").strip() or short_id
             return (
                 f"Unarchive project {short_id} ({name_str})? It will appear in the project list again. Reply \"yes\" to confirm.",
                 False,
                 {"tool": "project_unarchive", "short_id": short_id},
+                used_fallback,
             )
         try:
             update_project(project["id"], status="active")
         except Exception as e:
-            return (f"Error unarchiving project: {e}", False, None)
-        return (f"Project {short_id} unarchived. It is back in the project list.", True, None)
+            return (f"Error unarchiving project: {e}", False, None, used_fallback)
+        return (f"Project {short_id} unarchived. It is back in the project list.", True, None, used_fallback)
     if name == "project_create":
         try:
             validated = _validate_project_create(params)
         except ValueError as e:
-            return (f"Invalid project_create parameters: {e}", False, None)
+            return (f"Invalid project_create parameters: {e}", False, None, used_fallback)
         try:
             from project_service import create_project
             project = create_project(
@@ -1196,19 +1234,19 @@ def run_orchestrator(
                 status=validated.get("status", "active"),
             )
         except Exception as e:
-            return (f"Error creating project: {e}", False, None)
-        return (_format_project_created_for_telegram(project), True, None)
+            return (f"Error creating project: {e}", False, None, used_fallback)
+        return (_format_project_created_for_telegram(project), True, None, used_fallback)
     if name == "delete_project":
         short_id = (params.get("short_id") or params.get("project_id") or "").strip()
         if not short_id:
-            return ("delete_project requires short_id (the project's friendly id, e.g. 1off or work).", False, None)
+            return ("delete_project requires short_id (the project's friendly id, e.g. 1off or work).", False, None, used_fallback)
         try:
             from project_service import get_project_by_short_id, delete_project
             project = get_project_by_short_id(short_id)
         except Exception as e:
-            return (f"Error looking up project: {e}", False, None)
+            return (f"Error looking up project: {e}", False, None, used_fallback)
         if not project:
-            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None)
+            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None, used_fallback)
         if not _parse_confirm(params):
             name_str = (project.get("name") or "").strip() or short_id
             return (
@@ -1216,35 +1254,36 @@ def run_orchestrator(
                 "some tasks may end up with no project assignments. Reply \"yes\" to confirm.",
                 False,
                 {"tool": "delete_project", "short_id": short_id},
+                used_fallback,
             )
         try:
             delete_project(project["id"])
         except Exception as e:
-            return (f"Error deleting project: {e}", False, None)
-        return (f"Project {short_id} deleted. It has been removed from all tasks.", True, None)
+            return (f"Error deleting project: {e}", False, None, used_fallback)
+        return (f"Project {short_id} deleted. It has been removed from all tasks.", True, None, used_fallback)
     if name == "delete_task":
         num = _parse_task_number(params)
         if num is None:
-            return ("delete_task requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None)
+            return ("delete_task requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None, used_fallback)
         try:
             from task_service import get_task_by_number, delete_task
             task = get_task_by_number(num)
         except Exception as e:
-            return (f"Error looking up task: {e}", False, None)
+            return (f"Error looking up task: {e}", False, None, used_fallback)
         if not task:
-            return (f"No task {num}. List tasks to see numbers.", False, None)
+            return (f"No task {num}. List tasks to see numbers.", False, None, used_fallback)
         if not _parse_confirm(params):
             title = (task.get("title") or "").strip() or "(no title)"
-            return (f"Delete task {num} ({title})? This cannot be undone. Reply \"yes\" to confirm.", False, {"tool": "delete_task", "number": num})
+            return (f"Delete task {num} ({title})? This cannot be undone. Reply \"yes\" to confirm.", False, {"tool": "delete_task", "number": num}, used_fallback)
         try:
             delete_task(task["id"])
         except Exception as e:
-            return (f"Error deleting task: {e}", False, None)
-        return (f"Task {num} deleted.", True, None)
+            return (f"Error deleting task: {e}", False, None, used_fallback)
+        return (f"Task {num} deleted.", True, None, used_fallback)
     if name == "task_info":
         num = _parse_task_number(params)
         if num is None:
-            return ("task_info requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None)
+            return ("task_info requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None, used_fallback)
         tz_name = "UTC"
         try:
             from config import load as load_config
@@ -1255,9 +1294,9 @@ def run_orchestrator(
             from task_service import get_task_by_number, get_task, get_tasks_that_depend_on
             task = get_task_by_number(num)
         except Exception as e:
-            return (f"Error loading task: {e}", False, None)
+            return (f"Error loading task: {e}", False, None, used_fallback)
         if not task:
-            return (f"No task {num}. List tasks to see numbers.", False, None)
+            return (f"No task {num}. List tasks to see numbers.", False, None, used_fallback)
         try:
             from project_service import get_project
             parent_tasks: list[dict[str, Any]] = []
@@ -1273,9 +1312,9 @@ def run_orchestrator(
                     short_id = (p.get("short_id") or "").strip() or p.get("id", "")[:8]
                     name = (p.get("name") or "").strip() or "(no name)"
                     project_labels.append(f"{short_id}: {name}")
-            return (_format_task_info_text(task, parent_tasks, subtasks, project_labels, tz_name), True, None)
+            return (_format_task_info_text(task, parent_tasks, subtasks, project_labels, tz_name), True, None, used_fallback)
         except Exception as e:
-            return (f"Error loading task details: {e}", False, None)
+            return (f"Error loading task details: {e}", False, None, used_fallback)
     if name == "task_list":
         tz_name = "UTC"
         try:
@@ -1297,7 +1336,9 @@ def run_orchestrator(
                 tags=validated.get("tags"),
                 tag_mode=validated.get("tag_mode") or "any",
                 due_by=validated.get("due_by"),
+                due_before=validated.get("due_before"),
                 available_by=validated.get("available_by"),
+                available_by_required=validated.get("available_by_required") or False,
                 available_or_due_by=validated.get("available_or_due_by"),
                 completed_by=validated.get("completed_by"),
                 completed_after=validated.get("completed_after"),
@@ -1307,12 +1348,12 @@ def run_orchestrator(
                 priority=validated.get("priority"),
             )
         except Exception as e:
-            return (f"Error listing tasks: {e}", False, None)
-        return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None)
+            return (f"Error listing tasks: {e}", False, None, used_fallback)
+        return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
     if name == "task_when":
         when = (params.get("when") or "").strip()
         if not when:
-            return ("task_when requires a 'when' expression (e.g. 'due within the next week', 'available tomorrow', 'overdue').", False, None)
+            return ("task_when requires a 'when' expression (e.g. 'due within the next week', 'available tomorrow', 'overdue').", False, None, used_fallback)
         tz_name = "UTC"
         try:
             from config import load as load_config
@@ -1321,7 +1362,7 @@ def run_orchestrator(
             pass
         when_params = _parse_when_to_task_list_params(when, tz_name)
         if not when_params:
-            return (f"Could not parse date from \"{when}\". Try: due today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None)
+            return (f"Could not parse date from \"{when}\". Try: due today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fallback)
         merged = dict(params)
         merged.pop("when", None)
         merged.setdefault("status", "incomplete")
@@ -1340,7 +1381,9 @@ def run_orchestrator(
                 tags=validated.get("tags"),
                 tag_mode=validated.get("tag_mode") or "any",
                 due_by=validated.get("due_by"),
+                due_before=validated.get("due_before"),
                 available_by=validated.get("available_by"),
+                available_by_required=validated.get("available_by_required") or False,
                 available_or_due_by=validated.get("available_or_due_by"),
                 completed_by=validated.get("completed_by"),
                 completed_after=validated.get("completed_after"),
@@ -1350,12 +1393,12 @@ def run_orchestrator(
                 priority=validated.get("priority"),
             )
         except Exception as e:
-            return (f"Error listing tasks: {e}", False, None)
-        return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None)
+            return (f"Error listing tasks: {e}", False, None, used_fallback)
+        return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
     if name == "task_find":
         term = (params.get("term") or params.get("query") or "").strip()
         if not term:
-            return ("task_find requires a search term (e.g. \"dogs\", \"work\").", False, None)
+            return ("task_find requires a search term (e.g. \"dogs\", \"work\").", False, None, used_fallback)
         tz_name = "UTC"
         try:
             from config import load as load_config
@@ -1366,9 +1409,9 @@ def run_orchestrator(
             from task_service import list_tasks as svc_list_tasks
             tasks = svc_list_tasks(limit=500, q=term, status="incomplete")
         except Exception as e:
-            return (f"Error searching tasks: {e}", False, None)
+            return (f"Error searching tasks: {e}", False, None, used_fallback)
         header = f"Tasks matching \"{term}\":\n"
-        return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None)
+        return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
     if name == "list_view":
         list_id = (params.get("list_id") or params.get("name") or "").strip()
         if not list_id:
@@ -1377,14 +1420,14 @@ def run_orchestrator(
             if extracted:
                 list_id = extracted
             else:
-                return ("list_view requires list_id (the list's short_id). Use list_lists to see short_ids.", False, None)
+                return ("list_view requires list_id (the list's short_id). Use list_lists to see short_ids.", False, None, used_fallback)
         try:
             from list_service import get_list, run_list
         except Exception as e:
-            return (f"Error loading list service: {e}", False, None)
+            return (f"Error loading list service: {e}", False, None, used_fallback)
         lst = get_list(list_id)
         if not lst:
-            return (f"List \"{list_id}\" not found. Use list_lists to see short_ids.", False, None)
+            return (f"List \"{list_id}\" not found. Use list_lists to see short_ids.", False, None, used_fallback)
         tz_name = "UTC"
         try:
             from config import load as load_config
@@ -1394,25 +1437,25 @@ def run_orchestrator(
         try:
             tasks = run_list(list_id, limit=500, tz_name=tz_name)
         except Exception as e:
-            return (f"Error running list: {e}", False, None)
+            return (f"Error running list: {e}", False, None, used_fallback)
         list_label = (lst.get("name") or "").strip() or list_id
         short_id = (lst.get("short_id") or "").strip()
         if short_id:
             header = f"List: {list_label} ({short_id})\n"
         else:
             header = f"List: {list_label}\n"
-        return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None)
+        return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
     if name == "list_lists":
         try:
             from list_service import list_lists as list_lists_svc
         except Exception as e:
-            return (f"Error loading list service: {e}", False, None)
+            return (f"Error loading list service: {e}", False, None, used_fallback)
         try:
             lists = list_lists_svc()
         except Exception as e:
-            return (f"Error listing lists: {e}", False, None)
+            return (f"Error listing lists: {e}", False, None, used_fallback)
         if not lists:
-            return ("No saved lists yet. Create one via the app or API to view lists here.", True, None)
+            return ("No saved lists yet. Create one via the app or API to view lists here.", True, None, used_fallback)
         lines = ["Lists:"]
         for lst in lists:
             name_part = (lst.get("name") or "").strip() or "(no name)"
@@ -1421,28 +1464,28 @@ def run_orchestrator(
                 lines.append(f"• {name_part} ({short})")
             else:
                 lines.append(f"• {name_part}")
-        return ("\n".join(lines), True, None)
+        return ("\n".join(lines), True, None, used_fallback)
     if name == "tag_list":
         try:
             from task_service import tag_list as svc_tag_list
             items = svc_tag_list()
         except Exception as e:
-            return (f"Error listing tags: {e}", False, None)
+            return (f"Error listing tags: {e}", False, None, used_fallback)
         if not items:
-            return ("No tags yet. Tags come from task tags or #tag in task titles/notes.", True, None)
+            return ("No tags yet. Tags come from task tags or #tag in task titles/notes.", True, None, used_fallback)
         lines = ["Tags (task count):"]
         for item in items:
             lines.append(f"• {item['tag']}: {item['count']} task(s)")
-        return ("\n".join(lines), True, None)
+        return ("\n".join(lines), True, None, used_fallback)
     if name == "tag_rename":
         old_tag = (params.get("old_tag") or "").strip()
         new_tag = (params.get("new_tag") or "").strip()
         if not old_tag:
-            return ("tag_rename requires old_tag.", False, None)
+            return ("tag_rename requires old_tag.", False, None, used_fallback)
         if not new_tag:
-            return ("tag_rename requires new_tag.", False, None)
+            return ("tag_rename requires new_tag.", False, None, used_fallback)
         if old_tag == new_tag:
-            return ("old_tag and new_tag are the same.", True, None)
+            return ("old_tag and new_tag are the same.", True, None, used_fallback)
         try:
             from task_service import tag_list
             tags = tag_list()
@@ -1454,19 +1497,20 @@ def run_orchestrator(
                 f"Rename tag \"{old_tag}\" to \"{new_tag}\"? This will update task tags and any #{old_tag} in titles/notes ({count} task(s)). Reply \"yes\" to confirm.",
                 False,
                 {"tool": "tag_rename", "old_tag": old_tag, "new_tag": new_tag},
+                used_fallback,
             )
         try:
             from task_service import tag_rename as svc_tag_rename
             n = svc_tag_rename(old_tag, new_tag)
-            return (f"Tag \"{old_tag}\" renamed to \"{new_tag}\". Updated {n} task(s).", True, None)
+            return (f"Tag \"{old_tag}\" renamed to \"{new_tag}\". Updated {n} task(s).", True, None, used_fallback)
         except ValueError as e:
-            return (str(e), False, None)
+            return (str(e), False, None, used_fallback)
         except Exception as e:
-            return (f"Error renaming tag: {e}", False, None)
+            return (f"Error renaming tag: {e}", False, None, used_fallback)
     if name == "tag_delete":
         tag = (params.get("tag") or "").strip()
         if not tag:
-            return ("tag_delete requires tag.", False, None)
+            return ("tag_delete requires tag.", False, None, used_fallback)
         try:
             from task_service import tag_list
             tags = tag_list()
@@ -1478,15 +1522,16 @@ def run_orchestrator(
                 f"Delete tag \"{tag}\"? It will be removed from all task tags and any #{tag} in titles/notes ({count} task(s)). Reply \"yes\" to confirm.",
                 False,
                 {"tool": "tag_delete", "tag": tag},
+                used_fallback,
             )
         try:
             from task_service import tag_delete as svc_tag_delete
             svc_tag_delete(tag)
-            return (f"Tag \"{tag}\" removed from all tasks.", True, None)
+            return (f"Tag \"{tag}\" removed from all tasks.", True, None, used_fallback)
         except ValueError as e:
-            return (str(e), False, None)
+            return (str(e), False, None, used_fallback)
         except Exception as e:
-            return (f"Error deleting tag: {e}", False, None)
+            return (f"Error deleting tag: {e}", False, None, used_fallback)
     if name == "task_update":
         tz_name = "UTC"
         try:
@@ -1497,7 +1542,7 @@ def run_orchestrator(
         try:
             validated = _validate_task_update(params, tz_name)
         except ValueError as e:
-            return (str(e), False, None)
+            return (str(e), False, None, used_fallback)
         from date_utils import resolve_task_dates
         validated = resolve_task_dates(validated, tz_name)
         num = validated.pop("number")
@@ -1505,9 +1550,9 @@ def run_orchestrator(
             from task_service import get_task_by_number, update_task, complete_recurring_task, remove_task_project, add_task_project, remove_task_tag, add_task_tag
             task = get_task_by_number(num)
         except Exception as e:
-            return (f"Error looking up task: {e}", False, None)
+            return (f"Error looking up task: {e}", False, None, used_fallback)
         if not task:
-            return (f"No task {num}. List tasks to see numbers.", False, None)
+            return (f"No task {num}. List tasks to see numbers.", False, None, used_fallback)
         task_id = task["id"]
         scalar_keys = ("status", "flagged", "due_date", "available_date", "title", "description", "notes", "priority")
         kwargs = {k: v for k, v in validated.items() if k in scalar_keys and v is not None}
@@ -1515,21 +1560,21 @@ def run_orchestrator(
         has_remove_projects = "remove_projects" in validated and validated["remove_projects"]
         has_tags = "tags" in validated
         if not kwargs and not has_projects and not has_remove_projects and not has_tags:
-            return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", False, None)
+            return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", False, None, used_fallback)
         # When marking a recurring task complete, create next instance and mark current complete
         if kwargs.get("status") == "complete" and task.get("recurrence"):
             try:
                 complete_recurring_task(task_id)
             except Exception as e:
-                return (f"Error completing recurring task: {e}", False, None)
+                return (f"Error completing recurring task: {e}", False, None, used_fallback)
             kwargs = {k: v for k, v in kwargs.items() if k != "status"}
         if kwargs:
             try:
                 updated = update_task(task_id, **kwargs)
             except Exception as e:
-                return (f"Error updating task: {e}", False, None)
+                return (f"Error updating task: {e}", False, None, used_fallback)
             if not updated:
-                return (f"Task {num} not found.", False, None)
+                return (f"Task {num} not found.", False, None, used_fallback)
         if has_projects:
             try:
                 from project_service import get_project_by_short_id
@@ -1542,7 +1587,7 @@ def run_orchestrator(
                     project_id = p["id"] if p else ref
                     add_task_project(task_id, str(project_id))
             except Exception as e:
-                return (f"Error updating task projects: {e}", False, None)
+                return (f"Error updating task projects: {e}", False, None, used_fallback)
         elif has_remove_projects:
             try:
                 from project_service import get_project_by_short_id
@@ -1560,7 +1605,7 @@ def run_orchestrator(
                 for pid in new_ids:
                     add_task_project(task_id, str(pid))
             except Exception as e:
-                return (f"Error removing task from project(s): {e}", False, None)
+                return (f"Error removing task from project(s): {e}", False, None, used_fallback)
         if has_tags:
             try:
                 for tag in task.get("tags") or []:
@@ -1569,7 +1614,7 @@ def run_orchestrator(
                     if tag:
                         add_task_tag(task_id, tag)
             except Exception as e:
-                return (f"Error updating task tags: {e}", False, None)
+                return (f"Error updating task tags: {e}", False, None, used_fallback)
         parts = []
         if "status" in kwargs:
             parts.append("complete" if kwargs["status"] == "complete" else "reopened")
@@ -1590,16 +1635,16 @@ def run_orchestrator(
         if has_tags:
             parts.append("tags updated")
         msg = f"Task {num} " + (", ".join(parts) if parts else "updated") + "."
-        return (msg, True, None)
+        return (msg, True, None, used_fallback)
     if name != "task_create":
         fallback = f"Tool '{name}' is not implemented yet. You can create, list, info, update, or delete tasks and projects."
         text = response_text.strip() or fallback
-        return (fallback if _looks_like_json(text) else text, False, None)
+        return (fallback if _looks_like_json(text) else text, False, None, used_fallback)
 
     try:
         validated = _validate_task_create(params)
     except ValueError as e:
-        return (f"Invalid task_create parameters: {e}", False, None)
+        return (f"Invalid task_create parameters: {e}", False, None, used_fallback)
 
     tz_name = "UTC"
     try:
@@ -1609,6 +1654,23 @@ def run_orchestrator(
         pass
     from date_utils import resolve_task_dates
     validated = resolve_task_dates(validated, tz_name)
+
+    project_ids = None
+    if validated.get("projects"):
+        try:
+            from project_service import get_project_by_short_id
+            project_ids = []
+            for ref in validated["projects"]:
+                ref = str(ref).strip()
+                if not ref or ref.lower() == "inbox":
+                    continue
+                p = get_project_by_short_id(ref)
+                if p:
+                    project_ids.append(p["id"])
+                else:
+                    project_ids.append(ref)
+        except Exception:
+            project_ids = validated.get("projects")
 
     try:
         from task_service import create_task as svc_create_task
@@ -1620,11 +1682,11 @@ def run_orchestrator(
             priority=validated.get("priority"),
             available_date=validated.get("available_date"),
             due_date=validated.get("due_date"),
-            projects=validated.get("projects"),
+            projects=project_ids,
             tags=validated.get("tags"),
-            flagged=validated.get("flagged", False, None),
+            flagged=bool(validated.get("flagged", False)),
         )
     except Exception as e:
-        return (f"Error creating task: {e}", False, None)
+        return (f"Error creating task: {e}", False, None, used_fallback)
 
-    return (_format_task_created_for_telegram(task, tz_name), True, None)
+    return (_format_task_created_for_telegram(task, tz_name), True, None, used_fallback)
