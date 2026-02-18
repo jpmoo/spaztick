@@ -178,17 +178,32 @@ def _parse_one_date_condition(raw: str, today: date, tz_name: str) -> dict[str, 
         resolved = resolve_relative_date(date_expr, tz_name)
         if resolved:
             out["available_by"] = resolved
-            out["available_by_required"] = False
+            out["available_by_required"] = True
             return out
 
-    # "due by X" / "due X" / "due on X" -> due_by (on or before)
-    if raw.startswith("due "):
-        date_expr = re.sub(r"^due\s+(?:by|on)\s+", "", raw)
-        date_expr = re.sub(r"^due\s+", "", date_expr)
-        date_expr = re.sub(r"^within\s+", "within ", date_expr)
+    # "due on X" -> due_on; "due by X" -> due_by; "due next Tuesday" / "due Friday" -> due_on (exact date)
+    if raw.startswith("due on "):
+        resolved = resolve_relative_date(raw[7:].strip(), tz_name)
+        if resolved:
+            out["due_on"] = resolved
+            return out
+    if raw.startswith("due by "):
+        date_expr = re.sub(r"^within\s+", "within ", raw[7:].strip())
         resolved = resolve_relative_date(date_expr, tz_name)
         if resolved:
             out["due_by"] = resolved
+            return out
+    if raw.startswith("due "):
+        date_expr = re.sub(r"^due\s+", "", raw)
+        if re.match(r"^(within\s+|in\s+the\s+next\s+\d+|in\s+\d+\s+days?)", date_expr):
+            date_expr = re.sub(r"^within\s+", "within ", date_expr)
+            resolved = resolve_relative_date(date_expr, tz_name)
+            if resolved:
+                out["due_by"] = resolved
+                return out
+        resolved = resolve_relative_date(date_expr, tz_name)
+        if resolved:
+            out["due_on"] = resolved
             return out
 
     # Bare date phrase -> assume due_by
@@ -200,14 +215,13 @@ def _parse_one_date_condition(raw: str, today: date, tz_name: str) -> dict[str, 
 
 def parse_date_condition(phrase: str | None, tz_name: str = "UTC") -> dict[str, Any]:
     """
-    Parse a natural-language date condition for task queries (task_when / task_list).
-    Returns a dict with one or more of: due_by, due_before, available_by, available_by_required, overdue.
+    Parse a natural-language date condition for task queries (task_find).
+    Returns a dict with one or more of: due_on, due_by, due_before, available_by, available_by_required, overdue.
 
-    - "due Friday" / "due by Friday" / "due this week" -> due_by
+    - "due next Tuesday" / "due Friday" / "due tomorrow" -> due_on (tasks due on that exact date only)
+    - "due by Friday" / "due within the next week" / "due in 5 days" -> due_by (on or before)
     - "due before next Friday" -> due_before (strictly before)
-    - "available today" / "available now" -> available_by = today, available_by_required = True
-    - "available tomorrow" -> available_by = tomorrow, available_by_required = False
-    - "available today and due friday" -> parses both and merges (available_by + due_by)
+    - "available today" / "available now" / "available tomorrow" -> available_by + available_by_required True (only tasks with available_date <= date)
     - "overdue" -> overdue = True
     """
     out: dict[str, Any] = {}

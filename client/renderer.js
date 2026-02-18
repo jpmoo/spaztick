@@ -4009,7 +4009,10 @@
         const due = t && (t.due_date || '').toString().trim().substring(0, 10);
         const avStr = av ? formatDate(av) : '';
         const dueStr = due ? formatDate(due) : '';
-        const datesStr = [avStr && `Avail: ${avStr}`, dueStr && `Due: ${dueStr}`].filter(Boolean).join(' · ') || '—';
+        const duePart = dueStr && t
+          ? (isOverdue(t.due_date) ? `<span class="due-overdue">Due: ${dueStr}</span>` : isToday(t.due_date) ? `<span class="due-today">Due: ${dueStr}</span>` : `Due: ${dueStr}`)
+          : (dueStr ? `Due: ${dueStr}` : '');
+        const datesStr = [avStr && `Avail: ${avStr}`, duePart].filter(Boolean).join(' · ') || '—';
         const taskIdEsc = (taskId || '').replace(/"/g, '&quot;');
         lineDiv.innerHTML = priorityHtml + flagHtml + `<span class="board-region-line-status">${statusSvg}</span><div class="board-region-line-text"><span class="board-region-line-title">${titleText}</span><span class="board-region-line-dates">${datesStr}</span></div><button type="button" class="board-region-line-expand" data-task-id="${taskIdEsc}" title="Expand" aria-label="Expand">${BOARD_CARD_EXPAND_SVG}</button>`;
         const expandBtn = lineDiv.querySelector('.board-region-line-expand');
@@ -4170,7 +4173,11 @@
   function renderBoardConnections(boardId) {
     if (!boardConnectionsLayerEl || !boardCardsLayerEl) return;
     const visibleIds = getBoardVisibleTaskIds(boardId);
-    const connections = getBoardConnections(boardId).filter((c) => visibleIds.has(String(c.fromTaskId)) && visibleIds.has(String(c.toTaskId)));
+    const allConnections = getBoardConnections(boardId);
+    const connections = allConnections.filter((c) => {
+      if (String(c.fromTaskId) === String(c.toTaskId)) return false;
+      return visibleIds.has(String(c.fromTaskId)) && visibleIds.has(String(c.toTaskId));
+    });
     function getCardEl(taskId) {
       return boardCardsLayerEl.querySelector(`.board-card[data-task-id="${String(taskId).replace(/"/g, '\\"')}"]`);
     }
@@ -4246,13 +4253,13 @@
         e.stopPropagation();
         const label = prompt('Connection label:', conn.label || '') || '';
         conn.label = label;
-        setBoardConnections(boardId, getBoardConnections(boardId));
+        setBoardConnections(boardId, allConnections);
         renderBoardConnections(boardId);
       });
       hitPath.addEventListener('contextmenu', (e) => {
         e.preventDefault();
         if (!confirm('Delete this connection?')) return;
-        const conns = getBoardConnections(boardId).filter((c) => c.id !== conn.id);
+        const conns = allConnections.filter((c) => c.id !== conn.id);
         setBoardConnections(boardId, conns);
         renderBoardConnections(boardId);
       });
@@ -4301,12 +4308,122 @@
         function onUp() {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
-          setBoardConnections(boardId, getBoardConnections(boardId));
+          setBoardConnections(boardId, allConnections);
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
       });
       group.appendChild(controlCircle);
+
+      function clientToCanvas(cx, cy) {
+        const rect = boardViewCanvasEl && boardViewCanvasEl.getBoundingClientRect();
+        if (!rect) return { x: 0, y: 0 };
+        const s = boardPanZoom.scale;
+        return { x: (cx - rect.left - boardPanZoom.x) / s, y: (cy - rect.top - boardPanZoom.y) / s };
+      }
+      function attachEndpointDrag(circleEl, endpoint) {
+        circleEl.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const isFrom = endpoint === 'from';
+          const fixedPoint = isFrom ? p2 : p1;
+          let previewPath = null;
+          function onMove(ev) {
+            const pt = clientToCanvas(ev.clientX, ev.clientY);
+            if (!previewPath && boardConnectionsLayerEl) {
+              const svg = boardConnectionsLayerEl.querySelector('.board-connections-svg');
+              if (!svg) return;
+              previewPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              previewPath.setAttribute('class', 'board-connection-preview');
+              previewPath.setAttribute('stroke', 'var(--accent)');
+              previewPath.setAttribute('stroke-width', '2');
+              previewPath.setAttribute('fill', 'none');
+              svg.appendChild(previewPath);
+            }
+            if (previewPath) {
+              if (isFrom) previewPath.setAttribute('d', `M ${pt.x} ${pt.y} Q ${(pt.x + fixedPoint.x) / 2} ${(pt.y + fixedPoint.y) / 2} ${fixedPoint.x} ${fixedPoint.y}`);
+              else previewPath.setAttribute('d', `M ${fixedPoint.x} ${fixedPoint.y} Q ${(fixedPoint.x + pt.x) / 2} ${(fixedPoint.y + pt.y) / 2} ${pt.x} ${pt.y}`);
+            }
+          }
+          function onUp(ev) {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            if (previewPath && previewPath.parentNode) previewPath.parentNode.removeChild(previewPath);
+            const layer = document.getElementById('board-connections-layer');
+            const prevPointer = layer && layer.style.pointerEvents;
+            if (layer) layer.style.pointerEvents = 'none';
+            const target = document.elementFromPoint(ev.clientX, ev.clientY);
+            if (layer) layer.style.pointerEvents = prevPointer || '';
+            const toHandle = target && target.closest('.board-connection-handle');
+            const toCard = toHandle && toHandle.closest('.board-card');
+            if (toCard) {
+              const toTaskId = toCard.dataset.taskId;
+              const toSide = (toHandle && toHandle.dataset.side) || 'right';
+              const sameAsOther = isFrom
+                ? (String(toTaskId) === String(conn.toTaskId) && toSide === (conn.toSide || 'left'))
+                : (String(toTaskId) === String(conn.fromTaskId) && toSide === (conn.fromSide || 'right'));
+              const wouldBeSelf = isFrom ? String(toTaskId) === String(conn.toTaskId) : String(toTaskId) === String(conn.fromTaskId);
+              if (!sameAsOther && toTaskId && !wouldBeSelf) {
+                const newAnchor = anchor(toCard, toSide);
+                if (newAnchor) {
+                  const currentCx = conn.controlX != null ? conn.controlX : (p1.x + p2.x) / 2;
+                  const currentCy = conn.controlY != null ? conn.controlY : (p1.y + p2.y) / 2;
+                  if (isFrom) {
+                    const dx = newAnchor.x - p1.x;
+                    const dy = newAnchor.y - p1.y;
+                    conn.fromTaskId = toTaskId;
+                    conn.fromSide = toSide;
+                    conn.controlX = currentCx + dx;
+                    conn.controlY = currentCy + dy;
+                  } else {
+                    const dx = newAnchor.x - p2.x;
+                    const dy = newAnchor.y - p2.y;
+                    conn.toTaskId = toTaskId;
+                    conn.toSide = toSide;
+                    conn.controlX = currentCx + dx;
+                    conn.controlY = currentCy + dy;
+                  }
+                  setBoardConnections(boardId, allConnections);
+                  renderBoardConnections(boardId);
+                }
+              }
+            }
+          }
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+      }
+
+      const startCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      startCircle.setAttribute('cx', p1.x);
+      startCircle.setAttribute('cy', p1.y);
+      startCircle.setAttribute('r', '10');
+      startCircle.setAttribute('fill', 'rgba(37, 99, 235, 0.25)');
+      startCircle.setAttribute('stroke', 'rgba(37, 99, 235, 0.7)');
+      startCircle.setAttribute('stroke-width', '1.5');
+      startCircle.setAttribute('class', 'board-connection-endpoint');
+      startCircle.setAttribute('data-connection-id', conn.id);
+      startCircle.setAttribute('data-endpoint', 'from');
+      startCircle.style.cursor = 'grab';
+      startCircle.style.pointerEvents = 'all';
+      attachEndpointDrag(startCircle, 'from');
+      group.appendChild(startCircle);
+
+      const endCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      endCircle.setAttribute('cx', p2.x);
+      endCircle.setAttribute('cy', p2.y);
+      endCircle.setAttribute('r', '10');
+      endCircle.setAttribute('fill', 'rgba(37, 99, 235, 0.25)');
+      endCircle.setAttribute('stroke', 'rgba(37, 99, 235, 0.7)');
+      endCircle.setAttribute('stroke-width', '1.5');
+      endCircle.setAttribute('class', 'board-connection-endpoint');
+      endCircle.setAttribute('data-connection-id', conn.id);
+      endCircle.setAttribute('data-endpoint', 'to');
+      endCircle.style.cursor = 'grab';
+      endCircle.style.pointerEvents = 'all';
+      attachEndpointDrag(endCircle, 'to');
+      group.appendChild(endCircle);
+
       svgHit.appendChild(group);
     });
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
@@ -4400,7 +4517,10 @@
     const flagHtml = '<span class="board-card-flagged' + (flagged ? '' : ' empty') + '">★</span>';
     const avStr = av ? formatDate(av) : '';
     const dueStr = due ? formatDate(due) : '';
-    const datesStr = [avStr && `Avail: ${avStr}`, dueStr && `Due: ${dueStr}`].filter(Boolean).join(' · ') || '—';
+    const duePart = dueStr
+      ? (isOverdue(t.due_date) ? `<span class="due-overdue">Due: ${dueStr}</span>` : isToday(t.due_date) ? `<span class="due-today">Due: ${dueStr}</span>` : `Due: ${dueStr}`)
+      : '';
+    const datesStr = [avStr && `Avail: ${avStr}`, duePart].filter(Boolean).join(' · ') || '—';
     const taskIdEsc = (taskId || '').replace(/"/g, '&quot;');
     return `
       <span class="board-connection-handle board-connection-handle-left" data-side="left" title="Drag to connect to another task" aria-label="Connection handle left"></span>
@@ -4490,6 +4610,10 @@
             renderBoardRegions(boardId);
             renderBoardCards(boardId);
           } else {
+            card.width = BOARD_MIN_CARD_WIDTH;
+            card.height = BOARD_MIN_CARD_HEIGHT;
+            el.style.width = card.width + 'px';
+            el.style.height = card.height + 'px';
             setBoardCards(boardId, cards);
           }
         }
@@ -4575,16 +4699,16 @@
           const target = document.elementFromPoint(ev.clientX, ev.clientY);
           const toHandle = target && target.closest('.board-connection-handle');
           const toCard = toHandle && toHandle.closest('.board-card');
-          if (toCard && toCard !== el) {
-            const toTaskId = toCard.dataset.taskId;
-            const toSide = toHandle.dataset.side || 'right';
-            if (toTaskId && String(toTaskId) !== String(taskId)) {
-              const connections = getBoardConnections(boardId);
-              const id = 'conn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-              connections.push({ id, fromTaskId: taskId, toTaskId, fromSide: side, toSide, label: '' });
-              setBoardConnections(boardId, connections);
-              renderBoardConnections(boardId);
-            }
+          const toTaskId = toCard && toCard.dataset.taskId;
+          const toSide = (toHandle && toHandle.dataset.side) || 'right';
+          const sameHandle = toCard === el && toSide === side;
+          const selfConnection = toTaskId && String(toTaskId) === String(taskId);
+          if (toCard && toHandle && !sameHandle && toTaskId && !selfConnection) {
+            const connections = getBoardConnections(boardId);
+            const id = 'conn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+            connections.push({ id, fromTaskId: taskId, toTaskId, fromSide: side, toSide, label: '' });
+            setBoardConnections(boardId, connections);
+            renderBoardConnections(boardId);
           }
         }
         document.addEventListener('mousemove', onMove);
@@ -6183,6 +6307,32 @@
   ];
   let currentListSettingsListId = null;
 
+  function syncDatePickerFromText(row) {
+    const dateInput = row && row.querySelector('.list-filter-date-picker');
+    const textInput = row && row.querySelector('.list-filter-value');
+    const dateBtn = row && row.querySelector('.date-picker-btn');
+    if (!dateInput || !textInput || textInput.tagName !== 'INPUT') return;
+    const hasText = (textInput.value || '').trim() !== '';
+    if (hasText) dateInput.value = '';
+    dateInput.disabled = hasText;
+    if (dateBtn) dateBtn.disabled = hasText;
+    dateInput.classList.toggle('date-picker-disabled-by-text', hasText);
+    if (dateBtn) dateBtn.classList.toggle('date-picker-disabled-by-text', hasText);
+  }
+
+  function bindDatePickerInRow(row) {
+    const dateInput = row && row.querySelector('.list-filter-date-picker');
+    const textInput = row && row.querySelector('.list-filter-value');
+    const dateBtn = row && row.querySelector('.date-picker-btn');
+    if (dateInput && textInput) {
+      dateInput.onchange = () => { textInput.value = dateInput.value || ''; syncDatePickerFromText(row); };
+      if (dateBtn) dateBtn.onclick = () => { dateInput.showPicker ? dateInput.showPicker() : dateInput.focus(); };
+      textInput.oninput = () => syncDatePickerFromText(row);
+      textInput.onchange = () => syncDatePickerFromText(row);
+      syncDatePickerFromText(row);
+    }
+  }
+
   function listSettingsConditionToRow(cond) {
     const f = LIST_FILTER_FIELDS.find((x) => x.field === (cond && cond.field));
     const fieldConfig = f || LIST_FILTER_FIELDS[0];
@@ -6237,6 +6387,8 @@
     const direction = (s && s.direction) || 'asc';
     const fieldOpts = LIST_SORT_FIELDS.map((x) => `<option value="${x.key}" ${x.key === field ? 'selected' : ''}>${x.label}</option>`).join('');
     return `<div class="list-settings-sort-row">
+      <button type="button" class="list-sort-move list-sort-move-up" aria-label="Move up">↑</button>
+      <button type="button" class="list-sort-move list-sort-move-down" aria-label="Move down">↓</button>
       <select class="list-sort-field" aria-label="Sort by">${fieldOpts}</select>
       <select class="list-sort-dir" aria-label="Direction">
         <option value="asc" ${direction === 'asc' ? 'selected' : ''}>Asc</option>
@@ -6275,6 +6427,7 @@
         filtersEl.innerHTML = renderFilterGroup({ type: 'group', operator: 'AND', children: [] }, true);
         sortEl.innerHTML = listSettingsSortToRow({});
       }
+      filtersEl.querySelectorAll('.list-settings-filter-row').forEach(bindDatePickerInRow);
       const source = 'list:' + listId;
       const { order, visible, showFlagged, showCompleted, showHighlightDue, showPriority } = getDisplayProperties(source);
       const flaggedCb = document.getElementById('list-settings-show-flagged');
@@ -6313,6 +6466,99 @@
     if (!filtersEl || !sortEl) return;
     const listId = currentListSettingsListId;
     const listSource = listId ? 'list:' + listId : null;
+
+    if (!filtersEl._listSettingsDelegationBound) {
+      filtersEl._listSettingsDelegationBound = true;
+      filtersEl.addEventListener('click', (e) => {
+        const removeBtn = e.target.closest('.list-settings-remove');
+        if (removeBtn) {
+          if (removeBtn.classList.contains('list-settings-group-remove')) {
+            removeBtn.closest('.list-settings-filter-group').remove();
+          } else {
+            removeBtn.closest('.list-settings-filter-row').remove();
+          }
+          return;
+        }
+        const addCondBtn = e.target.closest('.list-settings-add-condition');
+        if (addCondBtn) {
+          const group = addCondBtn.closest('.list-settings-filter-group');
+          const children = group && group.querySelector('.list-settings-group-children');
+          if (children) {
+            const div = document.createElement('div');
+            div.innerHTML = listSettingsConditionToRow({});
+            const newRow = div.firstElementChild;
+            children.appendChild(newRow);
+            bindDatePickerInRow(newRow);
+          }
+          return;
+        }
+        const addGroupBtn = e.target.closest('.list-settings-add-group');
+        if (addGroupBtn) {
+          const group = addGroupBtn.closest('.list-settings-filter-group');
+          const children = group && group.querySelector('.list-settings-group-children');
+          if (children) {
+            const div = document.createElement('div');
+            div.innerHTML = renderFilterGroup({ type: 'group', operator: 'AND', children: [] }, false);
+            children.appendChild(div.firstElementChild);
+          }
+          return;
+        }
+      });
+      filtersEl.addEventListener('change', (e) => {
+        const fieldSelect = e.target.closest('.list-filter-field');
+        if (!fieldSelect) return;
+        const row = fieldSelect.closest('.list-settings-filter-row');
+        if (!row) return;
+        const f = LIST_FILTER_FIELDS.find((x) => x.field === fieldSelect.value);
+        const valueWrap = row.querySelector('.filter-value-wrap');
+        const opSelect = row.querySelector('.list-filter-op');
+        if (!valueWrap || !opSelect || !f) return;
+        const opOpts = f.operators.map((o) => `<option value="${o.op}">${o.label}</option>`).join('');
+        opSelect.innerHTML = opOpts;
+        const isDate = f.valueType === 'date';
+        const newValueHtml = isDate
+          ? `<input type="text" class="list-filter-value" placeholder="e.g. today, today+3" /><input type="date" class="list-filter-date-picker" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button>`
+          : f.valueType === 'status'
+            ? `<select class="list-filter-value"><option value="incomplete">Incomplete</option><option value="complete">Complete</option></select>`
+            : f.valueType === 'flagged'
+              ? `<select class="list-filter-value"><option value="false">No</option><option value="true">Yes</option></select>`
+              : `<input type="text" class="list-filter-value" placeholder="${f.valueType === 'tags' ? 'e.g. work, urgent' : f.valueType === 'projects' ? 'short ids: 1off, work' : f.valueType === 'number' ? '0-3' : 'value'}" />`;
+        valueWrap.innerHTML = newValueHtml;
+        bindDatePickerInRow(row);
+      });
+    }
+
+    if (!sortEl._listSettingsDelegationBound) {
+      sortEl._listSettingsDelegationBound = true;
+      sortEl.addEventListener('click', (e) => {
+        const row = e.target.closest('.list-settings-sort-row');
+        if (!row) return;
+        if (e.target.closest('.list-settings-remove')) {
+          row.remove();
+          return;
+        }
+        if (e.target.closest('.list-sort-move-up')) {
+          const prev = row.previousElementSibling;
+          if (prev) sortEl.insertBefore(row, prev);
+          return;
+        }
+        if (e.target.closest('.list-sort-move-down')) {
+          const next = row.nextElementSibling;
+          if (next) sortEl.insertBefore(next, row);
+          return;
+        }
+      });
+    }
+
+    if (addSortBtn && !addSortBtn._listSettingsAddBound) {
+      addSortBtn._listSettingsAddBound = true;
+      addSortBtn.onclick = () => {
+        const div = document.createElement('div');
+        div.innerHTML = listSettingsSortToRow({});
+        sortEl.appendChild(div.firstElementChild);
+      };
+    }
+
     if (columnsEl && listSource) {
       const flaggedCb = document.getElementById('list-settings-show-flagged');
       const completedCb = document.getElementById('list-settings-show-completed');
@@ -6360,90 +6606,6 @@
       });
       setupDisplayListDrag(columnsEl, listSource);
     }
-    function syncDatePickerFromText(row) {
-      const dateInput = row && row.querySelector('.list-filter-date-picker');
-      const textInput = row && row.querySelector('.list-filter-value');
-      const dateBtn = row && row.querySelector('.date-picker-btn');
-      if (!dateInput || !textInput || textInput.tagName !== 'INPUT') return;
-      const hasText = (textInput.value || '').trim() !== '';
-      if (hasText) dateInput.value = '';
-      dateInput.disabled = hasText;
-      if (dateBtn) dateBtn.disabled = hasText;
-      dateInput.classList.toggle('date-picker-disabled-by-text', hasText);
-      if (dateBtn) dateBtn.classList.toggle('date-picker-disabled-by-text', hasText);
-    }
-    function bindDatePickerInRow(row) {
-      const dateInput = row && row.querySelector('.list-filter-date-picker');
-      const textInput = row && row.querySelector('.list-filter-value');
-      const dateBtn = row && row.querySelector('.date-picker-btn');
-      if (dateInput && textInput) {
-        dateInput.onchange = () => { textInput.value = dateInput.value || ''; syncDatePickerFromText(row); };
-        if (dateBtn) dateBtn.onclick = () => { dateInput.showPicker ? dateInput.showPicker() : dateInput.focus(); };
-        textInput.oninput = () => syncDatePickerFromText(row);
-        textInput.onchange = () => syncDatePickerFromText(row);
-        syncDatePickerFromText(row);
-      }
-    }
-    filtersEl.querySelectorAll('.list-settings-filter-row').forEach((row) => {
-      const removeBtn = row.querySelector('.list-settings-remove:not(.list-settings-group-remove)');
-      if (removeBtn) removeBtn.onclick = () => row.remove();
-      const fieldSelect = row.querySelector('.list-filter-field');
-      if (fieldSelect) {
-        fieldSelect.onchange = () => {
-          const f = LIST_FILTER_FIELDS.find((x) => x.field === fieldSelect.value);
-          const valueWrap = row.querySelector('.filter-value-wrap');
-          const opSelect = row.querySelector('.list-filter-op');
-          if (!valueWrap || !opSelect || !f) return;
-          const opOpts = f.operators.map((o) => `<option value="${o.op}">${o.label}</option>`).join('');
-          opSelect.innerHTML = opOpts;
-          const isDate = f.valueType === 'date';
-          const newValueHtml = isDate
-            ? `<input type="text" class="list-filter-value" placeholder="e.g. today, today+3" /><input type="date" class="list-filter-date-picker" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button>`
-            : f.valueType === 'status'
-              ? `<select class="list-filter-value"><option value="incomplete">Incomplete</option><option value="complete">Complete</option></select>`
-              : f.valueType === 'flagged'
-                ? `<select class="list-filter-value"><option value="false">No</option><option value="true">Yes</option></select>`
-                : `<input type="text" class="list-filter-value" placeholder="${f.valueType === 'tags' ? 'e.g. work, urgent' : f.valueType === 'projects' ? 'short ids: 1off, work' : f.valueType === 'number' ? '0-3' : 'value'}" />`;
-          valueWrap.innerHTML = newValueHtml;
-          bindDatePickerInRow(row);
-        };
-      }
-      bindDatePickerInRow(row);
-    });
-    filtersEl.querySelectorAll('.list-settings-group-remove').forEach((btn) => {
-      btn.onclick = () => btn.closest('.list-settings-filter-group').remove();
-    });
-    filtersEl.querySelectorAll('.list-settings-add-condition').forEach((btn) => {
-      btn.onclick = () => {
-        const group = btn.closest('.list-settings-filter-group');
-        const children = group && group.querySelector('.list-settings-group-children');
-        if (!children) return;
-        const div = document.createElement('div');
-        div.innerHTML = listSettingsConditionToRow({});
-        children.appendChild(div.firstElementChild);
-        setupListSettingsModalHandlers();
-      };
-    });
-    filtersEl.querySelectorAll('.list-settings-add-group').forEach((btn) => {
-      btn.onclick = () => {
-        const group = btn.closest('.list-settings-filter-group');
-        const children = group && group.querySelector('.list-settings-group-children');
-        if (!children) return;
-        const div = document.createElement('div');
-        div.innerHTML = renderFilterGroup({ type: 'group', operator: 'AND', children: [] }, false);
-        children.appendChild(div.firstElementChild);
-        setupListSettingsModalHandlers();
-      };
-    });
-    sortEl.querySelectorAll('.list-settings-remove').forEach((btn) => {
-      btn.onclick = () => { btn.closest('.list-settings-sort-row').remove(); };
-    });
-    if (addSortBtn) addSortBtn.onclick = () => {
-      const div = document.createElement('div');
-      div.innerHTML = listSettingsSortToRow({});
-      sortEl.appendChild(div.firstElementChild);
-      setupListSettingsModalHandlers();
-    };
   }
 
   function collectConditionFromRow(row) {

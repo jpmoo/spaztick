@@ -2705,6 +2705,13 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
 .board-connections-layer .board-connections-svg-hit .board-connection-group:hover .board-connection-control {
   opacity: 1;
 }
+.board-connections-layer .board-connections-svg-hit .board-connection-endpoint {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.board-connections-layer .board-connections-svg-hit .board-connection-group:hover .board-connection-endpoint {
+  opacity: 1;
+}
 .board-cards-layer {
   z-index: 1;
 }
@@ -2895,6 +2902,12 @@ body[data-theme="cupertino"] .board-region-line:hover {
   font-size: 11px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+.board-region-line .board-region-line-dates .due-today {
+  color: var(--due-today, #d97706);
+}
+.board-region-line .board-region-line-dates .due-overdue {
+  color: var(--due-overdue, #dc2626);
 }
 .board-region-line .board-region-line-expand {
   width: 24px;
@@ -3208,6 +3221,12 @@ body[data-theme="cupertino"] .board-region-line:hover {
   min-height: 0;
   overflow: hidden;
   flex-shrink: 1;
+}
+.board-card .board-card-dates .due-today {
+  color: var(--due-today, #d97706);
+}
+.board-card .board-card-dates .due-overdue {
+  color: var(--due-overdue, #dc2626);
 }
 .board-card .board-card-footer {
   display: flex;
@@ -3765,6 +3784,22 @@ body[data-theme="cupertino"] .board-region-line:hover {
   gap: 8px;
   align-items: center;
   margin-bottom: 8px;
+}
+.list-sort-move {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+.list-sort-move:hover {
+  background: var(--surface-elevated, #f1f5f9);
 }
 .list-settings-filter-row select,
 .list-settings-sort-row select {

@@ -256,6 +256,7 @@ def list_tasks(
     tag_mode: str = "any",
     due_by: str | None = None,
     due_before: str | None = None,
+    due_on: str | None = None,
     available_by: str | None = None,
     available_by_required: bool = False,
     available_or_due_by: str | None = None,
@@ -270,8 +271,8 @@ def list_tasks(
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """List tasks with optional filters. Returns minimal task dicts (no projects/tags/deps).
-    due_by, due_before, available_by, available_or_due_by, completed_by, completed_after are ISO date strings (YYYY-MM-DD).
-    due_before: tasks with due_date strictly before this date (exclusive).
+    due_by, due_before, due_on, available_by, available_or_due_by, completed_by, completed_after are ISO date strings (YYYY-MM-DD).
+    due_before: tasks with due_date strictly before this date (exclusive). due_on: tasks with due_date on this exact date only.
     available_by_required: if True with available_by, only tasks that have available_date set and <= date (excludes NULL; "available today" = on my plate today).
     title_contains: substring match on title (case-insensitive).
     search: substring match on title OR description (case-insensitive).
@@ -339,6 +340,9 @@ def list_tasks(
         if due_before:
             sql += " AND due_date IS NOT NULL AND date(due_date) < date(?)"
             params.append(due_before)
+        if due_on:
+            sql += " AND due_date IS NOT NULL AND date(due_date) = date(?)"
+            params.append(due_on)
         if available_by:
             if available_by_required:
                 sql += " AND available_date IS NOT NULL AND date(available_date) <= date(?)"

@@ -133,27 +133,28 @@ Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume th
 
 # Available tools section (unchanged from original)
 AVAILABLE_TOOLS_SECTION = """
-Available tools: task_create, task_list, task_when, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists, tag_list, tag_rename, tag_delete.
+Available tools: task_create, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists, tag_list, tag_rename, tag_delete.
 
 task_create: Use when the user says "add task", "create task", "new task" with a title. Required: title. Optional: due_date, available_date, project or short_id (single project by short_id, e.g. hous, 1off), projects (array of short_ids), tags (array), priority, description, notes, flagged. You MAY include as many optional parameters as the user provides. Parse the full phrase: "add task roast coffee due today in hous" -> title "roast coffee", due_date "today", project "hous". "create task buy milk in 1off" -> title "buy milk", short_id "1off". Use natural language for dates (today, tomorrow, next week). Output: {"name": "task_create", "parameters": {"title": "...", "due_date": "today", "short_id": "hous"}} with every option the user mentioned.
 
-CRITICAL: When the user asks for TASKS with a date or time bound (due, available, overdue, this week, next week, today, tomorrow, within the next N days), use task_when—NOT task_list and NEVER tag_list. tag_list returns tag names and counts; use tag_list ONLY when the user explicitly asks to "list tags", "show tags", "what tags", or "tag counts". Any request for "tasks due X", "tasks available Y", "overdue tasks", "give me tasks due within the next week" is task_when.
-
-task_when: Use for ANY date-bounded task question. Single required parameter: when (string). Natural-language dates are parsed broadly: "due Friday" / "due by Friday" / "due this week" (on or before that day or end of week), "due before next Friday" (strictly before), "available today" / "available now" (only tasks that have an available_date on or before today—i.e. on my plate today), "available tomorrow", "overdue", "due in 5 days", "next week", "end of month", etc. For BOTH available and due in one query use "available X and due Y" in a single when string. Combine when with other filters: tag, tags, short_id, priority (3=top), etc.
-Output format: {"name": "task_when", "parameters": {"when": "..."}} and add optional filters.
-Examples: "Tasks due Friday" -> {"name": "task_when", "parameters": {"when": "due Friday"}}. "Show tasks available today and due friday" -> {"name": "task_when", "parameters": {"when": "available today and due friday"}}. "Tasks due before next Friday" -> {"name": "task_when", "parameters": {"when": "due before next Friday"}}. "Tasks available today" -> {"name": "task_when", "parameters": {"when": "available today"}}. "Tasks due within the next 5 days tagged Robert" -> {"name": "task_when", "parameters": {"when": "due in 5 days", "tag": "Robert"}}. "Overdue tasks" -> {"name": "task_when", "parameters": {"when": "overdue"}}.
-
-task_list: Use when the user asks for tasks WITHOUT a date bound (e.g. "list my tasks", "show tasks in 1off", "flagged tasks") or when they want completed/by date filters (completed_by, completed_after). For any "due X", "available X", "overdue", "this week", "next week" use task_when instead.
-Never include completed tasks unless the user explicitly asks for them (e.g. "completed", "done", "finished") or asks for "all" tasks. When no status is given, always use status "incomplete". Do not send status "complete" unless the user clearly asked for completed/done tasks or "all tasks".
-Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag (single) or tags (array of tag names), tag_mode ("any" = task has any of the tags [OR], "all" = task has all tags [AND]; default "any"), project or short_id (single; use "inbox" for tasks with no project), projects or short_ids (array of short_ids), project_mode ("any" = task in any of the projects [OR], "all" = task in all [AND]; default "any"), due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false), priority (number 0-3, or label: "high"/"medium high"/"medium low"/"low", or color: "red"/"orange"/"yellow"/"green"; 3=high=red, 2=medium high=orange, 1=medium low=yellow, 0=low=green).
-Overdue semantics: A task due today is NOT overdue unless the user says "overdue tomorrow" or asks on a later date. Use overdue (not due_by) when the user asks for "overdue" or "overdue tasks". overdue: true or overdue: "today" -> tasks due yesterday or earlier; overdue: "tomorrow" -> tasks due today or earlier.
-Dates: "today", "tomorrow", "yesterday", "now" (use "today")—app resolves them.
-Examples: "list overdue tasks" -> {"name": "task_when", "parameters": {"when": "overdue"}}. "list inbox tasks" or "tasks in inbox" -> {"name": "task_list", "parameters": {"short_id": "inbox", "status": "incomplete"}}. "list tasks due today" -> {"name": "task_when", "parameters": {"when": "due today"}}. "gimme tasks in 1off available tomorrow" -> {"name": "task_when", "parameters": {"when": "available tomorrow", "short_id": "1off"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}.
-Output format: {"name": "task_list", "parameters": {}} with any of status, tag, tags (array), tag_mode ("any"/"all"), project/short_id (or "inbox"), projects/short_ids (array), project_mode ("any"/"all"), due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged, priority. E.g. "tasks with tag work or urgent" -> {"tags": ["work", "urgent"], "tag_mode": "any"}. "tasks in 1off and work" -> {"short_ids": ["1off", "work"], "project_mode": "all"}. Priority: use 0-3, or "high"/"medium high"/"medium low"/"low", or "red"/"orange"/"yellow"/"green".
-
-task_find: Find tasks by a search term in title, description, or tag. Use when the user says "find tasks about X", "search for tasks with dogs", "tasks about meetings", "tasks tagged work", or similar. The term is matched in title, description, and tag (so one term finds all matching tasks).
-Required parameter: term (the search string, e.g. "dogs", "work", "meetings").
-Output format: {"name": "task_find", "parameters": {"term": "..."}}.
+task_find: THE single tool for listing or searching tasks. Use task_find for ANY request to show, list, or find tasks—with or without dates, tags, projects, or a search term. Never use tag_list for task lists; tag_list only returns tag names and counts (use tag_list only when the user explicitly asks "list tags", "show tags", "tag counts").
+Parameters (all optional; include only what the user asked for):
+- when (string): Natural-language date filter. Use for "due X", "available X", "overdue". Examples: "due today", "due next Tuesday", "due by Friday", "due in 5 days", "available tomorrow", "overdue". Semantics: "due next Tuesday" / "due Friday" / "due tomorrow" = due on that exact date only; "due by Friday" / "due within the next week" = on or before; "due before next Friday" = strictly before; "available today" / "available tomorrow" = tasks that have an available_date on or before that date; "overdue" = past due. Combine with other filters: when + tag, when + short_id, etc.
+- term (string): Search in title, description, and tags. Use for "find tasks about X", "search for dogs", "tasks about meetings". Can be combined with when, tag, short_id, etc.
+- status: "incomplete" (default), "complete", or "all". Omit completed unless the user asks for completed/done tasks or "all".
+- tag / tags (array) / tag_mode ("any" or "all"): Filter by tag(s). Strip # from tag names (e.g. "#do" -> tag "do").
+- short_id or project (single), short_ids or projects (array), project_mode ("any" or "all"): Filter by project. Use short_id "inbox" for tasks with no project.
+- flagged (true/false), priority (0-3 or "high"/"medium high"/"medium low"/"low" or "red"/"orange"/"yellow"/"green"), title_contains (substring), sort_by ("due_date", "available_date", "created_at", "title"), completed_by, completed_after.
+Output: {"name": "task_find", "parameters": { ... }} with every relevant parameter. Examples:
+- "List my tasks" -> {"name": "task_find", "parameters": {"status": "incomplete"}}
+- "Tasks due next Tuesday" -> {"name": "task_find", "parameters": {"when": "due next Tuesday", "status": "incomplete"}}
+- "Show me tasks available tomorrow" -> {"name": "task_find", "parameters": {"when": "available tomorrow", "status": "incomplete"}}
+- "Overdue tasks" -> {"name": "task_find", "parameters": {"when": "overdue", "status": "incomplete"}}
+- "Tasks in 1off" -> {"name": "task_find", "parameters": {"short_id": "1off", "status": "incomplete"}}
+- "Tasks tagged #do" / "show me #do tasks" -> {"name": "task_find", "parameters": {"tag": "do", "status": "incomplete"}}
+- "Find tasks about meetings" -> {"name": "task_find", "parameters": {"term": "meetings", "status": "incomplete"}}
+- "Tasks in 1off available tomorrow" -> {"name": "task_find", "parameters": {"when": "available tomorrow", "short_id": "1off", "status": "incomplete"}}
+- "Flagged tasks" -> {"name": "task_find", "parameters": {"flagged": true, "status": "incomplete"}}
 
 task_info: User identifies the task by its friendly id (number). "Tell me about 1", "about task 1", "task #1", "task 1", or just "1" after discussing tasks/projects always means task_info with that number. Never answer with general knowledge about the number—always call task_info.
 Output format: {"name": "task_info", "parameters": {"number": 1}} (use the number the user said).
@@ -163,7 +164,7 @@ Examples: "mark task 1 complete" -> {"name": "task_update", "parameters": {"numb
 Output format: {"name": "task_update", "parameters": {"number": N, ...}} with only the fields being changed.
 
 delete_task: User identifies the task by its friendly id (the task number, e.g. 1 or #1). First call without confirm to show a confirmation message; when the user confirms (e.g. "yes"), call again with "confirm": true to perform the delete.
-Output format: {"name": "delete_task", "parameters": {"number": 1}} or {"name": "delete_task", "parameters": {"number": 1, "confirm": true}}. Use "number" (the task's friendly id from task_list).
+Output format: {"name": "delete_task", "parameters": {"number": 1}} or {"name": "delete_task", "parameters": {"number": 1, "confirm": true}}. Use "number" (the task's friendly id from task_find).
 
 project_create: Only "title" is required (the project name). Omit description if the user did not provide it. New projects default to open (active) status; do not send status for create.
 Output format: {"name": "project_create", "parameters": {"title": "..."}} and add optional "description" if the user gave it.
@@ -185,14 +186,14 @@ Output format: {"name": "project_unarchive", "parameters": {"short_id": "1off"}}
 delete_project: User identifies the project by short_id only (e.g. "1off", "work"). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true. In this chat we never use full project names—only short_id.
 Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}.
 
-list_view: Show tasks from a saved list. Use when the user says "view list X", "show tasks on list X", "list tasks on list X", or asks for tasks from a named list. X is always the list's short_id (e.g. "test", "work"). Tasks are returned in the list's configured sort order (same as in the app). Prefer list_view over task_list whenever the user asks for a specific list by name or short_id.
+list_view: Show tasks from a saved list. Use when the user says "view list X", "show tasks on list X", "list tasks on list X", or asks for tasks from a named list. X is always the list's short_id (e.g. "test", "work"). Tasks are returned in the list's configured sort order (same as in the app). Prefer list_view over task_find when the user asks for a specific list by name or short_id.
 Parameters: list_id (the list's short_id). In this chat we never refer to lists by full name—only by short_id.
 Output format: {"name": "list_view", "parameters": {"list_id": "test"}}.
 
 list_lists: List all saved lists with their short_ids. Use when the user asks to list saved lists, show lists, or see list short names (e.g. "list lists", "show my lists").
 Output format: {"name": "list_lists", "parameters": {}}.
 
-tag_list: List all tag NAMES and how many tasks have each tag. Use ONLY when the user explicitly asks to "list tags", "show tags", "what tags do I have", or "tag counts". Never use tag_list when the user asks for TASKS (e.g. "tasks due next week" is task_when, not tag_list).
+tag_list: List all tag NAMES and how many tasks have each tag. Use ONLY when the user explicitly asks to "list tags", "show tags", "what tags do I have", or "tag counts". Never use tag_list when the user asks for TASKS—use task_find instead.
 Output format: {"name": "tag_list", "parameters": {}}.
 
 tag_rename: Rename a tag everywhere (task tags, and #tag in titles/notes). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true.
@@ -271,7 +272,7 @@ def _parse_priority(value: Any) -> int | None:
 
 
 def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> dict[str, Any]:
-    """Normalize task_list parameters: default status incomplete, resolve dates and project short_id. Overdue = due_by (reference date - 1 day)."""
+    """Normalize task_find/task retrieval parameters: default status incomplete, resolve dates and project short_id. Overdue = due_by (reference date - 1 day)."""
     from datetime import date, timedelta
     from date_utils import resolve_relative_date
     out: dict[str, Any] = {}
@@ -350,7 +351,7 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
                 out["due_by"] = (d - timedelta(days=1)).isoformat()
             except (ValueError, TypeError):
                 pass
-    for key in ("due_by", "due_before", "available_by", "available_or_due_by", "completed_by", "completed_after"):
+    for key in ("due_by", "due_before", "due_on", "available_by", "available_or_due_by", "completed_by", "completed_after"):
         if key in out:
             continue  # already set (e.g. from overdue)
         val = params.get(key)
@@ -380,7 +381,7 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
 
 def _parse_when_to_task_list_params(when: str, tz_name: str = "UTC") -> dict[str, Any]:
     """
-    Parse a natural-language "when" expression into task_list date/overdue params.
+    Parse a natural-language "when" expression into task_find date/overdue params.
     Uses date_utils.parse_date_condition for broad NL support: "due Friday", "due before next Friday",
     "available today" (with available_by_required so only tasks with an available date on or before today), etc.
     """
@@ -660,49 +661,65 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
     list_id = _extract_list_identifier_from_message(user_message)
     if list_id:
         return ("list_view", {"list_id": list_id})
+    # Tag-only: "tasks tagged #do", "show me #do tasks", "tasks with tag work" -> task_find (no date)
+    m = re.search(r"\btasks?\s+tagged\s+#?(\w+)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
+    if m:
+        return ("task_find", {"tag": m.group(1).strip(), "status": "incomplete"})
+    m = re.search(r"\btasks?\s+with\s+tag\s+#?(\w+)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
+    if m:
+        return ("task_find", {"tag": m.group(1).strip(), "status": "incomplete"})
+    m = re.search(r"(?:list|show|get|give me|gimme|display)\s+(?:my\s+)?tasks?\s+tagged\s+#?(\w+)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
+    if m:
+        return ("task_find", {"tag": m.group(1).strip(), "status": "incomplete"})
+    m = re.search(r"#(\w+)\s+tasks?(?:\s*[.?]?\s*)$", msg, re.I | re.S)
+    if m:
+        return ("task_find", {"tag": m.group(1).strip(), "status": "incomplete"})
+    m = re.search(r"(?:list|show|get|give me|gimme|display)\s+(?:my\s+)?#(\w+)\s+tasks?(?:\s*[.?]?\s*)$", msg, re.I | re.S)
+    if m:
+        return ("task_find", {"tag": m.group(1).strip(), "status": "incomplete"})
     # Find/search tasks by term (before generic list tasks)
     m = re.search(r"\b(?:find|search\s+for|look\s+for)\s+(?:tasks?\s+)(?:about|with|containing|matching)\s+(.+?)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
     if m:
         return ("task_find", {"term": m.group(1).strip()})
-    m = re.search(r"\btasks?\s+(?:about|with|containing|tagged)\s+(.+?)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
+    m = re.search(r"\btasks?\s+(?:about|with|containing)\s+(.+?)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
     if m:
         return ("task_find", {"term": m.group(1).strip()})
     m = re.search(r"^(?:find|search)\s+(.+?)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
     if m and "task" in msg:
         return ("task_find", {"term": m.group(1).strip()})
-    # Date-bounded task requests -> task_when (so we never return bare task_list and drop the date)
+    # Date-bounded task requests -> task_find with when
     if re.search(r"tasks?\s+due\s+within\s+the\s+next\s+week", msg, re.I):
-        return ("task_when", {"when": "due within the next week", "status": "incomplete"})
+        return ("task_find", {"when": "due within the next week", "status": "incomplete"})
     m = re.search(r"tasks?\s+due\s+in\s+the\s+next\s+(\d+)\s*days?", msg, re.I)
     if m:
-        return ("task_when", {"when": f"due in {m.group(1)} days", "status": "incomplete"})
+        return ("task_find", {"when": f"due in {m.group(1)} days", "status": "incomplete"})
     if re.search(r"tasks?\s+due\s+in\s+(\d+)\s*days?", msg, re.I):
         m = re.search(r"tasks?\s+due\s+in\s+(\d+)\s*days?", msg, re.I)
         if m:
-            return ("task_when", {"when": f"due in {m.group(1)} days", "status": "incomplete"})
+            return ("task_find", {"when": f"due in {m.group(1)} days", "status": "incomplete"})
     if re.search(r"(?:list|show|get|give me|gimme)\s+(?:my\s+)?tasks?\s+due\s+today", msg, re.I) or re.search(r"tasks?\s+due\s+today", msg, re.I):
-        return ("task_when", {"when": "due today", "status": "incomplete"})
+        return ("task_find", {"when": "due today", "status": "incomplete"})
     if re.search(r"tasks?\s+due\s+tomorrow", msg, re.I):
-        return ("task_when", {"when": "due tomorrow", "status": "incomplete"})
+        return ("task_find", {"when": "due tomorrow", "status": "incomplete"})
     if re.search(r"tasks?\s+due\s+next\s+week", msg, re.I):
-        return ("task_when", {"when": "due next week", "status": "incomplete"})
+        return ("task_find", {"when": "due next week", "status": "incomplete"})
     if re.search(r"(?:list|show|get)?\s*overdue\s+tasks?", msg, re.I) or re.search(r"tasks?\s+overdue", msg, re.I):
-        return ("task_when", {"when": "overdue", "status": "incomplete"})
+        return ("task_find", {"when": "overdue", "status": "incomplete"})
     if re.search(r"tasks?\s+available\s+", msg, re.I):
         am = re.search(r"available\s+(today|tomorrow|next\s+week)", msg, re.I)
         if am:
-            return ("task_when", {"when": "available " + am.group(1), "status": "incomplete"})
+            return ("task_find", {"when": "available " + am.group(1), "status": "incomplete"})
         am = re.search(r"available\s+in\s+(\d+)\s*days?", msg, re.I)
         if am:
-            return ("task_when", {"when": f"available in {am.group(1)} days", "status": "incomplete"})
-        return ("task_when", {"when": "available tomorrow", "status": "incomplete"})
+            return ("task_find", {"when": f"available in {am.group(1)} days", "status": "incomplete"})
+        return ("task_find", {"when": "available tomorrow", "status": "incomplete"})
     if re.search(r"(?:list|show|get|give me|gimme)\s+(?:my\s+)?tasks?\s+due\b", msg, re.I):
-        return ("task_when", {"when": "due within the next week", "status": "incomplete"})
+        return ("task_find", {"when": "due within the next week", "status": "incomplete"})
     # List/show tasks — match at start (allows "list tasks", "list tasks due today", "gimme tasks in 1off")
     if re.match(r"^(list|show|get|gimme|display|what are my|give me)\s+(my\s+)?tasks?\b", msg):
-        return ("task_list", {"status": "incomplete"})
+        return ("task_find", {"status": "incomplete"})
     if re.match(r"^tasks\s*$", msg) or re.match(r"^my tasks\s*$", msg):
-        return ("task_list", {"status": "incomplete"})
+        return ("task_find", {"status": "incomplete"})
     # List/show projects
     if re.match(r"^(list|show|get|gimme|display)\s+(my\s+)?projects?\b", msg):
         return ("project_list", {})
@@ -1327,58 +1344,24 @@ def run_orchestrator(
             return (_format_task_info_text(task, parent_tasks, subtasks, project_labels, tz_name), True, None, used_fallback)
         except Exception as e:
             return (f"Error loading task details: {e}", False, None, used_fallback)
-    if name == "task_list":
+    if name == "task_find":
         tz_name = "UTC"
         try:
             from config import load as load_config
             tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
         except Exception:
             pass
-        try:
-            validated = _validate_task_list_params(params, tz_name)
-            from task_service import list_tasks as svc_list_tasks
-            tasks = svc_list_tasks(
-                limit=500,
-                status=validated.get("status"),
-                project_id=validated.get("project_id"),
-                project_ids=validated.get("project_ids"),
-                project_mode=validated.get("project_mode") or "any",
-                inbox=validated.get("inbox") or False,
-                tag=validated.get("tag"),
-                tags=validated.get("tags"),
-                tag_mode=validated.get("tag_mode") or "any",
-                due_by=validated.get("due_by"),
-                due_before=validated.get("due_before"),
-                available_by=validated.get("available_by"),
-                available_by_required=validated.get("available_by_required") or False,
-                available_or_due_by=validated.get("available_or_due_by"),
-                completed_by=validated.get("completed_by"),
-                completed_after=validated.get("completed_after"),
-                title_contains=validated.get("title_contains"),
-                sort_by=validated.get("sort_by"),
-                flagged=validated.get("flagged"),
-                priority=validated.get("priority"),
-            )
-        except Exception as e:
-            return (f"Error listing tasks: {e}", False, None, used_fallback)
-        return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
-    if name == "task_when":
-        when = (params.get("when") or "").strip()
-        if not when:
-            return ("task_when requires a 'when' expression (e.g. 'due within the next week', 'available tomorrow', 'overdue').", False, None, used_fallback)
-        tz_name = "UTC"
-        try:
-            from config import load as load_config
-            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
-        except Exception:
-            pass
-        when_params = _parse_when_to_task_list_params(when, tz_name)
-        if not when_params:
-            return (f"Could not parse date from \"{when}\". Try: due today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fallback)
         merged = dict(params)
-        merged.pop("when", None)
+        when = (merged.pop("when", None) or "").strip()
+        term = (merged.get("term") or merged.get("query") or "").strip()
+        merged.pop("term", None)
+        merged.pop("query", None)
+        if when:
+            when_params = _parse_when_to_task_list_params(when, tz_name)
+            if not when_params:
+                return (f"Could not parse date from \"{when}\". Try: due today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fallback)
+            merged.update(when_params)
         merged.setdefault("status", "incomplete")
-        merged.update(when_params)
         try:
             validated = _validate_task_list_params(merged, tz_name)
             from task_service import list_tasks as svc_list_tasks
@@ -1394,6 +1377,7 @@ def run_orchestrator(
                 tag_mode=validated.get("tag_mode") or "any",
                 due_by=validated.get("due_by"),
                 due_before=validated.get("due_before"),
+                due_on=validated.get("due_on"),
                 available_by=validated.get("available_by"),
                 available_by_required=validated.get("available_by_required") or False,
                 available_or_due_by=validated.get("available_or_due_by"),
@@ -1403,26 +1387,11 @@ def run_orchestrator(
                 sort_by=validated.get("sort_by"),
                 flagged=validated.get("flagged"),
                 priority=validated.get("priority"),
+                q=term if term else None,
             )
         except Exception as e:
             return (f"Error listing tasks: {e}", False, None, used_fallback)
-        return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
-    if name == "task_find":
-        term = (params.get("term") or params.get("query") or "").strip()
-        if not term:
-            return ("task_find requires a search term (e.g. \"dogs\", \"work\").", False, None, used_fallback)
-        tz_name = "UTC"
-        try:
-            from config import load as load_config
-            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
-        except Exception:
-            pass
-        try:
-            from task_service import list_tasks as svc_list_tasks
-            tasks = svc_list_tasks(limit=500, q=term, status="incomplete")
-        except Exception as e:
-            return (f"Error searching tasks: {e}", False, None, used_fallback)
-        header = f"Tasks matching \"{term}\":\n"
+        header = (f"Tasks matching \"{term}\":\n" if term else "")
         return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
     if name == "list_view":
         list_id = (params.get("list_id") or params.get("name") or "").strip()

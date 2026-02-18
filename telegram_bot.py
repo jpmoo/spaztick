@@ -36,7 +36,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Per-chat conversation history; cleared after successful tool (task_create / task_list)
+# Per-chat conversation history; cleared after successful tool (task_create / task_find)
 _chat_histories: dict[int, list[dict[str, str]]] = {}
 
 # When history is disabled: pending delete confirmation. Persisted to file so it survives restarts and works across workers.
