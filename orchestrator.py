@@ -379,6 +379,26 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
     return out
 
 
+def _extract_tag_from_when(when: str) -> tuple[str, str | None]:
+    """If when contains ' and tagged X' or 'tagged X and ', extract the tag and return (when_without_tag, tag). Otherwise return (when, None)."""
+    if not when or not when.strip():
+        return (when or "", None)
+    raw = when.strip()
+    m = re.search(r"\s+and\s+tagged\s+(\w+)\s*$", raw, re.I)
+    if m:
+        return (raw[: m.start()].strip(), m.group(1).strip())
+    m = re.search(r"^tagged\s+(\w+)\s+and\s+", raw, re.I)
+    if m:
+        return (raw[m.end() :].strip(), m.group(1).strip())
+    m = re.search(r"\s+and\s+tag\s+(\w+)\s*$", raw, re.I)
+    if m:
+        return (raw[: m.start()].strip(), m.group(1).strip())
+    m = re.search(r"^tag\s+(\w+)\s+and\s+", raw, re.I)
+    if m:
+        return (raw[m.end() :].strip(), m.group(1).strip())
+    return (raw, None)
+
+
 def _parse_when_to_task_list_params(when: str, tz_name: str = "UTC") -> dict[str, Any]:
     """
     Parse a natural-language "when" expression into task_find date/overdue params.
@@ -1356,10 +1376,15 @@ def run_orchestrator(
         term = (merged.get("term") or merged.get("query") or "").strip()
         merged.pop("term", None)
         merged.pop("query", None)
+        when_for_date = when
         if when:
-            when_params = _parse_when_to_task_list_params(when, tz_name)
+            when_for_date, extracted_tag = _extract_tag_from_when(when)
+            if extracted_tag and not merged.get("tag") and not merged.get("tags"):
+                merged["tag"] = extracted_tag
+        if when_for_date:
+            when_params = _parse_when_to_task_list_params(when_for_date, tz_name)
             if not when_params:
-                return (f"Could not parse date from \"{when}\". Try: due today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fallback)
+                return (f"Could not parse date from \"{when_for_date}\". Try: due today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fallback)
             merged.update(when_params)
         merged.setdefault("status", "incomplete")
         try:

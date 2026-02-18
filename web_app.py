@@ -826,6 +826,8 @@ def external_chat(request: Request, body: ChatRequest):
             _external_pending.pop(api_key, None)
         if used_fallback and response_text:
             response_text = "Used quick-add from your message.\n\n" + response_text
+        elif not used_fallback and response_text:
+            response_text = response_text.rstrip() + " ⭐"
         return {"response": response_text or "", "tool_used": tool_used, "source": "fallback" if used_fallback else "ai"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

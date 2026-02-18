@@ -257,6 +257,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         if used_fallback and response:
             response = "Used quick-add from your message.\n\n" + response
+        elif not used_fallback and response:
+            response = response.rstrip() + " ⭐"
         if pending_confirm:
             # Store context so on "yes" we can send one-turn history and let the model confirm
             _set_pending_confirm(chat_id, {
