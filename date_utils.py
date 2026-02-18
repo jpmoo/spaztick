@@ -90,6 +90,10 @@ def resolve_relative_date(value: str | None, tz_name: str = "UTC") -> str | None
     # "within the next week" / "within a week"
     if raw in ("within the next week", "within a week"):
         return (today + timedelta(days=7)).isoformat()
+    # "this week" = end of current week (next Sunday, or today if today is Sunday)
+    if raw == "this week":
+        days_until_sunday = (6 - today.weekday()) % 7  # 6 = Sunday in Python weekday()
+        return (today + timedelta(days=days_until_sunday)).isoformat()
     # "in N days" / "in the next N days" / "within the next N days"
     m = re.match(r"^in\s+(\d+)\s+days?$", raw)
     if m:
@@ -144,27 +148,9 @@ def resolve_relative_date(value: str | None, tz_name: str = "UTC") -> str | None
     return None
 
 
-def parse_date_condition(phrase: str | None, tz_name: str = "UTC") -> dict[str, Any]:
-    """
-    Parse a natural-language date condition for task queries (task_when / task_list).
-    Returns a dict with one or more of: due_by, due_before, available_by, available_by_required, overdue.
-
-    - "due Friday" / "due by Friday" -> due_by = next Friday (on or before that day)
-    - "due before next Friday" -> due_before = next Friday (strictly before)
-    - "available today" / "available now" -> available_by = today, available_by_required = True
-      (only tasks that have an available_date on or before today; excludes NULL so you get "on my plate today")
-    - "available tomorrow" -> available_by = tomorrow, available_by_required = False
-    - "overdue" -> overdue = True
-    """
+def _parse_one_date_condition(raw: str, today: date, tz_name: str) -> dict[str, Any]:
+    """Parse a single when phrase (no " and "). Used by parse_date_condition."""
     out: dict[str, Any] = {}
-    if not phrase or not str(phrase).strip():
-        return out
-    raw = str(phrase).strip().lower()
-    try:
-        today = _today_in_tz((tz_name or "").strip() or "UTC")
-    except Exception:
-        today = date.today()
-
     # Overdue
     if raw == "overdue" or re.match(r"^overdue\s*tasks?$", raw):
         out["overdue"] = True
@@ -210,6 +196,40 @@ def parse_date_condition(phrase: str | None, tz_name: str = "UTC") -> dict[str, 
     if resolved:
         out["due_by"] = resolved
     return out
+
+
+def parse_date_condition(phrase: str | None, tz_name: str = "UTC") -> dict[str, Any]:
+    """
+    Parse a natural-language date condition for task queries (task_when / task_list).
+    Returns a dict with one or more of: due_by, due_before, available_by, available_by_required, overdue.
+
+    - "due Friday" / "due by Friday" / "due this week" -> due_by
+    - "due before next Friday" -> due_before (strictly before)
+    - "available today" / "available now" -> available_by = today, available_by_required = True
+    - "available tomorrow" -> available_by = tomorrow, available_by_required = False
+    - "available today and due friday" -> parses both and merges (available_by + due_by)
+    - "overdue" -> overdue = True
+    """
+    out: dict[str, Any] = {}
+    if not phrase or not str(phrase).strip():
+        return out
+    raw = str(phrase).strip().lower()
+    try:
+        today = _today_in_tz((tz_name or "").strip() or "UTC")
+    except Exception:
+        today = date.today()
+
+    # Compound: "available today and due friday" -> parse each part and merge
+    if " and " in raw:
+        parts = [p.strip() for p in raw.split(" and ", 1)]
+        if len(parts) == 2 and parts[0] and parts[1]:
+            a = _parse_one_date_condition(parts[0], today, tz_name)
+            b = _parse_one_date_condition(parts[1], today, tz_name)
+            if a or b:
+                out.update(a)
+                out.update(b)  # second part can add due_by if first had available_by
+                return out
+    return _parse_one_date_condition(raw, today, tz_name)
 
 
 def resolve_task_dates(

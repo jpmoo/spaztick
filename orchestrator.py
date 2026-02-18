@@ -139,9 +139,9 @@ task_create: Use when the user says "add task", "create task", "new task" with a
 
 CRITICAL: When the user asks for TASKS with a date or time bound (due, available, overdue, this week, next week, today, tomorrow, within the next N days), use task_when—NOT task_list and NEVER tag_list. tag_list returns tag names and counts; use tag_list ONLY when the user explicitly asks to "list tags", "show tags", "what tags", or "tag counts". Any request for "tasks due X", "tasks available Y", "overdue tasks", "give me tasks due within the next week" is task_when.
 
-task_when: Use for ANY date-bounded task question. Single required parameter: when (string). Natural-language dates are parsed broadly: "due Friday" / "due by Friday" (on or before that day), "due before next Friday" (strictly before), "available today" / "available now" (only tasks that have an available_date on or before today—i.e. on my plate today), "available tomorrow", "overdue", "due in 5 days", "next week", "end of month", etc. Combine when with other filters: tag, tags, short_id, priority (3=top), etc.
+task_when: Use for ANY date-bounded task question. Single required parameter: when (string). Natural-language dates are parsed broadly: "due Friday" / "due by Friday" / "due this week" (on or before that day or end of week), "due before next Friday" (strictly before), "available today" / "available now" (only tasks that have an available_date on or before today—i.e. on my plate today), "available tomorrow", "overdue", "due in 5 days", "next week", "end of month", etc. For BOTH available and due in one query use "available X and due Y" in a single when string. Combine when with other filters: tag, tags, short_id, priority (3=top), etc.
 Output format: {"name": "task_when", "parameters": {"when": "..."}} and add optional filters.
-Examples: "Tasks due Friday" -> {"name": "task_when", "parameters": {"when": "due Friday"}}. "Tasks due before next Friday" -> {"name": "task_when", "parameters": {"when": "due before next Friday"}}. "Tasks available today" -> {"name": "task_when", "parameters": {"when": "available today"}}. "Tasks due within the next 5 days tagged Robert" -> {"name": "task_when", "parameters": {"when": "due in 5 days", "tag": "Robert"}}. "Overdue tasks" -> {"name": "task_when", "parameters": {"when": "overdue"}}.
+Examples: "Tasks due Friday" -> {"name": "task_when", "parameters": {"when": "due Friday"}}. "Show tasks available today and due friday" -> {"name": "task_when", "parameters": {"when": "available today and due friday"}}. "Tasks due before next Friday" -> {"name": "task_when", "parameters": {"when": "due before next Friday"}}. "Tasks available today" -> {"name": "task_when", "parameters": {"when": "available today"}}. "Tasks due within the next 5 days tagged Robert" -> {"name": "task_when", "parameters": {"when": "due in 5 days", "tag": "Robert"}}. "Overdue tasks" -> {"name": "task_when", "parameters": {"when": "overdue"}}.
 
 task_list: Use when the user asks for tasks WITHOUT a date bound (e.g. "list my tasks", "show tasks in 1off", "flagged tasks") or when they want completed/by date filters (completed_by, completed_after). For any "due X", "available X", "overdue", "this week", "next week" use task_when instead.
 Never include completed tasks unless the user explicitly asks for them (e.g. "completed", "done", "finished") or asks for "all" tasks. When no status is given, always use status "incomplete". Do not send status "complete" unless the user clearly asked for completed/done tasks or "all tasks".
@@ -601,11 +601,11 @@ def _extract_list_identifier_from_message(user_message: str) -> str | None:
 
 
 def _infer_add_task_from_message(user_message: str) -> tuple[str, dict[str, Any]] | None:
-    """Parse 'add task X due Y in Z' style messages into task_create params. Returns (task_create, params) or None."""
+    """Parse 'add task X due Y in Z' / 'make a task X due Y in Z' style messages into task_create params. Returns (task_create, params) or None."""
     if not user_message or not isinstance(user_message, str):
         return None
     raw = user_message.strip()
-    m = re.search(r"^(?:add|create)\s+task\s+(.+)$", raw, re.I)
+    m = re.search(r"^(?:add|create|make(?:\s+a)?)\s+task\s+(.+)$", raw, re.I)
     if not m:
         return None
     rest = m.group(1).strip()
