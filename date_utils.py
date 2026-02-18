@@ -219,16 +219,18 @@ def parse_date_condition(phrase: str | None, tz_name: str = "UTC") -> dict[str, 
     except Exception:
         today = date.today()
 
-    # Compound: "available today and due friday" -> parse each part and merge
-    if " and " in raw:
-        parts = [p.strip() for p in raw.split(" and ", 1)]
-        if len(parts) == 2 and parts[0] and parts[1]:
-            a = _parse_one_date_condition(parts[0], today, tz_name)
-            b = _parse_one_date_condition(parts[1], today, tz_name)
-            if a or b:
-                out.update(a)
-                out.update(b)  # second part can add due_by if first had available_by
-                return out
+    # Compound: "available today and due friday" or "available now, due in 3 days" -> parse each part and merge
+    for sep in (" and ", ", "):
+        if sep in raw:
+            parts = [p.strip() for p in raw.split(sep, 1)]
+            if len(parts) == 2 and parts[0] and parts[1]:
+                a = _parse_one_date_condition(parts[0], today, tz_name)
+                b = _parse_one_date_condition(parts[1], today, tz_name)
+                if a or b:
+                    out.update(a)
+                    out.update(b)  # second part can add due_by if first had available_by
+                    return out
+            break  # only try one separator
     return _parse_one_date_condition(raw, today, tz_name)
 
 

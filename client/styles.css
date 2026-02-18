@@ -2512,15 +2512,15 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 12px 16px;
-  min-height: 48px;
-  background: var(--surface);
+  padding: 6px 12px;
+  min-height: 28px;
+  background: var(--surface-header);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 .board-view-title {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--text);
   flex: 1;
@@ -2532,7 +2532,7 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   margin: 0;
   padding: 2px 4px;
   font: inherit;
-  font-size: 1.1rem;
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--text);
   background: var(--surface);
@@ -2548,6 +2548,22 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   display: flex;
   align-items: center;
   gap: 4px;
+}
+.board-view-header .board-header-btn {
+  width: 28px;
+  height: 28px;
+}
+.board-view-header .board-header-btn .board-header-btn-icon {
+  width: 16px;
+  height: 16px;
+}
+.board-view-header .board-view-close {
+  width: 28px;
+  height: 28px;
+}
+.board-view-header .board-view-close .board-view-close-icon {
+  width: 20px;
+  height: 20px;
 }
 .board-header-btn {
   display: inline-flex;
@@ -2976,8 +2992,8 @@ body[data-theme="cupertino"] .board-region-line:hover {
   height: 18px;
   padding: 0 5px;
   border-radius: 9px;
-  background: var(--danger, #c00);
-  color: #fff;
+  background: var(--text);
+  color: var(--surface);
   font-size: 11px;
   font-weight: 600;
   line-height: 18px;

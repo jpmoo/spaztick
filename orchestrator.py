@@ -601,7 +601,7 @@ def _extract_list_identifier_from_message(user_message: str) -> str | None:
 
 
 def _infer_add_task_from_message(user_message: str) -> tuple[str, dict[str, Any]] | None:
-    """Parse 'add task X due Y in Z' / 'make a task X due Y in Z' style messages into task_create params. Returns (task_create, params) or None."""
+    """Parse 'add task X due Y in Z' / 'make a task due Y in Z Title' style messages into task_create params. Returns (task_create, params) or None."""
     if not user_message or not isinstance(user_message, str):
         return None
     raw = user_message.strip()
@@ -614,17 +614,29 @@ def _infer_add_task_from_message(user_message: str) -> tuple[str, dict[str, Any]
     title = rest
     due_phrase = None
     project = None
-    in_m = re.search(r"\s+in\s+([a-z0-9_-]+)\s*$", rest, re.I)
-    if in_m:
-        project = in_m.group(1).strip()
-        rest = rest[: in_m.start()].strip()
-    due_m = re.search(r"\s+due\s+(.+)$", rest, re.I)
-    if due_m:
-        due_phrase = due_m.group(1).strip()
-        rest = rest[: due_m.start()].strip()
-    title = rest.strip()
-    if not title:
-        return None
+    # "due today in hous Roast coffee" -> project=hous, title=Roast coffee, due=today
+    in_with_title = re.search(r"\s+in\s+([a-z0-9_-]+)\s+(.+)$", rest, re.I)
+    if in_with_title:
+        project = in_with_title.group(1).strip()
+        title = in_with_title.group(2).strip()
+        rest_before_in = rest[: in_with_title.start()].strip()
+        due_m = re.search(r"\s+due\s+(.+)$", rest_before_in, re.I) or re.search(r"^due\s+(.+)$", rest_before_in, re.I)
+        if due_m:
+            due_phrase = due_m.group(1).strip()
+        if not title:
+            return None
+    else:
+        in_m = re.search(r"\s+in\s+([a-z0-9_-]+)\s*$", rest, re.I)
+        if in_m:
+            project = in_m.group(1).strip()
+            rest = rest[: in_m.start()].strip()
+        due_m = re.search(r"\s+due\s+(.+)$", rest, re.I)
+        if due_m:
+            due_phrase = due_m.group(1).strip()
+            rest = rest[: due_m.start()].strip()
+        title = rest.strip()
+        if not title:
+            return None
     params: dict[str, Any] = {"title": title}
     if due_phrase:
         params["due_date"] = due_phrase
@@ -1667,10 +1679,9 @@ def run_orchestrator(
                 p = get_project_by_short_id(ref)
                 if p:
                     project_ids.append(p["id"])
-                else:
-                    project_ids.append(ref)
+                # skip unresolved short_id so we don't pass it as project_id (FK expects UUID)
         except Exception:
-            project_ids = validated.get("projects")
+            project_ids = None
 
     try:
         from task_service import create_task as svc_create_task
