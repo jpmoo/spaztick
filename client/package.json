@@ -17,7 +17,8 @@
     "appId": "com.spaztick.client",
     "productName": "Spaztick",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
     "mac": {
       "identity": null

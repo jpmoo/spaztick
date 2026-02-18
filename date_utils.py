@@ -35,7 +35,7 @@ def resolve_date_expression(value: str | None, tz_name: str = "UTC") -> str | No
         today = _today_in_tz((tz_name or "").strip() or "UTC")
     except Exception:
         today = date.today()
-    if raw == "today":
+    if raw == "today" or raw == "now":
         return today.isoformat()
     if raw == "tomorrow":
         return (today + timedelta(days=1)).isoformat()
@@ -79,7 +79,7 @@ def resolve_relative_date(value: str | None, tz_name: str = "UTC") -> str | None
         today = _today_in_tz((tz_name or "").strip() or "UTC")
     except Exception:
         today = date.today()
-    if raw == "today":
+    if raw == "today" or raw == "now":
         return today.isoformat()
     if raw == "tomorrow":
         return (today + timedelta(days=1)).isoformat()
@@ -87,8 +87,19 @@ def resolve_relative_date(value: str | None, tz_name: str = "UTC") -> str | None
         return (today - timedelta(days=1)).isoformat()
     if raw == "next week" or raw == "in a week":
         return (today + timedelta(days=7)).isoformat()
-    # "in N days"
+    # "within the next week" / "within a week"
+    if raw in ("within the next week", "within a week"):
+        return (today + timedelta(days=7)).isoformat()
+    # "in N days" / "in the next N days" / "within the next N days"
     m = re.match(r"^in\s+(\d+)\s+days?$", raw)
+    if m:
+        n = int(m.group(1))
+        return (today + timedelta(days=n)).isoformat()
+    m = re.match(r"^in\s+the\s+next\s+(\d+)\s+days?$", raw)
+    if m:
+        n = int(m.group(1))
+        return (today + timedelta(days=n)).isoformat()
+    m = re.match(r"^within\s+the\s+next\s+(\d+)\s+days?$", raw)
     if m:
         n = int(m.group(1))
         return (today + timedelta(days=n)).isoformat()

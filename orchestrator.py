@@ -133,17 +133,20 @@ Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume th
 
 # Available tools section (unchanged from original)
 AVAILABLE_TOOLS_SECTION = """
-Available tools: task_create, task_list, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists, tag_list, tag_rename, tag_delete.
+Available tools: task_create, task_list, task_when, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists, tag_list, tag_rename, tag_delete.
 
-task_create: Only "title" is required. Omit description, priority, dates, projects, tags, flagged if the user did not provide them. New tasks are incomplete and not flagged by default. For dates use natural language: today, tomorrow, Monday, Tuesday, next week, in 3 days (they are resolved automatically). Optional "flagged": true to create a flagged task.
-Output format: {"name": "task_create", "parameters": {"title": "..."}} and add any optional keys the user gave (e.g. flagged, due_date).
+CRITICAL: When the user asks for TASKS with a date or time bound (due, available, overdue, this week, next week, today, tomorrow, within the next N days), use task_when—NOT task_list and NEVER tag_list. tag_list returns tag names and counts; use tag_list ONLY when the user explicitly asks to "list tags", "show tags", "what tags", or "tag counts". Any request for "tasks due X", "tasks available Y", "overdue tasks", "give me tasks due within the next week" is task_when.
 
-task_list: "List tasks", "list my tasks", "show tasks", "gimme tasks in X available tomorrow", etc. must be answered with the task_list JSON only. Any request that asks for tasks (optionally in a project, available/due on a date) is a task_list call. For project filter use short_id only (e.g. 1off), never full project name. Use project/short_id "inbox" when the user asks for inbox tasks—inbox means tasks that have no project (unassigned). User can filter and sort.
+task_when: Use for ANY date-bounded task question. Single required parameter: when (string). You CAN and SHOULD combine when with other filters: tag, tags (array), tag_mode ("any"/"all"), short_id, project_ids, project_mode, sort_by, flagged, priority (3=high/top, 2=medium high, 1=medium low, 0=low). "available now" means available today. The "when" expression is parsed automatically.
+Output format: {"name": "task_when", "parameters": {"when": "..."}} and add any optional filters the user asked for (tag, tags, priority, short_id, etc.).
+Examples: "Give me all of my tasks due within the next week" -> {"name": "task_when", "parameters": {"when": "due within the next week"}}. "Tasks due within the next 5 days that are tagged Robert" -> {"name": "task_when", "parameters": {"when": "due in 5 days", "tag": "Robert"}}. "Tasks available now that are top priority" -> {"name": "task_when", "parameters": {"when": "available now", "priority": 3}}. "Tasks due today in project 1off" -> {"name": "task_when", "parameters": {"when": "due today", "short_id": "1off"}}. "Overdue tasks" -> {"name": "task_when", "parameters": {"when": "overdue"}}.
+
+task_list: Use when the user asks for tasks WITHOUT a date bound (e.g. "list my tasks", "show tasks in 1off", "flagged tasks") or when they want completed/by date filters (completed_by, completed_after). For any "due X", "available X", "overdue", "this week", "next week" use task_when instead.
 Never include completed tasks unless the user explicitly asks for them (e.g. "completed", "done", "finished") or asks for "all" tasks. When no status is given, always use status "incomplete". Do not send status "complete" unless the user clearly asked for completed/done tasks or "all tasks".
 Parameters (all optional): status (default incomplete; use "complete" only when user asks for completed/done tasks, or "all" for both), tag (single) or tags (array of tag names), tag_mode ("any" = task has any of the tags [OR], "all" = task has all tags [AND]; default "any"), project or short_id (single; use "inbox" for tasks with no project), projects or short_ids (array of short_ids), project_mode ("any" = task in any of the projects [OR], "all" = task in all [AND]; default "any"), due_by, available_by, available_or_due_by, completed_by (date: tasks completed on or before), completed_after (date: tasks completed on or after), title_contains (substring search in title), overdue, sort_by ("due_date", "available_date", "created_at", "completed_at", "title"), flagged (true/false), priority (number 0-3, or label: "high"/"medium high"/"medium low"/"low", or color: "red"/"orange"/"yellow"/"green"; 3=high=red, 2=medium high=orange, 1=medium low=yellow, 0=low=green).
-Overdue semantics: A task due today is NOT overdue unless the user says "overdue tomorrow" or asks on a later date. Use overdue (not due_by) when the user asks for "overdue" or "overdue tasks". overdue: true or overdue: "today" → tasks due yesterday or earlier; overdue: "tomorrow" → tasks due today or earlier.
+Overdue semantics: A task due today is NOT overdue unless the user says "overdue tomorrow" or asks on a later date. Use overdue (not due_by) when the user asks for "overdue" or "overdue tasks". overdue: true or overdue: "today" -> tasks due yesterday or earlier; overdue: "tomorrow" -> tasks due today or earlier.
 Dates: "today", "tomorrow", "yesterday", "now" (use "today")—app resolves them.
-Examples: "list overdue tasks" -> {"name": "task_list", "parameters": {"overdue": true, "status": "incomplete"}}. "list inbox tasks" or "tasks in inbox" -> {"name": "task_list", "parameters": {"short_id": "inbox", "status": "incomplete"}}. "list tasks due today" -> {"name": "task_list", "parameters": {"due_by": "today", "status": "incomplete"}}. "gimme tasks in 1off available tomorrow" -> {"name": "task_list", "parameters": {"short_id": "1off", "available_by": "tomorrow", "status": "incomplete"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}.
+Examples: "list overdue tasks" -> {"name": "task_when", "parameters": {"when": "overdue"}}. "list inbox tasks" or "tasks in inbox" -> {"name": "task_list", "parameters": {"short_id": "inbox", "status": "incomplete"}}. "list tasks due today" -> {"name": "task_when", "parameters": {"when": "due today"}}. "gimme tasks in 1off available tomorrow" -> {"name": "task_when", "parameters": {"when": "available tomorrow", "short_id": "1off"}}. "list flagged tasks" -> {"name": "task_list", "parameters": {"flagged": true, "status": "incomplete"}}.
 Output format: {"name": "task_list", "parameters": {}} with any of status, tag, tags (array), tag_mode ("any"/"all"), project/short_id (or "inbox"), projects/short_ids (array), project_mode ("any"/"all"), due_by, available_by, available_or_due_by, completed_by, completed_after, title_contains, overdue, sort_by, flagged, priority. E.g. "tasks with tag work or urgent" -> {"tags": ["work", "urgent"], "tag_mode": "any"}. "tasks in 1off and work" -> {"short_ids": ["1off", "work"], "project_mode": "all"}. Priority: use 0-3, or "high"/"medium high"/"medium low"/"low", or "red"/"orange"/"yellow"/"green".
 
 task_find: Find tasks by a search term in title, description, or tag. Use when the user says "find tasks about X", "search for tasks with dogs", "tasks about meetings", "tasks tagged work", or similar. The term is matched in title, description, and tag (so one term finds all matching tasks).
@@ -187,7 +190,7 @@ Output format: {"name": "list_view", "parameters": {"list_id": "test"}}.
 list_lists: List all saved lists with their short_ids. Use when the user asks to list saved lists, show lists, or see list short names (e.g. "list lists", "show my lists").
 Output format: {"name": "list_lists", "parameters": {}}.
 
-tag_list: List all tags with the number of tasks that have that tag (tag in task tags, or #tag in title, or #tag in notes). Each task counted once per tag. Use when the user asks to list tags, show tags, or see tag counts.
+tag_list: List all tag NAMES and how many tasks have each tag. Use ONLY when the user explicitly asks to "list tags", "show tags", "what tags do I have", or "tag counts". Never use tag_list when the user asks for TASKS (e.g. "tasks due next week" is task_when, not tag_list).
 Output format: {"name": "tag_list", "parameters": {}}.
 
 tag_rename: Rename a tag everywhere (task tags, and #tag in titles/notes). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true.
@@ -368,6 +371,48 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
         p = _parse_priority(params["priority"])
         if p is not None:
             out["priority"] = p
+    return out
+
+
+def _parse_when_to_task_list_params(when: str, tz_name: str = "UTC") -> dict[str, Any]:
+    """
+    Parse a natural-language "when" expression into task_list date/overdue params.
+    Used by task_when. Returns a dict with at most one of: due_by, available_by,
+    available_or_due_by, overdue. Examples:
+      "due within the next week" -> {due_by: "YYYY-MM-DD"}
+      "available tomorrow" -> {available_by: "YYYY-MM-DD"}
+      "overdue" -> {overdue: true}
+    """
+    from date_utils import resolve_relative_date
+    out: dict[str, Any] = {}
+    if not when or not str(when).strip():
+        return out
+    raw = str(when).strip().lower()
+    # Overdue: "overdue", "overdue tasks"
+    if raw == "overdue" or (raw.startswith("overdue") and "due" not in raw[7:12]):
+        out["overdue"] = True
+        return out
+    # Normalize common phrases for date resolution (strip "due "/"available ")
+    date_expr = re.sub(r"^(due|available)\s+", "", raw).strip()
+    date_expr = re.sub(r"^due\s+within\s+", "within ", date_expr)
+    date_expr = re.sub(r"^available\s+within\s+", "within ", date_expr)
+    resolved = resolve_relative_date(date_expr, tz_name)
+    if not resolved:
+        return out
+    # "available X" -> available_by
+    if raw.startswith("available"):
+        out["available_by"] = resolved
+        return out
+    # "due or available X" / "available or due X" -> available_or_due_by
+    if "due or available" in raw or "available or due" in raw:
+        out["available_or_due_by"] = resolved
+        return out
+    # "due X" (including "due within the next week", "due today")
+    if raw.startswith("due") or raw == date_expr:
+        out["due_by"] = resolved
+        return out
+    # Bare date phrase (e.g. "today", "next week") -> assume due_by
+    out["due_by"] = resolved
     return out
 
 
@@ -580,6 +625,34 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
     m = re.search(r"^(?:find|search)\s+(.+?)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
     if m and "task" in msg:
         return ("task_find", {"term": m.group(1).strip()})
+    # Date-bounded task requests -> task_when (so we never return bare task_list and drop the date)
+    if re.search(r"tasks?\s+due\s+within\s+the\s+next\s+week", msg, re.I):
+        return ("task_when", {"when": "due within the next week", "status": "incomplete"})
+    m = re.search(r"tasks?\s+due\s+in\s+the\s+next\s+(\d+)\s*days?", msg, re.I)
+    if m:
+        return ("task_when", {"when": f"due in {m.group(1)} days", "status": "incomplete"})
+    if re.search(r"tasks?\s+due\s+in\s+(\d+)\s*days?", msg, re.I):
+        m = re.search(r"tasks?\s+due\s+in\s+(\d+)\s*days?", msg, re.I)
+        if m:
+            return ("task_when", {"when": f"due in {m.group(1)} days", "status": "incomplete"})
+    if re.search(r"(?:list|show|get|give me|gimme)\s+(?:my\s+)?tasks?\s+due\s+today", msg, re.I) or re.search(r"tasks?\s+due\s+today", msg, re.I):
+        return ("task_when", {"when": "due today", "status": "incomplete"})
+    if re.search(r"tasks?\s+due\s+tomorrow", msg, re.I):
+        return ("task_when", {"when": "due tomorrow", "status": "incomplete"})
+    if re.search(r"tasks?\s+due\s+next\s+week", msg, re.I):
+        return ("task_when", {"when": "due next week", "status": "incomplete"})
+    if re.search(r"(?:list|show|get)?\s*overdue\s+tasks?", msg, re.I) or re.search(r"tasks?\s+overdue", msg, re.I):
+        return ("task_when", {"when": "overdue", "status": "incomplete"})
+    if re.search(r"tasks?\s+available\s+", msg, re.I):
+        am = re.search(r"available\s+(today|tomorrow|next\s+week)", msg, re.I)
+        if am:
+            return ("task_when", {"when": "available " + am.group(1), "status": "incomplete"})
+        am = re.search(r"available\s+in\s+(\d+)\s*days?", msg, re.I)
+        if am:
+            return ("task_when", {"when": f"available in {am.group(1)} days", "status": "incomplete"})
+        return ("task_when", {"when": "available tomorrow", "status": "incomplete"})
+    if re.search(r"(?:list|show|get|give me|gimme)\s+(?:my\s+)?tasks?\s+due\b", msg, re.I):
+        return ("task_when", {"when": "due within the next week", "status": "incomplete"})
     # List/show tasks — match at start (allows "list tasks", "list tasks due today", "gimme tasks in 1off")
     if re.match(r"^(list|show|get|gimme|display|what are my|give me)\s+(my\s+)?tasks?\b", msg):
         return ("task_list", {"status": "incomplete"})
@@ -1212,6 +1285,49 @@ def run_orchestrator(
             pass
         try:
             validated = _validate_task_list_params(params, tz_name)
+            from task_service import list_tasks as svc_list_tasks
+            tasks = svc_list_tasks(
+                limit=500,
+                status=validated.get("status"),
+                project_id=validated.get("project_id"),
+                project_ids=validated.get("project_ids"),
+                project_mode=validated.get("project_mode") or "any",
+                inbox=validated.get("inbox") or False,
+                tag=validated.get("tag"),
+                tags=validated.get("tags"),
+                tag_mode=validated.get("tag_mode") or "any",
+                due_by=validated.get("due_by"),
+                available_by=validated.get("available_by"),
+                available_or_due_by=validated.get("available_or_due_by"),
+                completed_by=validated.get("completed_by"),
+                completed_after=validated.get("completed_after"),
+                title_contains=validated.get("title_contains"),
+                sort_by=validated.get("sort_by"),
+                flagged=validated.get("flagged"),
+                priority=validated.get("priority"),
+            )
+        except Exception as e:
+            return (f"Error listing tasks: {e}", False, None)
+        return (_format_task_list_for_telegram(tasks, 50, tz_name), True, None)
+    if name == "task_when":
+        when = (params.get("when") or "").strip()
+        if not when:
+            return ("task_when requires a 'when' expression (e.g. 'due within the next week', 'available tomorrow', 'overdue').", False, None)
+        tz_name = "UTC"
+        try:
+            from config import load as load_config
+            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+        except Exception:
+            pass
+        when_params = _parse_when_to_task_list_params(when, tz_name)
+        if not when_params:
+            return (f"Could not parse date from \"{when}\". Try: due today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None)
+        merged = dict(params)
+        merged.pop("when", None)
+        merged.setdefault("status", "incomplete")
+        merged.update(when_params)
+        try:
+            validated = _validate_task_list_params(merged, tz_name)
             from task_service import list_tasks as svc_list_tasks
             tasks = svc_list_tasks(
                 limit=500,

@@ -1020,6 +1020,7 @@
     if (currentBoardId) {
       refreshBoardTasks(currentBoardId).then(() => {
         syncBoardCardsToQualifyingTasks(currentBoardId);
+        renderBoardRegions(currentBoardId);
         renderBoardCards(currentBoardId);
       });
     }
@@ -1837,7 +1838,7 @@
     document.removeEventListener('click', taskTagsDropdownOutside);
   }
   function taskTagsDropdownOutside(ev) {
-    if (taskTagsDropdownEl && !taskTagsDropdownEl.contains(ev.target) && !ev.target.closest('.tags-cell') && !ev.target.closest('.inspector-tags-btn') && !ev.target.closest('.new-task-tags-btn')) closeTaskTagsDropdown();
+    if (taskTagsDropdownEl && !taskTagsDropdownEl.contains(ev.target) && !ev.target.closest('.tags-cell') && !ev.target.closest('.inspector-tags-btn') && !ev.target.closest('.new-task-tags-btn') && !ev.target.closest('#board-region-edit-overlay')) closeTaskTagsDropdown();
   }
   async function openTaskTagsDropdown(ev, anchorEl, options) {
     ev.stopPropagation();
@@ -3191,6 +3192,56 @@
     saveBoards(boards);
   }
 
+  /** Get task for board context: from boardTasksCache if available, else getTaskById. */
+  function getTaskForBoard(boardId, taskId) {
+    const id = String(taskId);
+    const cache = boardTasksCache[boardId];
+    if (cache) {
+      const t = cache.find((x) => String(x.id) === id);
+      if (t) return t;
+    }
+    return getTaskById(taskId);
+  }
+
+  /** Apply region addTags (only if task doesn't have them) and setPriority to a single task. */
+  async function applyRegionSettingsToTask(taskId, region, boardId) {
+    if (!region || !taskId) return;
+    const task = getTaskForBoard(boardId, taskId);
+    const addTags = Array.isArray(region.addTags) ? region.addTags : [];
+    const currentTags = Array.isArray(task && task.tags) ? task.tags : [];
+    const tagSet = new Set(currentTags.map((t) => String(t).toLowerCase()));
+    const toAdd = addTags.filter((tag) => !tagSet.has(String(tag).toLowerCase()));
+    const newTags = toAdd.length ? [...currentTags, ...toAdd] : null;
+    const body = {};
+    if (newTags) body.tags = newTags;
+    if (region.setPriority !== undefined) body.priority = region.setPriority;
+    if (Object.keys(body).length) await updateTask(taskId, body);
+  }
+
+  /** Apply region addTags and setPriority to all tasks currently in the region. */
+  async function applyRegionSettingsToSnappedTasks(region, boardId) {
+    if (!region || !boardId) return;
+    const lines = region.lines || [];
+    for (const line of lines) {
+      const taskId = line.taskId;
+      if (taskId) await applyRegionSettingsToTask(taskId, region, boardId);
+    }
+  }
+
+  /** When a task is unsnapped from a region, remove region addTags from the task if removeTagsOnUnsnap is set. */
+  async function onTaskUnsnappedFromRegion(taskId, region) {
+    if (!taskId || !region) return;
+    if (!region.removeTagsOnUnsnap) return;
+    const addTags = Array.isArray(region.addTags) ? region.addTags : [];
+    if (addTags.length === 0) return;
+    const task = getTaskForBoard(currentBoardId, taskId);
+    if (!task) return;
+    const currentTags = Array.isArray(task.tags) ? task.tags : [];
+    const removeSet = new Set(addTags.map((t) => String(t).toLowerCase()));
+    const newTags = currentTags.filter((t) => !removeSet.has(String(t).toLowerCase()));
+    if (newTags.length !== currentTags.length) await updateTask(taskId, { tags: newTags });
+  }
+
   function getBoardConnections(boardId) {
     const board = getBoards().find((b) => String(b.id) === String(boardId));
     if (!board) return [];
@@ -3252,9 +3303,13 @@
     let regionsChanged = false;
     regions.forEach((r) => {
       if (!Array.isArray(r.lines)) return;
-      const before = r.lines.length;
+      const beforeIds = new Set((r.lines || []).map((line) => String(line.taskId)));
       r.lines = r.lines.filter((line) => qualifyingIds.has(String(line.taskId)));
-      if (r.lines.length !== before) regionsChanged = true;
+      const afterIds = new Set((r.lines || []).map((line) => String(line.taskId)));
+      beforeIds.forEach((taskId) => {
+        if (!afterIds.has(taskId)) onTaskUnsnappedFromRegion(taskId, r);
+      });
+      if (r.lines.length !== beforeIds.size) regionsChanged = true;
     });
     if (regionsChanged) setBoardRegions(boardId, regions);
   }
@@ -3663,6 +3718,10 @@
     const colorsEl = document.getElementById('board-region-edit-colors');
     const showPriorityCb = document.getElementById('board-region-edit-show-priority');
     const showFlagCb = document.getElementById('board-region-edit-show-flag');
+    const tagsListEl = document.getElementById('board-region-edit-tags-list');
+    const tagsAddBtn = document.getElementById('board-region-edit-tags-add-btn');
+    const removeTagsOnUnsnapCb = document.getElementById('board-region-edit-remove-tags-on-unsnap');
+    const prioritySelect = document.getElementById('board-region-edit-priority');
     const saveBtn = document.getElementById('board-region-edit-save');
     const deleteBtn = document.getElementById('board-region-edit-delete');
     const duplicateBtn = document.getElementById('board-region-edit-duplicate');
@@ -3671,11 +3730,40 @@
     if (deleteBtn) deleteBtn.innerHTML = INSPECTOR_TRASH_SVG;
     if (duplicateBtn) duplicateBtn.innerHTML = INSPECTOR_DUPLICATE_SVG;
     let editingRegionId = null;
+    let regionEditAddTags = [];
+    let regionEditRemoveTagsOnUnsnap = false;
+    let regionEditSetPriority = undefined; // undefined = no change, null = no priority, 0-3 = value
+    function renderRegionEditTagsDisplay() {
+      if (!tagsListEl) return;
+      tagsListEl.innerHTML = '';
+      (regionEditAddTags || []).forEach((tag) => {
+        const chip = document.createElement('span');
+        chip.className = 'board-region-edit-tag-chip';
+        const label = '#' + String(tag).replace(/</g, '&lt;');
+        chip.innerHTML = `<span>${label}</span> <button type="button" aria-label="Remove tag">×</button>`;
+        const removeBtn = chip.querySelector('button');
+        removeBtn.addEventListener('click', () => {
+          regionEditAddTags = regionEditAddTags.filter((t) => t !== tag);
+          renderRegionEditTagsDisplay();
+        });
+        tagsListEl.appendChild(chip);
+      });
+    }
     function openRegionEdit(region) {
       editingRegionId = region.id;
       if (titleInput) titleInput.value = region.title || '';
       if (showPriorityCb) showPriorityCb.checked = region.showPriority !== false;
       if (showFlagCb) showFlagCb.checked = region.showFlag !== false;
+      regionEditAddTags = Array.isArray(region.addTags) ? region.addTags.slice() : [];
+      regionEditRemoveTagsOnUnsnap = !!region.removeTagsOnUnsnap;
+      regionEditSetPriority = region.setPriority;
+      if (removeTagsOnUnsnapCb) removeTagsOnUnsnapCb.checked = regionEditRemoveTagsOnUnsnap;
+      if (prioritySelect) {
+        if (regionEditSetPriority === undefined || regionEditSetPriority === '') prioritySelect.value = '';
+        else if (regionEditSetPriority === null) prioritySelect.value = 'none';
+        else prioritySelect.value = String(regionEditSetPriority);
+      }
+      renderRegionEditTagsDisplay();
       if (colorsEl) {
         colorsEl.innerHTML = BOARD_REGION_COLORS.map((c) => `<button type="button" class="board-region-color-swatch ${c === (region.color || BOARD_REGION_COLORS[0]) ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="Color ${c}"></button>`).join('');
         colorsEl.querySelectorAll('.board-region-color-swatch').forEach((btn) => {
@@ -3685,6 +3773,18 @@
           });
         });
       }
+      if (tagsAddBtn) {
+        tagsAddBtn.onclick = (ev) => {
+          openTaskTagsDropdown(ev, tagsAddBtn, {
+            forNewTask: true,
+            currentTags: regionEditAddTags.slice(),
+            onAfterApply: (tags) => {
+              regionEditAddTags = tags;
+              renderRegionEditTagsDisplay();
+            }
+          });
+        };
+      }
       if (overlay) { overlay.classList.remove('hidden'); overlay.setAttribute('aria-hidden', 'false'); }
       if (titleInput) setTimeout(() => titleInput.focus(), 50);
     }
@@ -3692,7 +3792,7 @@
       editingRegionId = null;
       if (overlay) { overlay.classList.add('hidden'); overlay.setAttribute('aria-hidden', 'true'); }
     }
-    function saveRegionEdit() {
+    async function saveRegionEdit() {
       if (!editingRegionId || !currentBoardId) { closeRegionEdit(); return; }
       const regions = getBoardRegions(currentBoardId);
       const r = regions.find((x) => x.id === editingRegionId);
@@ -3702,7 +3802,14 @@
         r.color = sel && sel.dataset.color ? sel.dataset.color : (r.color || BOARD_REGION_COLORS[0]);
         r.showPriority = showPriorityCb ? showPriorityCb.checked : true;
         r.showFlag = showFlagCb ? showFlagCb.checked : true;
+        r.addTags = Array.isArray(regionEditAddTags) ? regionEditAddTags.slice() : [];
+        r.removeTagsOnUnsnap = !!(removeTagsOnUnsnapCb && removeTagsOnUnsnapCb.checked);
+        const priVal = prioritySelect ? prioritySelect.value : '';
+        if (priVal === '') r.setPriority = undefined;
+        else if (priVal === 'none') r.setPriority = null;
+        else { const n = parseInt(priVal, 10); r.setPriority = (n >= 0 && n <= 3) ? n : undefined; }
         setBoardRegions(currentBoardId, regions);
+        await applyRegionSettingsToSnappedTasks(r, currentBoardId);
         renderBoardRegions(currentBoardId);
       }
       closeRegionEdit();
@@ -3710,8 +3817,13 @@
     function deleteRegionEdit() {
       if (!editingRegionId || !currentBoardId) { closeRegionEdit(); return; }
       if (!confirm('Delete this region? Tasks in it can be re-added to the board from the add task list.')) return;
-      const regions = getBoardRegions(currentBoardId).filter((r) => r.id !== editingRegionId);
-      setBoardRegions(currentBoardId, regions);
+      const regions = getBoardRegions(currentBoardId);
+      const doomed = regions.find((r) => r.id === editingRegionId);
+      if (doomed && (doomed.lines || []).length) {
+        doomed.lines.forEach((line) => { if (line.taskId) onTaskUnsnappedFromRegion(line.taskId, doomed); });
+      }
+      const next = regions.filter((r) => r.id !== editingRegionId);
+      setBoardRegions(currentBoardId, next);
       renderBoardRegions(currentBoardId);
       renderBoardConnections(currentBoardId);
       closeRegionEdit();
@@ -3734,7 +3846,10 @@
         h: src.h || BOARD_REGION_DEFAULT_SIZE,
         lines: [],
         showPriority: src.showPriority !== false,
-        showFlag: src.showFlag !== false
+        showFlag: src.showFlag !== false,
+        addTags: Array.isArray(src.addTags) ? src.addTags.slice() : [],
+        removeTagsOnUnsnap: !!src.removeTagsOnUnsnap,
+        setPriority: src.setPriority
       };
       regions.push(copy);
       setBoardRegions(currentBoardId, regions);
@@ -3946,6 +4061,7 @@
           if (dropCanvasX >= rx && dropCanvasX <= rx + rw && dropCanvasY >= ry && dropCanvasY <= ry + rh) { targetRegionIndex = i; break; }
         }
         const fromRegion = regions[regionIndex];
+        if (targetRegionIndex < 0 || targetRegionIndex !== regionIndex) onTaskUnsnappedFromRegion(taskId, fromRegion);
         fromRegion.lines = fromRegion.lines.filter((_, i) => i !== lineIndex);
         if (targetRegionIndex >= 0) {
           if (targetRegionIndex === regionIndex) {
@@ -3959,6 +4075,7 @@
             fromRegion.lines.splice(insertIdx, 0, { taskId });
           } else {
             regions[targetRegionIndex].lines.push({ taskId });
+            applyRegionSettingsToTask(taskId, regions[targetRegionIndex], boardId);
           }
         } else {
           const cards = getBoardCards(boardId);
@@ -4295,6 +4412,7 @@
             regions[droppedIntoRegion].lines.push({ taskId });
             setBoardCards(boardId, cards);
             setBoardRegions(boardId, regions);
+            applyRegionSettingsToTask(taskId, regions[droppedIntoRegion], boardId);
             renderBoardRegions(boardId);
             renderBoardCards(boardId);
           } else {

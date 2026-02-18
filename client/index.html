@@ -306,6 +306,28 @@
             <span>Show flag</span>
           </label>
         </div>
+        <div class="setting-row">
+          <label>Tags to add to snapped tasks</label>
+          <div class="board-region-edit-tags-wrap">
+            <div id="board-region-edit-tags-list" class="board-region-edit-tags-list" aria-label="Tags to add"></div>
+            <button type="button" id="board-region-edit-tags-add-btn" class="board-region-edit-tags-add-btn" title="Add tag" aria-label="Add tag">+ Tag</button>
+          </div>
+          <label class="setting-checkbox-label board-region-edit-remove-tags-row">
+            <input type="checkbox" id="board-region-edit-remove-tags-on-unsnap" class="board-region-edit-checkbox" aria-label="Remove these tags when task is unsnapped" />
+            <span>Remove these tags when task is unsnapped</span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label for="board-region-edit-priority">Priority for snapped tasks</label>
+          <select id="board-region-edit-priority" class="board-region-edit-priority-select" aria-label="Priority for snapped tasks">
+            <option value="">No change</option>
+            <option value="3">3 – High</option>
+            <option value="2">2 – Medium high</option>
+            <option value="1">1 – Medium low</option>
+            <option value="0">0 – Low</option>
+            <option value="none">No priority</option>
+          </select>
+        </div>
       </div>
       <div class="modal-footer board-region-edit-footer">
         <button type="button" id="board-region-edit-delete" class="board-region-edit-delete" title="Delete region" aria-label="Delete region"></button>
