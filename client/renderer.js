@@ -1781,8 +1781,9 @@
     if (!taskId || !field) return;
 
     const dropdown = buildDateDropdownContent(taskId, field, currentVal, undefined);
-    document.body.appendChild(dropdown);
+    getHashtagDropdownContainer().appendChild(dropdown);
     dateDropdownEl = dropdown;
+    document.body.appendChild(getHashtagDropdownContainer());
 
     const cellRect = cell.getBoundingClientRect();
     dropdown.style.position = 'fixed';
@@ -1807,8 +1808,9 @@
     const dropdown = buildDateDropdownContent(taskId, field, currentVal, () => {
       afterApply();
     });
-    document.body.appendChild(dropdown);
+    getHashtagDropdownContainer().appendChild(dropdown);
     dateDropdownEl = dropdown;
+    document.body.appendChild(getHashtagDropdownContainer());
 
     const trigger = wrapEl.querySelector('.inspector-date-dropdown-trigger');
     const anchor = trigger || wrapEl;
@@ -1832,9 +1834,15 @@
   }
 
   let taskTagsDropdownEl = null;
+  const hasPopoverAPIEarly = typeof document.createElement('div').showPopover === 'function';
   function closeTaskTagsDropdown() {
-    if (taskTagsDropdownEl && taskTagsDropdownEl.parentNode) taskTagsDropdownEl.parentNode.removeChild(taskTagsDropdownEl);
-    taskTagsDropdownEl = null;
+    if (taskTagsDropdownEl) {
+      if (hasPopoverAPIEarly && taskTagsDropdownEl.matches('[popover]')) {
+        try { taskTagsDropdownEl.hidePopover(); } catch (_) {}
+      }
+      if (taskTagsDropdownEl.parentNode) taskTagsDropdownEl.parentNode.removeChild(taskTagsDropdownEl);
+      taskTagsDropdownEl = null;
+    }
     document.removeEventListener('click', taskTagsDropdownOutside);
   }
   function taskTagsDropdownOutside(ev) {
@@ -1854,6 +1862,7 @@
     dropdown.className = 'task-tags-dropdown';
     dropdown.setAttribute('role', 'dialog');
     dropdown.setAttribute('aria-label', 'Assign tags');
+    if (hasPopoverAPIEarly) dropdown.setAttribute('popover', 'manual');
 
     async function applyTags(tags) {
       if (forNewTask) {
@@ -1982,7 +1991,12 @@
 
     dropdown.appendChild(searchSection);
 
-    document.body.appendChild(dropdown);
+    if (hasPopoverAPIEarly) {
+      document.body.appendChild(dropdown);
+    } else {
+      getHashtagDropdownContainer().appendChild(dropdown);
+      document.body.appendChild(getHashtagDropdownContainer());
+    }
     taskTagsDropdownEl = dropdown;
     const rect = anchorEl.getBoundingClientRect();
     const minW = Math.max(rect.width, 240);
@@ -1997,6 +2011,9 @@
       dropdown.style.left = 'auto';
     } else {
       dropdown.style.left = `${rect.left}px`;
+    }
+    if (hasPopoverAPIEarly && dropdown.matches('[popover]')) {
+      try { dropdown.showPopover(); } catch (_) {}
     }
     requestAnimationFrame(() => {
       document.addEventListener('click', taskTagsDropdownOutside);
@@ -2448,6 +2465,7 @@
     const titleCell = row.querySelector('.title-cell');
     if (titleCell && titleCell.dataset.titleTaskId) {
       titleCell.addEventListener('dblclick', (ev) => {
+        ev.preventDefault();
         ev.stopPropagation();
         startTitleEdit(titleCell);
       });
@@ -2600,10 +2618,12 @@
     const row = ev.currentTarget;
     if (!row.classList.contains('task-row')) return;
     ev.stopPropagation();
-    document.querySelectorAll('#center-content .task-row').forEach((x) => x.classList.remove('selected'));
-    row.classList.add('selected');
+    const isTitleCell = ev.target.closest('.title-cell');
+    if (isTitleCell) return;
     const id = row.dataset.id;
     const num = row.dataset.number;
+    document.querySelectorAll('#center-content .task-row').forEach((x) => x.classList.remove('selected'));
+    row.classList.add('selected');
     document.getElementById('inspector-title').textContent = `Task ${num || id || ''}`;
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
     if (id) loadTaskDetails(id);
@@ -4157,7 +4177,7 @@
           }
         } else {
           const cards = getBoardCards(boardId);
-          cards.push({ taskId, x: Math.round(dropCanvasX - BOARD_DEFAULT_CARD_WIDTH / 2), y: Math.round(dropCanvasY - 40), width: BOARD_DEFAULT_CARD_WIDTH, height: BOARD_DEFAULT_CARD_HEIGHT });
+          cards.push({ taskId, x: Math.round(dropCanvasX - BOARD_MIN_CARD_WIDTH / 2), y: Math.round(dropCanvasY - 40), width: BOARD_MIN_CARD_WIDTH, height: BOARD_MIN_CARD_HEIGHT });
           setBoardCards(boardId, cards);
         }
         setBoardRegions(boardId, regions);
@@ -4610,10 +4630,6 @@
             renderBoardRegions(boardId);
             renderBoardCards(boardId);
           } else {
-            card.width = BOARD_MIN_CARD_WIDTH;
-            card.height = BOARD_MIN_CARD_HEIGHT;
-            el.style.width = card.width + 'px';
-            el.style.height = card.height + 'px';
             setBoardCards(boardId, cards);
           }
         }
@@ -4749,6 +4765,7 @@
         input.className = 'inspector-edit-input';
         input.style.width = '100%';
         titleEl.replaceWith(input);
+        attachHashtagAutocomplete(input);
         input.focus();
         input.select();
         const save = () => {
@@ -4875,13 +4892,31 @@
   let hashtagAutocompleteDropdown = null;
   let hashtagAutocompleteState = null;
 
+  let hashtagAutocompleteLayerEl = null;
+  function getHashtagDropdownContainer() {
+    if (!hashtagAutocompleteLayerEl) {
+      const layer = document.createElement('div');
+      layer.id = 'hashtag-autocomplete-layer';
+      layer.className = 'hashtag-autocomplete-layer';
+      layer.setAttribute('aria-hidden', 'true');
+      document.body.appendChild(layer);
+      hashtagAutocompleteLayerEl = layer;
+    }
+    return hashtagAutocompleteLayerEl;
+  }
+  const hasPopoverAPI = typeof document.createElement('div').showPopover === 'function';
   function getHashtagDropdown() {
     if (!hashtagAutocompleteDropdown) {
       const d = document.createElement('div');
       d.id = 'hashtag-autocomplete-dropdown';
       d.className = 'hashtag-autocomplete-dropdown hidden';
       d.setAttribute('role', 'listbox');
-      document.body.appendChild(d);
+      if (hasPopoverAPI) {
+        d.setAttribute('popover', 'manual');
+        document.body.appendChild(d);
+      } else {
+        getHashtagDropdownContainer().appendChild(d);
+      }
       hashtagAutocompleteDropdown = d;
     }
     return hashtagAutocompleteDropdown;
@@ -4889,9 +4924,22 @@
 
   function hideHashtagAutocomplete() {
     const dd = getHashtagDropdown();
+    if (hasPopoverAPI && dd.matches('[popover]')) {
+      try { dd.hidePopover(); } catch (_) {}
+    }
     dd.classList.add('hidden');
     dd.innerHTML = '';
     hashtagAutocompleteState = null;
+  }
+
+  /** Apply user's capitalization from fragment to tag (e.g. "Marg" + "margaret" -> "Margaret"). */
+  function applyCaseFromFragment(fragment, tag) {
+    if (!fragment || !tag) return tag;
+    let out = '';
+    for (let i = 0; i < tag.length; i++) {
+      out += i < fragment.length ? fragment[i] : tag[i];
+    }
+    return out;
   }
 
   function showHashtagAutocomplete(anchorEl, fragment, tagNames, onSelect) {
@@ -4912,7 +4960,7 @@
       item.dataset.index = String(i);
       item.innerHTML = '#' + escape(tag);
       item.addEventListener('click', () => {
-        onSelect(tag);
+        onSelect(tag, fragment);
         hideHashtagAutocomplete();
       });
       dd.appendChild(item);
@@ -4922,11 +4970,35 @@
     dd.style.top = (rect.bottom + 2) + 'px';
     dd.style.minWidth = Math.max(rect.width, 120) + 'px';
     dd.classList.remove('hidden');
+    if (hasPopoverAPI && dd.matches('[popover]')) {
+      try { dd.showPopover(); } catch (_) {}
+    } else {
+      document.body.appendChild(getHashtagDropdownContainer());
+    }
     hashtagAutocompleteState = { anchorEl, fragment, tagNames: filtered, onSelect, selectedIndex: 0 };
     dd.querySelectorAll('.hashtag-autocomplete-item').forEach((el, i) => el.classList.toggle('selected', i === 0));
   }
 
   let hashtagAutocompleteInputTimeout = null;
+  /** For new-task modal: attach autocomplete only after user types # so typing is fast until then. */
+  function attachHashtagAutocompleteLazy(el) {
+    if (!el || el.dataset.hashtagAutocompleteLazy === 'true') return;
+    el.dataset.hashtagAutocompleteLazy = 'true';
+    function attach() {
+      el.removeEventListener('keydown', onKeydown);
+      el.removeEventListener('input', onInput);
+      el.dataset.hashtagAutocompleteLazy = 'false';
+      attachHashtagAutocomplete(el);
+    }
+    function onKeydown(ev) {
+      if (ev.key === '#') attach();
+    }
+    function onInput() {
+      if ((el.value || '').includes('#')) attach();
+    }
+    el.addEventListener('keydown', onKeydown);
+    el.addEventListener('input', onInput);
+  }
   function attachHashtagAutocomplete(el) {
     if (!el || el.dataset.hashtagAutocomplete === 'true') return;
     el.dataset.hashtagAutocomplete = 'true';
@@ -4951,16 +5023,18 @@
       }
       // Debounce dropdown show/update so we don't rebuild DOM on every keystroke (fixes slow typing/scroll).
       if (hashtagAutocompleteInputTimeout) clearTimeout(hashtagAutocompleteInputTimeout);
+      const debounceMs = el.closest('#new-task-modal-overlay') ? 200 : 100;
       const tags = cachedTagNames.length ? cachedTagNames : [];
-      const onSelect = (tag) => {
+      const onSelect = (tag, fragment) => {
         const val = el.value || '';
         const st = el.selectionStart != null ? el.selectionStart : val.length;
         const before = val.substring(0, st);
         const hashIdx = before.lastIndexOf('#');
         if (hashIdx === -1) return;
-        const newText = val.substring(0, hashIdx) + '#' + tag + ' ' + val.substring(st);
+        const displayTag = (fragment != null && fragment !== '') ? applyCaseFromFragment(fragment, tag) : tag;
+        const newText = val.substring(0, hashIdx) + '#' + displayTag + ' ' + val.substring(st);
         el.value = newText;
-        const newPos = hashIdx + 1 + tag.length + 1;
+        const newPos = hashIdx + 1 + displayTag.length + 1;
         el.setSelectionRange(newPos, newPos);
         el.dispatchEvent(new Event('input', { bubbles: true }));
       };
@@ -4974,7 +5048,7 @@
         const frag = textBefore.substring(lastHash + 1);
         if (!/^[a-zA-Z0-9_-]*$/.test(frag)) return;
         showHashtagAutocomplete(el, frag, tags, onSelect);
-      }, 100);
+      }, debounceMs);
     });
 
     el.addEventListener('keydown', (e) => {
@@ -4998,7 +5072,7 @@
       if (e.key === 'Enter' && items[hashtagAutocompleteState.selectedIndex]) {
         e.preventDefault();
         const tag = items[hashtagAutocompleteState.selectedIndex].dataset.tag;
-        if (tag) hashtagAutocompleteState.onSelect(tag);
+        if (tag) hashtagAutocompleteState.onSelect(tag, hashtagAutocompleteState.fragment);
         hideHashtagAutocomplete();
         return;
       }
@@ -6870,7 +6944,7 @@
     const availableInput = newTaskModalContent.querySelector('.new-task-available-date');
     const dueInput = newTaskModalContent.querySelector('.new-task-due-date');
     if (titleInput) titleInput.value = newTaskState.title;
-    attachHashtagAutocomplete(titleInput);
+    attachHashtagAutocompleteLazy(titleInput);
 
     newTaskModalContent.querySelector('.new-task-flag-btn').addEventListener('click', () => {
       newTaskState.flagged = !newTaskState.flagged;

@@ -1096,9 +1096,10 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   flex: 1;
 }
 
-/* Task panel date dropdown (fixed, below cell) */
+/* Task panel date dropdown: on top of everything */
 .task-date-dropdown {
-  z-index: 1000;
+  z-index: 2147483647;
+  position: fixed;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1145,7 +1146,7 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   top: 0;
   margin-left: 4px;
   min-width: 140px;
-  z-index: 1001;
+  z-index: 2147483647;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -1296,9 +1297,10 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   font-weight: 500;
 }
 
-/* Task tags dropdown: uses .task-projects-* section/current-list/result-item etc. for identical layout */
+/* Task tags dropdown: on top of everything (modals, datepickers, etc.) */
 .task-tags-dropdown {
-  z-index: 1000;
+  z-index: 2147483647;
+  position: fixed;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -3341,11 +3343,12 @@ body[data-theme="cupertino"] .board-region-line:hover {
 .modal-overlay:not(.hidden) {
   display: flex;
 }
-/* Notes and board modals: no backdrop-filter — blur is expensive and causes very slow scroll/typing */
+/* Notes, board, and new-task modals: no backdrop-filter — blur is expensive and causes very slow scroll/typing */
 #description-modal-overlay,
 #board-task-inspector-overlay,
 #board-region-edit-overlay,
-#new-board-overlay {
+#new-board-overlay,
+#new-task-modal-overlay {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
@@ -4508,10 +4511,21 @@ h6.description-line-heading { font-size: 0.95em; }
   filter: brightness(1.06);
 }
 
-/* Hashtag autocomplete (title / description) */
+/* Top layer for dropdowns so they sit above modals and native datepickers */
+.hashtag-autocomplete-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483647;
+  pointer-events: none;
+}
+.hashtag-autocomplete-layer > * {
+  pointer-events: auto;
+}
+
+/* Hashtag autocomplete (title / description): on top of everything */
 .hashtag-autocomplete-dropdown {
   position: fixed;
-  z-index: 10000;
+  z-index: 2147483647;
   background: var(--panel-bg);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
