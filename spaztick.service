@@ -1,21 +1,26 @@
 # Systemd unit for Spaztick: Telegram <-> Ollama bridge + config web UI
-# Install: sudo cp spaztick.service /etc/systemd/system/ && sudo systemctl daemon-reload
-# Enable:  sudo systemctl enable spaztick
-# Start:   sudo systemctl start spaztick
-# Logs:    journalctl -u spaztick -f
+# Start at boot (headless Ubuntu): enable the service after editing paths below.
 #
-# Edit WorkingDirectory and ExecStart (or use /path/to/spaztick/.venv/bin/python) for your install.
+# 1. Edit SPAZTICK_ROOT below (or sed when copying), and User= if not your user.
+# 2. sudo cp spaztick.service /etc/systemd/system/
+# 3. sudo systemctl daemon-reload && sudo systemctl enable spaztick && sudo systemctl start spaztick
+# 4. Logs: journalctl -u spaztick -f
 
 [Unit]
 Description=Spaztick Telegram-Ollama bridge and config UI
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
+# Replace with your install path (e.g. /home/ubuntu/spaztick)
 WorkingDirectory=/path/to/spaztick
-ExecStart=/usr/bin/python3 -m run
+ExecStart=/path/to/spaztick/.venv/bin/python -m run
+# Run as your user (replace 'ubuntu' with your username, or remove to run as root)
+User=ubuntu
 Restart=on-failure
 RestartSec=5
 
 [Install]
+# Start at boot (multi-user = normal boot on Ubuntu)
 WantedBy=multi-user.target

@@ -56,23 +56,52 @@ python telegram_bot.py
 
 Config is stored in `config.json` in the project directory.
 
-## Linux service (systemd)
+## Start on reboot (macOS)
 
-1. Copy and edit the unit file:
+Use launchd so the web app (and Telegram bot subprocess) start after login:
+
+1. **Edit the plist path** if your project is not in `~/Documents/Misc/Scripts/spaztick`: open `com.spaztick.plist` and replace `/Users/jpmoore/Documents/Misc/Scripts/spaztick` with your project path in `ProgramArguments`, `WorkingDirectory`, and the log paths.
+
+2. **Install and enable:**
    ```bash
-   sudo cp spaztick.service /etc/systemd/system/
-   sudo sed -i "s|/path/to/spaztick|$(pwd)|" /etc/systemd/system/spaztick.service
-   # Optional: set User=youruser
+   cp com.spaztick.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/com.spaztick.plist
    ```
-2. Enable and start:
+
+3. **Useful commands:**
+   - Stop: `launchctl unload ~/Library/LaunchAgents/com.spaztick.plist`
+   - Start again: `launchctl load ~/Library/LaunchAgents/com.spaztick.plist`
+   - Logs: `tail -f /path/to/spaztick/spaztick-launchd.log`
+
+The job runs `python -m run` (same as the web + Telegram process) with **KeepAlive**, so launchd will restart it if it exits. You can still use `./start.sh` for manual runs (e.g. to force a clean restart and free the port).
+
+## Linux service (systemd) — start at boot (headless Ubuntu)
+
+Runs the web UI and Telegram bot as a systemd service that starts automatically at boot.
+
+1. **Edit the unit file** with your install path and user:
+   ```bash
+   # From your spaztick repo directory on the server:
+   sudo cp spaztick.service /etc/systemd/system/
+   sudo sed -i "s|/path/to/spaztick|$(pwd)|g" /etc/systemd/system/spaztick.service
+   # If your username is not 'ubuntu', fix the User= line:
+   sudo sed -i "s/^User=.*/User=$USER/" /etc/systemd/system/spaztick.service
+   ```
+
+2. **Enable and start** (enable = start at every boot):
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl enable spaztick
    sudo systemctl start spaztick
    ```
-3. Logs: `journalctl -u spaztick -f`
 
-The service runs `python run.py`, which starts both the web UI and the Telegram bot subprocess. Restart the service after changing the config file if you prefer not to use the **Restart Telegram service** button.
+3. **Useful commands:**
+   - Logs: `journalctl -u spaztick -f`
+   - Status: `sudo systemctl status spaztick`
+   - Restart: `sudo systemctl restart spaztick`
+   - Stop / disable at boot: `sudo systemctl stop spaztick` and `sudo systemctl disable spaztick`
+
+The service uses your `.venv` and runs `python -m run` (web UI + Telegram bot). It restarts automatically if it crashes. Config is in `config.json` in the project directory.
 
 ## API (for automation)
 

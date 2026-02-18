@@ -690,7 +690,6 @@
       }
     });
   }
-  /* Notes textarea: no hashtag autocomplete — keeps typing/scrolling fast. Use # in text freely; autocomplete only on task title. */
   if (descriptionNotesLines) {
     descriptionNotesLines.addEventListener('change', onDescriptionPreviewCheckboxChange);
   }
@@ -1340,14 +1339,28 @@
     }
   }
 
-  function updateTaskInLists(updatedTask) {
+  function updateTaskInLists(updatedTask, opts) {
     if (!updatedTask || updatedTask.id == null) return;
     const id = String(updatedTask.id);
     const idxLast = (lastTasks || []).findIndex((t) => String(t.id) === id);
     if (idxLast >= 0) lastTasks[idxLast] = updatedTask;
     const idxDisp = (displayedTasks || []).findIndex((t) => String(t.id) === id);
     if (idxDisp >= 0) displayedTasks[idxDisp] = updatedTask;
-    redrawDisplayedTasks();
+    const center = document.getElementById('center-content');
+    const ul = center && center.querySelector('ul.task-list');
+    const existingRow = ul && ul.querySelector('.task-row[data-id="' + id + '"]');
+    if (existingRow && displayedTasks[idxDisp]) {
+      const wasSelected = existingRow.classList.contains('selected');
+      const newRow = buildTaskRow(displayedTasks[idxDisp]);
+      if (wasSelected) newRow.classList.add('selected');
+      existingRow.parentNode.replaceChild(newRow, existingRow);
+      const src = lastTaskSource != null ? lastTaskSource : 'project';
+      const { manualSort } = getDisplayProperties(src);
+      if (manualSort) addDragToRow(newRow, ul, src);
+    } else {
+      redrawDisplayedTasks();
+    }
+    if (opts && opts.scheduleRefresh === false) return;
     scheduleRefreshAfterTaskChange();
   }
 
@@ -1768,6 +1781,17 @@
     return dropdown;
   }
 
+  let overlayDropdownContainerEl = null;
+  function getHashtagDropdownContainer() {
+    if (!overlayDropdownContainerEl) {
+      const el = document.createElement('div');
+      el.id = 'overlay-dropdown-container';
+      el.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483647';
+      overlayDropdownContainerEl = el;
+    }
+    return overlayDropdownContainerEl;
+  }
+
   function openDateDropdown(ev, cell) {
     ev.stopPropagation();
     closeDateDropdown();
@@ -1834,12 +1858,11 @@
   }
 
   let taskTagsDropdownEl = null;
-  const hasPopoverAPIEarly = typeof document.createElement('div').showPopover === 'function';
+  function getTaskTagsDialog() {
+    return null;
+  }
   function closeTaskTagsDropdown() {
     if (taskTagsDropdownEl) {
-      if (hasPopoverAPIEarly && taskTagsDropdownEl.matches('[popover]')) {
-        try { taskTagsDropdownEl.hidePopover(); } catch (_) {}
-      }
       if (taskTagsDropdownEl.parentNode) taskTagsDropdownEl.parentNode.removeChild(taskTagsDropdownEl);
       taskTagsDropdownEl = null;
     }
@@ -1860,9 +1883,9 @@
 
     const dropdown = document.createElement('div');
     dropdown.className = 'task-tags-dropdown';
+    dropdown.style.pointerEvents = 'auto';
     dropdown.setAttribute('role', 'dialog');
     dropdown.setAttribute('aria-label', 'Assign tags');
-    if (hasPopoverAPIEarly) dropdown.setAttribute('popover', 'manual');
 
     async function applyTags(tags) {
       if (forNewTask) {
@@ -1991,12 +2014,9 @@
 
     dropdown.appendChild(searchSection);
 
-    if (hasPopoverAPIEarly) {
-      document.body.appendChild(dropdown);
-    } else {
-      getHashtagDropdownContainer().appendChild(dropdown);
-      document.body.appendChild(getHashtagDropdownContainer());
-    }
+    const container = getHashtagDropdownContainer();
+    container.appendChild(dropdown);
+    document.body.appendChild(container);
     taskTagsDropdownEl = dropdown;
     const rect = anchorEl.getBoundingClientRect();
     const minW = Math.max(rect.width, 240);
@@ -2011,9 +2031,6 @@
       dropdown.style.left = 'auto';
     } else {
       dropdown.style.left = `${rect.left}px`;
-    }
-    if (hasPopoverAPIEarly && dropdown.matches('[popover]')) {
-      try { dropdown.showPopover(); } catch (_) {}
     }
     requestAnimationFrame(() => {
       document.addEventListener('click', taskTagsDropdownOutside);
@@ -2287,7 +2304,6 @@
     row.dataset.id = t.id || '';
     row.dataset.number = t.number != null ? String(t.number) : '';
     row.dataset.statusComplete = isTaskCompleted(t) ? '1' : '0';
-    row.addEventListener('click', onTaskClick);
     const moveHandleSvg = '<svg class="task-move-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
     if (manualSort) {
       const moveWrap = document.createElement('div');
@@ -2418,58 +2434,20 @@
     });
 
     const statusCell = row.querySelector('.status-cell');
-    if (statusCell) {
-      statusCell.classList.add('task-cell-clickable');
-      statusCell.addEventListener('click', (ev) => updateTaskStatus(t.id, ev));
-    }
+    if (statusCell) statusCell.classList.add('task-cell-clickable');
     const flaggedCell = row.querySelector('.flagged-cell');
-    if (flaggedCell && flaggedCell.dataset.flaggedTaskId) {
-      flaggedCell.classList.add('task-cell-clickable');
-      flaggedCell.addEventListener('click', (ev) => updateTaskFlag(t.id, ev));
-    }
-    row.querySelectorAll('[data-date-field]').forEach((cell) => {
-      cell.classList.add('task-cell-clickable');
-      cell.addEventListener('click', (ev) => openDateDropdown(ev, cell));
-    });
+    if (flaggedCell && flaggedCell.dataset.flaggedTaskId) flaggedCell.classList.add('task-cell-clickable');
+    row.querySelectorAll('[data-date-field]').forEach((cell) => cell.classList.add('task-cell-clickable'));
     const projectsCell = row.querySelector('.projects-cell');
-    if (projectsCell && projectsCell.dataset.projectsTaskId) {
-      projectsCell.classList.add('task-cell-clickable');
-      projectsCell.addEventListener('click', (ev) => openProjectsDropdown(ev, projectsCell));
-    }
+    if (projectsCell && projectsCell.dataset.projectsTaskId) projectsCell.classList.add('task-cell-clickable');
     const descriptionCell = row.querySelector('.description-cell');
-    if (descriptionCell && descriptionCell.dataset.descriptionTaskId) {
-      descriptionCell.classList.add('task-cell-clickable');
-      descriptionCell.addEventListener('click', (ev) => openDescriptionModal(ev, descriptionCell));
-    }
+    if (descriptionCell && descriptionCell.dataset.descriptionTaskId) descriptionCell.classList.add('task-cell-clickable');
     const tagsCell = row.querySelector('.tags-cell');
-    if (tagsCell && tagsCell.dataset.tagsTaskId) {
-      tagsCell.classList.add('task-cell-clickable');
-      tagsCell.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        openTaskTagsDropdown(ev, tagsCell, { taskId: tagsCell.dataset.tagsTaskId, currentTags: JSON.parse(tagsCell.dataset.tagsJson || '[]') });
-      });
-    }
+    if (tagsCell && tagsCell.dataset.tagsTaskId) tagsCell.classList.add('task-cell-clickable');
     const priorityCell = row.querySelector('.priority-cell');
-    if (priorityCell && priorityCell.dataset.priorityTaskId) {
-      priorityCell.classList.add('task-cell-clickable');
-      priorityCell.addEventListener('click', (ev) => openPriorityDropdown(ev, priorityCell));
-    }
+    if (priorityCell && priorityCell.dataset.priorityTaskId) priorityCell.classList.add('task-cell-clickable');
     const recurrenceCell = row.querySelector('.recurrence-cell');
-    if (recurrenceCell && recurrenceCell.dataset.recurrenceTaskId) {
-      recurrenceCell.classList.add('task-cell-clickable');
-      recurrenceCell.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        openRecurrenceModal(recurrenceCell.dataset.recurrenceTaskId);
-      });
-    }
-    const titleCell = row.querySelector('.title-cell');
-    if (titleCell && titleCell.dataset.titleTaskId) {
-      titleCell.addEventListener('dblclick', (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        startTitleEdit(titleCell);
-      });
-    }
+    if (recurrenceCell && recurrenceCell.dataset.recurrenceTaskId) recurrenceCell.classList.add('task-cell-clickable');
 
     return row;
   }
@@ -2478,6 +2456,7 @@
     const row = titleCell.closest('.task-row');
     const taskId = row && row.dataset.id;
     if (!taskId) return;
+    titleEditInProgress = true;
     const span = titleCell.querySelector('.cell-value');
     const currentTitle = (span && span.textContent || '').trim() || '';
     const input = document.createElement('input');
@@ -2487,10 +2466,12 @@
     input.setAttribute('aria-label', 'Edit task title');
     titleCell.innerHTML = '';
     titleCell.appendChild(input);
+    attachHashtagAutocomplete(input);
     input.focus();
     input.select();
 
     function saveAndClose() {
+      titleEditInProgress = false;
       const newTitle = (input.value || '').trim();
       const displayTitle = newTitle || '(no title)';
       titleCell.innerHTML = `<span class="cell-value">${formatTitleWithTagPills(displayTitle)}</span>`;
@@ -2506,6 +2487,7 @@
     }
 
     function cancel() {
+      titleEditInProgress = false;
       titleCell.innerHTML = `<span class="cell-value">${formatTitleWithTagPills(currentTitle || '(no title)')}</span>`;
     }
 
@@ -2561,73 +2543,164 @@
     center.innerHTML = '';
     center.appendChild(ul);
     if (!isListSource && manualSort) setupTaskListDrag(center, ul, src);
+    const inspectorContent = document.getElementById('inspector-content');
+    const shownId = inspectorContent && inspectorContent.dataset.taskId;
+    if (shownId) {
+      const row = Array.from(center.querySelectorAll('.task-row')).find((r) => String(r.dataset.id) === String(shownId));
+      if (row) row.classList.add('selected');
+    }
   }
 
-  function setupTaskListDrag(center, listEl, source) {
+  function addDragToRow(row, listEl, source) {
     const ctx = source != null ? source : 'project';
-    listEl.querySelectorAll('.task-row').forEach((row) => {
-      const handle = row.querySelector('.task-row-move');
-      if (!handle) return;
-      handle.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        let dragged = row;
-        row.classList.add('dragging');
-        const indicator = document.createElement('div');
-        indicator.className = 'drop-indicator';
-        indicator.style.display = 'none';
-        listEl.appendChild(indicator);
-        let dropIndex = 0;
-        const onMove = (e2) => {
-          if (!dragged) return;
+    const handle = row.querySelector('.task-row-move');
+    if (!handle) return;
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      let dragged = row;
+      row.classList.add('dragging');
+      const indicator = document.createElement('div');
+      indicator.className = 'drop-indicator';
+      indicator.style.display = 'none';
+      listEl.appendChild(indicator);
+      let dropIndex = 0;
+      const onMove = (e2) => {
+        if (!dragged) return;
+        const items = Array.from(listEl.querySelectorAll('.task-row'));
+        const y = e2.clientY;
+        const rect = listEl.getBoundingClientRect();
+        if (y < rect.top) dropIndex = 0;
+        else if (y > rect.bottom) dropIndex = items.length;
+        else {
+          const idx = items.findIndex((item) => item.getBoundingClientRect().top + item.offsetHeight / 2 > y);
+          dropIndex = idx < 0 ? items.length : idx;
+        }
+        updateDropIndicator(listEl, indicator, dropIndex, items);
+      };
+      const onUp = () => {
+        if (dragged) {
           const items = Array.from(listEl.querySelectorAll('.task-row'));
-          const y = e2.clientY;
-          const rect = listEl.getBoundingClientRect();
-          if (y < rect.top) dropIndex = 0;
-          else if (y > rect.bottom) dropIndex = items.length;
-          else {
-            const idx = items.findIndex((item) => item.getBoundingClientRect().top + item.offsetHeight / 2 > y);
-            dropIndex = idx < 0 ? items.length : idx;
+          if (dropIndex >= 0 && dropIndex <= items.length) {
+            listEl.insertBefore(dragged, items[dropIndex] || null);
           }
-          updateDropIndicator(listEl, indicator, dropIndex, items);
-        };
-        const onUp = () => {
-          if (dragged) {
-            const items = Array.from(listEl.querySelectorAll('.task-row'));
-            if (dropIndex >= 0 && dropIndex <= items.length) {
-              listEl.insertBefore(dragged, items[dropIndex] || null);
-            }
-            dragged.classList.remove('dragging');
-          }
-          if (indicator.parentNode) indicator.remove();
-          dragged = null;
-          document.removeEventListener('mousemove', onMove);
-          document.removeEventListener('mouseup', onUp);
-          const newOrder = Array.from(listEl.querySelectorAll('.task-row')).map((r) => r.dataset.id).filter(Boolean);
-          const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(ctx);
-          saveDisplayProperties(ctx, o, v, sf, sc, sh, sp, sb, true, newOrder);
-          refreshTaskList();
-        };
-        document.addEventListener('mousemove', onMove);
-        document.addEventListener('mouseup', onUp);
-      });
+          dragged.classList.remove('dragging');
+        }
+        if (indicator.parentNode) indicator.remove();
+        dragged = null;
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        const newOrder = Array.from(listEl.querySelectorAll('.task-row')).map((r) => r.dataset.id).filter(Boolean);
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(ctx);
+        saveDisplayProperties(ctx, o, v, sf, sc, sh, sp, sb, true, newOrder);
+        refreshTaskList();
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
     });
   }
 
-  function onTaskClick(ev) {
-    const row = ev.currentTarget;
+  function setupTaskListDrag(center, listEl, source) {
+    listEl.querySelectorAll('.task-row').forEach((row) => addDragToRow(row, listEl, source));
+  }
+
+  let pendingTaskClickTimeoutId = null;
+  let titleEditInProgress = false;
+  function onTaskClick(ev, rowEl) {
+    const row = rowEl != null ? rowEl : ev.currentTarget;
     if (!row.classList.contains('task-row')) return;
     ev.stopPropagation();
-    const isTitleCell = ev.target.closest('.title-cell');
-    if (isTitleCell) return;
     const id = row.dataset.id;
     const num = row.dataset.number;
-    document.querySelectorAll('#center-content .task-row').forEach((x) => x.classList.remove('selected'));
-    row.classList.add('selected');
-    document.getElementById('inspector-title').textContent = `Task ${num || id || ''}`;
-    document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
-    if (id) loadTaskDetails(id);
+    const isTitleCell = ev.target.closest('.title-cell');
+    function doSelectAndLoad() {
+      if (titleEditInProgress) return;
+      pendingTaskClickTimeoutId = null;
+      document.querySelectorAll('#center-content .task-row').forEach((x) => x.classList.remove('selected'));
+      row.classList.add('selected');
+      document.getElementById('inspector-title').textContent = `Task ${num || id || ''}`;
+      document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
+      if (id) loadTaskDetails(id);
+    }
+    if (isTitleCell) {
+      if (pendingTaskClickTimeoutId) clearTimeout(pendingTaskClickTimeoutId);
+      pendingTaskClickTimeoutId = setTimeout(doSelectAndLoad, 600);
+    } else {
+      doSelectAndLoad();
+    }
   }
+
+  (function setupTaskListDelegation() {
+    const centerContent = document.getElementById('center-content');
+    if (!centerContent) return;
+    centerContent.addEventListener('click', (ev) => {
+      const row = ev.target.closest('.task-row');
+      if (!row || !row.classList.contains('task-row')) return;
+      const statusCell = ev.target.closest('.status-cell');
+      if (statusCell) {
+        ev.stopPropagation();
+        updateTaskStatus(row.dataset.id, ev);
+        return;
+      }
+      const flaggedCell = ev.target.closest('.flagged-cell');
+      if (flaggedCell && flaggedCell.dataset.flaggedTaskId) {
+        ev.stopPropagation();
+        updateTaskFlag(row.dataset.id, ev);
+        return;
+      }
+      const dateCell = ev.target.closest('[data-date-field]');
+      if (dateCell) {
+        ev.stopPropagation();
+        openDateDropdown(ev, dateCell);
+        return;
+      }
+      const projectsCell = ev.target.closest('.projects-cell');
+      if (projectsCell && projectsCell.dataset.projectsTaskId) {
+        ev.stopPropagation();
+        openProjectsDropdown(ev, projectsCell);
+        return;
+      }
+      const descriptionCell = ev.target.closest('.description-cell');
+      if (descriptionCell && descriptionCell.dataset.descriptionTaskId) {
+        ev.stopPropagation();
+        openDescriptionModal(ev, descriptionCell);
+        return;
+      }
+      const tagsCell = ev.target.closest('.tags-cell');
+      if (tagsCell && tagsCell.dataset.tagsTaskId) {
+        ev.stopPropagation();
+        openTaskTagsDropdown(ev, tagsCell, { taskId: tagsCell.dataset.tagsTaskId, currentTags: JSON.parse(tagsCell.dataset.tagsJson || '[]') });
+        return;
+      }
+      const priorityCell = ev.target.closest('.priority-cell');
+      if (priorityCell && priorityCell.dataset.priorityTaskId) {
+        ev.stopPropagation();
+        openPriorityDropdown(ev, priorityCell);
+        return;
+      }
+      const recurrenceCell = ev.target.closest('.recurrence-cell');
+      if (recurrenceCell && recurrenceCell.dataset.recurrenceTaskId) {
+        ev.stopPropagation();
+        openRecurrenceModal(recurrenceCell.dataset.recurrenceTaskId);
+        return;
+      }
+      ev.stopPropagation();
+      onTaskClick(ev, row);
+    });
+    centerContent.addEventListener('dblclick', (ev) => {
+      const titleCell = ev.target.closest('.title-cell');
+      if (!titleCell || !titleCell.dataset.titleTaskId) return;
+      const row = ev.target.closest('.task-row');
+      if (!row) return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (pendingTaskClickTimeoutId) {
+        clearTimeout(pendingTaskClickTimeoutId);
+        pendingTaskClickTimeoutId = null;
+      }
+      startTitleEdit(titleCell);
+    });
+  })();
 
   // --- Inbox (tasks with no project) ---
   function onInboxClick() {
@@ -4888,50 +4961,7 @@
 
   let cachedTagNames = [];
 
-  // --- # Hashtag autocomplete (title / description) ---
-  let hashtagAutocompleteDropdown = null;
-  let hashtagAutocompleteState = null;
-
-  let hashtagAutocompleteLayerEl = null;
-  function getHashtagDropdownContainer() {
-    if (!hashtagAutocompleteLayerEl) {
-      const layer = document.createElement('div');
-      layer.id = 'hashtag-autocomplete-layer';
-      layer.className = 'hashtag-autocomplete-layer';
-      layer.setAttribute('aria-hidden', 'true');
-      document.body.appendChild(layer);
-      hashtagAutocompleteLayerEl = layer;
-    }
-    return hashtagAutocompleteLayerEl;
-  }
-  const hasPopoverAPI = typeof document.createElement('div').showPopover === 'function';
-  function getHashtagDropdown() {
-    if (!hashtagAutocompleteDropdown) {
-      const d = document.createElement('div');
-      d.id = 'hashtag-autocomplete-dropdown';
-      d.className = 'hashtag-autocomplete-dropdown hidden';
-      d.setAttribute('role', 'listbox');
-      if (hasPopoverAPI) {
-        d.setAttribute('popover', 'manual');
-        document.body.appendChild(d);
-      } else {
-        getHashtagDropdownContainer().appendChild(d);
-      }
-      hashtagAutocompleteDropdown = d;
-    }
-    return hashtagAutocompleteDropdown;
-  }
-
-  function hideHashtagAutocomplete() {
-    const dd = getHashtagDropdown();
-    if (hasPopoverAPI && dd.matches('[popover]')) {
-      try { dd.hidePopover(); } catch (_) {}
-    }
-    dd.classList.add('hidden');
-    dd.innerHTML = '';
-    hashtagAutocompleteState = null;
-  }
-
+  // --- # Hashtag autocomplete: inline suggestion (Gmail-style), Tab to accept ---
   /** Apply user's capitalization from fragment to tag (e.g. "Marg" + "margaret" -> "Margaret"). */
   function applyCaseFromFragment(fragment, tag) {
     if (!fragment || !tag) return tag;
@@ -4942,41 +4972,114 @@
     return out;
   }
 
-  function showHashtagAutocomplete(anchorEl, fragment, tagNames, onSelect) {
-    const filtered = (tagNames || []).filter((t) => t.toLowerCase().startsWith((fragment || '').toLowerCase())).slice(0, 10);
-    const dd = getHashtagDropdown();
-    dd.innerHTML = '';
-    if (!filtered.length) {
-      dd.classList.add('hidden');
-      hashtagAutocompleteState = null;
+  function hideHashtagInlineSuggestion(wrapper) {
+    if (!wrapper) return;
+    const span = wrapper.querySelector('.hashtag-inline-suggestion');
+    if (span) {
+      span.textContent = '';
+      span.classList.remove('visible');
+    }
+    wrapper.dataset.hashtagSuggestionTag = '';
+    wrapper.dataset.hashtagSuggestionFragment = '';
+  }
+
+  function acceptHashtagInlineSuggestion(input, tag, fragment) {
+    const val = input.value || '';
+    const st = input.selectionStart != null ? input.selectionStart : val.length;
+    const before = val.substring(0, st);
+    const hashIdx = before.lastIndexOf('#');
+    if (hashIdx === -1) return;
+    const displayTag = (fragment != null && fragment !== '') ? applyCaseFromFragment(fragment, tag) : tag;
+    const newText = val.substring(0, hashIdx) + '#' + displayTag + ' ' + val.substring(st);
+    input.value = newText;
+    const newPos = hashIdx + 1 + displayTag.length + 1;
+    input.setSelectionRange(newPos, newPos);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  function updateHashtagInlineSuggestion(input, wrapper, tagNames) {
+    const value = input.value || '';
+    const start = input.selectionStart != null ? input.selectionStart : value.length;
+    const textBefore = value.substring(0, start);
+    const lastHash = textBefore.lastIndexOf('#');
+    const suggestionSpan = wrapper && wrapper.querySelector('.hashtag-inline-suggestion');
+    const measureSpan = wrapper && wrapper.querySelector('.hashtag-inline-measure');
+    if (!suggestionSpan || !measureSpan) return;
+    if (lastHash === -1) {
+      hideHashtagInlineSuggestion(wrapper);
       return;
     }
-    const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    filtered.forEach((tag, i) => {
-      const item = document.createElement('div');
-      item.className = 'hashtag-autocomplete-item';
-      item.setAttribute('role', 'option');
-      item.dataset.tag = tag;
-      item.dataset.index = String(i);
-      item.innerHTML = '#' + escape(tag);
-      item.addEventListener('click', () => {
-        onSelect(tag, fragment);
-        hideHashtagAutocomplete();
-      });
-      dd.appendChild(item);
-    });
-    const rect = anchorEl.getBoundingClientRect();
-    dd.style.left = rect.left + 'px';
-    dd.style.top = (rect.bottom + 2) + 'px';
-    dd.style.minWidth = Math.max(rect.width, 120) + 'px';
-    dd.classList.remove('hidden');
-    if (hasPopoverAPI && dd.matches('[popover]')) {
-      try { dd.showPopover(); } catch (_) {}
-    } else {
-      document.body.appendChild(getHashtagDropdownContainer());
+    const fragment = textBefore.substring(lastHash + 1);
+    if (!/^[a-zA-Z0-9_-]*$/.test(fragment)) {
+      hideHashtagInlineSuggestion(wrapper);
+      return;
     }
-    hashtagAutocompleteState = { anchorEl, fragment, tagNames: filtered, onSelect, selectedIndex: 0 };
-    dd.querySelectorAll('.hashtag-autocomplete-item').forEach((el, i) => el.classList.toggle('selected', i === 0));
+    const tags = tagNames && tagNames.length ? tagNames : [];
+    const match = tags.find((t) => t.toLowerCase().startsWith(fragment.toLowerCase()));
+    if (!match) {
+      hideHashtagInlineSuggestion(wrapper);
+      return;
+    }
+    const displayTag = applyCaseFromFragment(fragment, match);
+    const suffix = displayTag.substring(fragment.length);
+    if (!suffix) {
+      hideHashtagInlineSuggestion(wrapper);
+      return;
+    }
+    const textToCursor = value.substring(0, start);
+    const cs = getComputedStyle(input);
+    const paddingLeft = parseFloat(cs.paddingLeft) || 0;
+    const paddingTop = parseFloat(cs.paddingTop) || 0;
+    if (input.tagName === 'TEXTAREA') {
+      const lines = textToCursor.split('\n');
+      const lineIndex = Math.max(0, lines.length - 1);
+      const currentLine = lines[lineIndex] || '';
+      measureSpan.textContent = currentLine;
+      let lineHeight = parseFloat(cs.lineHeight);
+      if (Number.isNaN(lineHeight) || lineHeight <= 0) lineHeight = 1.2 * (parseFloat(cs.fontSize) || 16);
+      suggestionSpan.style.left = (paddingLeft + measureSpan.offsetWidth) + 'px';
+      suggestionSpan.style.top = (paddingTop + lineIndex * lineHeight) + 'px';
+    } else {
+      measureSpan.textContent = textToCursor;
+      suggestionSpan.style.left = (paddingLeft + measureSpan.offsetWidth) + 'px';
+      suggestionSpan.style.top = paddingTop + 'px';
+    }
+    suggestionSpan.textContent = suffix;
+    suggestionSpan.classList.add('visible');
+    wrapper.dataset.hashtagSuggestionTag = match;
+    wrapper.dataset.hashtagSuggestionFragment = fragment;
+  }
+
+  function wrapInputForHashtagInline(input) {
+    let wrapper = input.closest('.hashtag-inline-wrap');
+    if (wrapper) return wrapper;
+    const parent = input.parentNode;
+    wrapper = document.createElement('div');
+    wrapper.className = 'hashtag-inline-wrap';
+    parent.insertBefore(wrapper, input);
+    wrapper.appendChild(input);
+    const measureSpan = document.createElement('span');
+    measureSpan.className = 'hashtag-inline-measure';
+    measureSpan.setAttribute('aria-hidden', 'true');
+    const cs = getComputedStyle(input);
+    measureSpan.style.font = cs.font;
+    measureSpan.style.fontSize = cs.fontSize;
+    measureSpan.style.fontFamily = cs.fontFamily;
+    measureSpan.style.fontWeight = cs.fontWeight;
+    measureSpan.style.letterSpacing = cs.letterSpacing;
+    measureSpan.style.paddingLeft = '0';
+    measureSpan.style.paddingTop = '0';
+    wrapper.appendChild(measureSpan);
+    const suggestionSpan = document.createElement('span');
+    suggestionSpan.className = 'hashtag-inline-suggestion';
+    suggestionSpan.setAttribute('aria-hidden', 'true');
+    suggestionSpan.style.font = cs.font;
+    suggestionSpan.style.fontSize = cs.fontSize;
+    suggestionSpan.style.fontFamily = cs.fontFamily;
+    suggestionSpan.style.fontWeight = cs.fontWeight;
+    suggestionSpan.style.letterSpacing = cs.letterSpacing;
+    wrapper.appendChild(suggestionSpan);
+    return wrapper;
   }
 
   let hashtagAutocompleteInputTimeout = null;
@@ -4999,93 +5102,51 @@
     el.addEventListener('keydown', onKeydown);
     el.addEventListener('input', onInput);
   }
+
   function attachHashtagAutocomplete(el) {
     if (!el || el.dataset.hashtagAutocomplete === 'true') return;
     el.dataset.hashtagAutocomplete = 'true';
+    const wrapper = wrapInputForHashtagInline(el);
+    const tags = cachedTagNames.length ? cachedTagNames : [];
 
     el.addEventListener('input', () => {
-      const value = el.value || '';
-      const start = el.selectionStart != null ? el.selectionStart : value.length;
-      const textBefore = value.substring(0, start);
-      const lastHash = textBefore.lastIndexOf('#');
-      if (lastHash === -1) {
-        if (hashtagAutocompleteInputTimeout) clearTimeout(hashtagAutocompleteInputTimeout);
-        hashtagAutocompleteInputTimeout = null;
-        hideHashtagAutocomplete();
-        return;
-      }
-      const fragment = textBefore.substring(lastHash + 1);
-      if (!/^[a-zA-Z0-9_-]*$/.test(fragment)) {
-        if (hashtagAutocompleteInputTimeout) clearTimeout(hashtagAutocompleteInputTimeout);
-        hashtagAutocompleteInputTimeout = null;
-        hideHashtagAutocomplete();
-        return;
-      }
-      // Debounce dropdown show/update so we don't rebuild DOM on every keystroke (fixes slow typing/scroll).
       if (hashtagAutocompleteInputTimeout) clearTimeout(hashtagAutocompleteInputTimeout);
-      const debounceMs = el.closest('#new-task-modal-overlay') ? 200 : 100;
-      const tags = cachedTagNames.length ? cachedTagNames : [];
-      const onSelect = (tag, fragment) => {
-        const val = el.value || '';
-        const st = el.selectionStart != null ? el.selectionStart : val.length;
-        const before = val.substring(0, st);
-        const hashIdx = before.lastIndexOf('#');
-        if (hashIdx === -1) return;
-        const displayTag = (fragment != null && fragment !== '') ? applyCaseFromFragment(fragment, tag) : tag;
-        const newText = val.substring(0, hashIdx) + '#' + displayTag + ' ' + val.substring(st);
-        el.value = newText;
-        const newPos = hashIdx + 1 + displayTag.length + 1;
-        el.setSelectionRange(newPos, newPos);
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-      };
+      const debounceMs = el.closest('#new-task-modal-overlay') || el.closest('#description-modal-overlay') ? 150 : 80;
       hashtagAutocompleteInputTimeout = setTimeout(() => {
         hashtagAutocompleteInputTimeout = null;
-        const v = el.value || '';
-        const st = el.selectionStart != null ? el.selectionStart : v.length;
-        const textBefore = v.substring(0, st);
-        const lastHash = textBefore.lastIndexOf('#');
-        if (lastHash === -1) return;
-        const frag = textBefore.substring(lastHash + 1);
-        if (!/^[a-zA-Z0-9_-]*$/.test(frag)) return;
-        showHashtagAutocomplete(el, frag, tags, onSelect);
+        updateHashtagInlineSuggestion(el, wrapper, cachedTagNames.length ? cachedTagNames : []);
       }, debounceMs);
     });
 
     el.addEventListener('keydown', (e) => {
-      if (!hashtagAutocompleteState || hashtagAutocompleteState.anchorEl !== el) return;
-      const dd = getHashtagDropdown();
-      if (dd.classList.contains('hidden')) return;
-      const items = dd.querySelectorAll('.hashtag-autocomplete-item');
-      if (!items.length) return;
-      if (e.key === 'ArrowDown') {
+      const tag = wrapper.dataset.hashtagSuggestionTag;
+      const fragment = wrapper.dataset.hashtagSuggestionFragment;
+      if (e.key === 'Tab' && tag) {
         e.preventDefault();
-        hashtagAutocompleteState.selectedIndex = (hashtagAutocompleteState.selectedIndex + 1) % items.length;
-        items.forEach((item, i) => item.classList.toggle('selected', i === hashtagAutocompleteState.selectedIndex));
-        return;
-      }
-      if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        hashtagAutocompleteState.selectedIndex = (hashtagAutocompleteState.selectedIndex - 1 + items.length) % items.length;
-        items.forEach((item, i) => item.classList.toggle('selected', i === hashtagAutocompleteState.selectedIndex));
-        return;
-      }
-      if (e.key === 'Enter' && items[hashtagAutocompleteState.selectedIndex]) {
-        e.preventDefault();
-        const tag = items[hashtagAutocompleteState.selectedIndex].dataset.tag;
-        if (tag) hashtagAutocompleteState.onSelect(tag, hashtagAutocompleteState.fragment);
-        hideHashtagAutocomplete();
+        acceptHashtagInlineSuggestion(el, tag, fragment);
+        hideHashtagInlineSuggestion(wrapper);
         return;
       }
       if (e.key === 'Escape') {
-        e.preventDefault();
-        hideHashtagAutocomplete();
+        if (tag) {
+          e.preventDefault();
+          hideHashtagInlineSuggestion(wrapper);
+        }
       }
     });
 
+    el.addEventListener('keyup', () => {
+      requestAnimationFrame(() => updateHashtagInlineSuggestion(el, wrapper, cachedTagNames.length ? cachedTagNames : []));
+    });
+    el.addEventListener('click', () => {
+      requestAnimationFrame(() => updateHashtagInlineSuggestion(el, wrapper, cachedTagNames.length ? cachedTagNames : []));
+    });
+
     el.addEventListener('blur', () => {
-      setTimeout(hideHashtagAutocomplete, 150);
+      setTimeout(() => hideHashtagInlineSuggestion(wrapper), 120);
     });
   }
+  if (descriptionEditTextarea) attachHashtagAutocomplete(descriptionEditTextarea);
 
   function getTagSort() {
     const v = (localStorage.getItem(NAV_TAG_SORT_KEY) || 'name_asc').trim();
@@ -5198,8 +5259,10 @@
     if (centerDesc) centerDesc.textContent = '';
     document.getElementById('center-content').innerHTML = '<p class="placeholder">Loading…</p>';
     document.getElementById('inspector-title').textContent = 'Tag';
-    loadTagDetails(tag);
-    loadTagTasks(tag);
+    requestAnimationFrame(() => {
+      loadTagDetails(tag);
+      loadTagTasks(tag);
+    });
   }
 
   function loadTagDetails(tagName) {
@@ -5838,7 +5901,7 @@
     if (!div) return;
     try {
       const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
-      updateTaskInLists(t);
+      updateTaskInLists(t, { scheduleRefresh: false });
       if (opts && opts.onTitle != null && t.number != null) opts.onTitle(t.number);
       div.dataset.taskId = taskId;
       const createdVal = t.created_at ? formatDateTimeForInspector(t.created_at) : '—';

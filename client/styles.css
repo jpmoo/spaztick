@@ -4511,41 +4511,31 @@ h6.description-line-heading { font-size: 0.95em; }
   filter: brightness(1.06);
 }
 
-/* Top layer for dropdowns so they sit above modals and native datepickers */
-.hashtag-autocomplete-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 2147483647;
+/* Hashtag autocomplete: inline suggestion (Gmail-style), Tab to accept */
+.hashtag-inline-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+.hashtag-inline-measure {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  visibility: hidden;
+  white-space: pre;
   pointer-events: none;
 }
-.hashtag-autocomplete-layer > * {
-  pointer-events: auto;
+.hashtag-inline-suggestion {
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--text-muted);
+  pointer-events: none;
+  white-space: pre;
 }
-
-/* Hashtag autocomplete (title / description): on top of everything */
-.hashtag-autocomplete-dropdown {
-  position: fixed;
-  z-index: 2147483647;
-  background: var(--panel-bg);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  max-height: 200px;
-  overflow-y: auto;
-  list-style: none;
-  margin: 0;
-  padding: 4px 0;
+.hashtag-inline-suggestion.visible {
+  visibility: visible;
 }
-.hashtag-autocomplete-dropdown.hidden {
-  display: none !important;
-}
-.hashtag-autocomplete-item {
-  padding: 6px 12px;
-  cursor: pointer;
-  font-size: 0.95rem;
-  color: var(--text);
-}
-.hashtag-autocomplete-item:hover,
-.hashtag-autocomplete-item.selected {
-  background: var(--bg);
+.hashtag-inline-suggestion:not(.visible) {
+  visibility: hidden;
 }
