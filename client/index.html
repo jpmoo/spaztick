@@ -257,6 +257,9 @@
         <button type="button" id="board-add-region-btn" class="board-add-region-btn" title="Add region" aria-label="Add region">
           <svg class="board-add-region-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M18.2513521,2.49820514 C19.9843968,2.49820514 21.4006513,3.85452629 21.4962634,5.56367469 L21.5014083,5.74810161 L21.5008077,17.7519229 C21.5005988,19.5467519 20.0455893,21.0018356 18.2507042,21.0018356 L6.25005624,21.0018356 C4.51701151,21.0018356 3.10075697,19.6455145 3.00514494,17.9363661 L3,17.7519391 L3.00060063,5.74811784 C3.00080955,3.9532889 4.45581897,2.49820514 6.25064792,2.49820514 L18.2513521,2.49820514 Z M11.5,9.49820514 L4.5,9.49920514 L4.50010353,17.7518667 L4.50727563,17.9125936 C4.58838653,18.803788 5.33765319,19.5018356 6.25,19.5018356 L11.5,19.5012051 L11.5,9.49820514 Z M20,15.4982051 L13,15.4992051 L13,19.5012051 L18.2506479,19.5018356 C19.2171619,19.5018356 20.0006952,18.7182622 20.0008077,17.7518046 L20,15.4982051 Z M18.2514083,3.99820514 L13,3.99720514 L13,13.9992051 L20,13.9982051 L20.0013048,5.74817408 L19.9941327,5.58744715 C19.9130218,4.69625278 19.1637551,3.99820514 18.2514083,3.99820514 Z M11.5,3.99720514 L6.25073228,3.99820514 L6.10723072,4.00401666 C5.20785168,4.0770851 4.5007075,4.83010139 4.50060063,5.7482362 L4.5,7.99920514 L11.5,7.99820514 L11.5,3.99720514 Z"/></svg>
         </button>
+        <button type="button" id="board-add-agenda-btn" class="board-add-region-btn" title="Add agenda" aria-label="Add agenda">
+          <svg class="board-add-agenda-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M3 9H21M7 3V5M17 3V5M7 13H17V17H7V13ZM6.2 21H17.8C18.9201 21 19.4802 21 19.908 20.782C20.2843 20.5903 20.5903 20.2843 20.782 19.908C21 19.4802 21 18.9201 21 17.8V8.2C21 7.07989 21 6.51984 20.782 6.09202C20.5903 5.71569 20.2843 5.40973 19.908 5.21799C19.4802 5 18.9201 5 17.8 5H6.2C5.0799 5 4.51984 5 4.09202 5.21799C3.71569 5.40973 3.40973 5.71569 3.21799 6.09202C3 6.51984 3 7.07989 3 8.2V17.8C3 18.9201 3 19.4802 3.21799 19.908C3.40973 20.2843 3.71569 20.5903 4.09202 20.782C4.51984 21 5.07989 21 6.2 21Z"/></svg>
+        </button>
       </div>
       <div id="board-add-task-popover" class="board-add-task-popover hidden" role="listbox" aria-hidden="true">
         <div class="board-add-task-popover-title">Tasks not on board</div>
@@ -306,6 +309,21 @@
             <span>Show flag</span>
           </label>
         </div>
+        <div id="board-region-edit-agenda-section" class="board-region-edit-agenda-section hidden">
+          <div class="setting-row">
+            <label>Show today and</label>
+            <div class="board-region-edit-agenda-days-row">
+              <input type="number" id="board-region-edit-agenda-days" class="board-region-edit-agenda-days-input" min="1" max="4" value="1" aria-label="Number of days" />
+              <span>day(s)</span>
+              <select id="board-region-edit-agenda-direction" class="board-region-edit-agenda-direction-select" aria-label="Before or after">
+                <option value="before">before</option>
+                <option value="after">after</option>
+                <option value="before_and_after">before and after</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div id="board-region-edit-region-only-section" class="board-region-edit-region-only">
         <div class="setting-row">
           <label>Tags to add to snapped tasks</label>
           <div class="board-region-edit-tags-wrap">
@@ -327,6 +345,7 @@
             <option value="0">0 – Low</option>
             <option value="none">No priority</option>
           </select>
+        </div>
         </div>
       </div>
       <div class="modal-footer board-region-edit-footer">

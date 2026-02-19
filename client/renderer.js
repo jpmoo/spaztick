@@ -22,6 +22,28 @@
   const DISPLAY_PROPERTIES_KEY = 'spaztick_display_properties';
   const INSPECTOR_HEIGHT_KEY = 'spaztick_inspector_height';
   const DEFAULT_INSPECTOR_HEIGHT = 220;
+  const TASK_LIST_DEFAULT_WIDTHS = {
+    title: 180,
+    status: 88,
+    available_date: 100,
+    due_date: 100,
+    description: 40,
+    projects: 90,
+    tags: 80,
+    recurrence: 40,
+  };
+  const TASK_LIST_COLUMN_LABELS = {
+    status: 'Status',
+    title: 'Name',
+    available_date: 'Avail',
+    due_date: 'Due',
+    description: 'Desc',
+    projects: 'Proj',
+    tags: 'Tags',
+    recurrence: 'Recur',
+  };
+  const TASK_LIST_MIN_WIDTH = 48;
+  const TASK_LIST_MOVE_WIDTH = 28;
   const LEFT_PANEL_WIDTH_KEY = 'spaztick_left_panel_width';
   const MIN_LEFT_PANEL_WIDTH = 180;
   const MAX_LEFT_PANEL_WIDTH = 480;
@@ -1067,6 +1089,7 @@
       if (raw) all = JSON.parse(raw) || {};
     } catch (_) {}
     const current = getDisplayProperties(source);
+    const existing = all[key] && typeof all[key] === 'object' ? all[key] : {};
     all[key] = {
       order: order || current.order,
       visible: visible != null ? Array.from(visible) : Array.from(current.visible),
@@ -1077,7 +1100,35 @@
       sortBy: sortBy !== undefined ? sortBy : current.sortBy,
       manualSort: manualSort !== undefined ? manualSort : current.manualSort,
       manualOrder: manualOrder !== undefined ? manualOrder : current.manualOrder,
+      columnWidths: existing.columnWidths && typeof existing.columnWidths === 'object' ? existing.columnWidths : {},
     };
+    localStorage.setItem(DISPLAY_PROPERTIES_KEY, JSON.stringify(all));
+  }
+
+  function getTaskListColumnWidths(source) {
+    const key = displayKey(source != null ? source : 'project');
+    try {
+      const raw = localStorage.getItem(DISPLAY_PROPERTIES_KEY);
+      if (raw) {
+        const all = JSON.parse(raw) || {};
+        const o = all[key];
+        if (o && typeof o === 'object' && o.columnWidths && typeof o.columnWidths === 'object') return { ...o.columnWidths };
+      }
+    } catch (_) {}
+    return {};
+  }
+
+  function saveTaskListColumnWidth(colKey, widthPx, source) {
+    const w = Math.max(TASK_LIST_MIN_WIDTH, Math.round(widthPx));
+    const key = displayKey(source != null ? source : 'project');
+    let all = {};
+    try {
+      const raw = localStorage.getItem(DISPLAY_PROPERTIES_KEY);
+      if (raw) all = JSON.parse(raw) || {};
+    } catch (_) {}
+    if (!all[key] || typeof all[key] !== 'object') all[key] = {};
+    if (!all[key].columnWidths || typeof all[key].columnWidths !== 'object') all[key].columnWidths = {};
+    all[key].columnWidths[colKey] = w;
     localStorage.setItem(DISPLAY_PROPERTIES_KEY, JSON.stringify(all));
   }
 
@@ -1317,17 +1368,23 @@
     const center = document.getElementById('center-content');
     if (!center) return;
     const src = lastTaskSource;
-    const { manualSort } = getDisplayProperties(src);
+    const wrapper = center.querySelector('.task-list-wrapper');
+    if (!wrapper) {
+      renderTaskList(displayedTasks, src);
+      return;
+    }
+    const ul = wrapper.querySelector('ul.task-list');
+    if (!ul) return;
+    const { order, visible, manualSort } = getDisplayProperties(src);
+    const columnKeys = [];
+    if (manualSort) columnKeys.push('move');
+    columnKeys.push('status');
+    columnKeys.push('title');
+    order.forEach((k) => { if (visible.has(k)) columnKeys.push(k); });
     const selectedRow = center.querySelector('.task-row.selected');
     const selectedId = selectedRow && selectedRow.dataset.id;
-    const ul = document.createElement('ul');
-    ul.className = 'task-list';
-    ul.style.listStyle = 'none';
-    ul.style.padding = '0';
-    ul.style.margin = '0';
-    displayedTasks.forEach((t) => ul.appendChild(buildTaskRow(t)));
-    center.innerHTML = '';
-    center.appendChild(ul);
+    ul.innerHTML = '';
+    displayedTasks.forEach((t) => ul.appendChild(buildTaskRow(t, columnKeys)));
     if (manualSort) setupTaskListDrag(center, ul, src);
     if (selectedId) {
       const row = center.querySelector(`.task-row[data-id="${selectedId}"]`);
@@ -1350,12 +1407,17 @@
     const ul = center && center.querySelector('ul.task-list');
     const existingRow = ul && ul.querySelector('.task-row[data-id="' + id + '"]');
     if (existingRow && displayedTasks[idxDisp]) {
+      const src = lastTaskSource != null ? lastTaskSource : 'project';
+      const { order, visible, manualSort } = getDisplayProperties(src);
+      const columnKeys = [];
+      if (manualSort) columnKeys.push('move');
+      columnKeys.push('status');
+      columnKeys.push('title');
+      order.forEach((k) => { if (visible.has(k)) columnKeys.push(k); });
       const wasSelected = existingRow.classList.contains('selected');
-      const newRow = buildTaskRow(displayedTasks[idxDisp]);
+      const newRow = buildTaskRow(displayedTasks[idxDisp], columnKeys);
       if (wasSelected) newRow.classList.add('selected');
       existingRow.parentNode.replaceChild(newRow, existingRow);
-      const src = lastTaskSource != null ? lastTaskSource : 'project';
-      const { manualSort } = getDisplayProperties(src);
       if (manualSort) addDragToRow(newRow, ul, src);
     } else {
       redrawDisplayedTasks();
@@ -1403,7 +1465,7 @@
     refreshAfterTaskTimeoutId = setTimeout(() => {
       refreshAfterTaskTimeoutId = null;
       refreshLeftPanel();
-      refreshCenterView();
+      /* Skip refreshCenterView to avoid panel blink: the list was already updated in updateTaskInLists. */
     }, REFRESH_AFTER_TASK_DELAY_MS);
   }
   function refreshLeftAndCenter() {
@@ -1493,8 +1555,8 @@
   async function updateTaskFlag(taskId, ev) {
     ev.stopPropagation();
     if (!taskId) return;
-    const row = ev.currentTarget.closest('.task-row');
-    const cell = ev.currentTarget.closest('.flagged-cell');
+    const row = ev.target.closest('.task-row');
+    const cell = ev.target.closest('.flagged-cell');
     const isFlagged = cell && cell.dataset.flagged === '1';
     try {
       const updated = await updateTask(taskId, { flagged: !isFlagged });
@@ -1511,7 +1573,7 @@
   async function updateTaskStatus(taskId, ev) {
     ev.stopPropagation();
     if (!taskId) return;
-    const row = ev.currentTarget.closest('.task-row');
+    const row = ev.target.closest('.task-row');
     const wasComplete = row && row.dataset.statusComplete === '1';
     const newStatus = wasComplete ? 'incomplete' : 'complete';
     try {
@@ -1656,6 +1718,7 @@
     }
     const dropdown = document.createElement('div');
     dropdown.className = 'task-date-dropdown';
+    dropdown.style.pointerEvents = 'auto';
     dropdown.setAttribute('role', 'menu');
 
     async function applyAndClose(dateStr) {
@@ -2295,7 +2358,7 @@
     return escaped.replace(/(?<![.:/A-Za-z0-9-])(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
   }
 
-  function buildTaskRow(t) {
+  function buildTaskRow(t, columnKeys) {
     const source = lastTaskSource != null ? lastTaskSource : 'project';
     const { order, visible, showFlagged, showHighlightDue, showPriority, manualSort } = getDisplayProperties(source);
     const row = document.createElement('div');
@@ -2305,13 +2368,6 @@
     row.dataset.number = t.number != null ? String(t.number) : '';
     row.dataset.statusComplete = isTaskCompleted(t) ? '1' : '0';
     const moveHandleSvg = '<svg class="task-move-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
-    if (manualSort) {
-      const moveWrap = document.createElement('div');
-      moveWrap.className = 'task-row-move';
-      moveWrap.innerHTML = moveHandleSvg;
-      moveWrap.setAttribute('aria-label', 'Drag to reorder');
-      row.appendChild(moveWrap);
-    }
     const statusComplete = isTaskCompleted(t);
     const circleOpenSvg = '<svg class="status-icon" viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 16q0 3.264 1.28 6.208t3.392 5.12 5.12 3.424 6.208 1.248 6.208-1.248 5.12-3.424 3.392-5.12 1.28-6.208-1.28-6.208-3.392-5.12-5.088-3.392-6.24-1.28q-3.264 0-6.208 1.28t-5.12 3.392-3.392 5.12-1.28 6.208zM4 16q0-3.264 1.6-6.016t4.384-4.352 6.016-1.632 6.016 1.632 4.384 4.352 1.6 6.016-1.6 6.048-4.384 4.352-6.016 1.6-6.016-1.6-4.384-4.352-1.6-6.048z"/></svg>';
     const circleTickSvg = '<svg class="status-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 8c0 4.418 3.59 8 8 8 4.418 0 8-3.59 8-8 0-4.418-3.59-8-8-8-4.418 0-8 3.59-8 8zm2 0c0-3.307 2.686-6 6-6 3.307 0 6 2.686 6 6 0 3.307-2.686 6-6 6-3.307 0-6-2.686-6-6zm9.778-1.672l-1.414-1.414L6.828 8.45 5.414 7.036 4 8.45l2.828 2.828 3.182-3.182 1.768-1.768z" fill-rule="evenodd"/></svg>';
@@ -2357,21 +2413,57 @@
       row.appendChild(cell);
     }
 
-    if (showPriority) {
-      const p = t.priority;
-      const cls = priorityClass(p);
-      const title = p != null ? `Priority ${p} (click to change)` : 'No priority (click to set)';
-      const priorityHtml = `<span class="priority-circle-wrap ${cls}" title="${title}">${PRIORITY_CIRCLE_SVG}</span>`;
-      addCell('priority', priorityHtml, { priorityTaskId: t.id, priorityValue: p });
-    }
-    if (showFlagged) {
-      const flagged = t.flagged === true || t.flagged === 1;
-      addCell('flagged', `<span class="flagged-icon ${flagged ? '' : 'empty'}" title="${flagged ? 'Flagged (click to unflag)' : 'Click to flag'}">★</span>`, { flaggedTaskId: t.id, flaggedValue: flagged });
-    }
-    addCell('status', statusComplete ? circleTickSvg : circleOpenSvg);
-    addCell('title', `<span class="cell-value">${formatTitleWithTagPills((t.title || '(no title)').trim())}</span>`, { titleTaskId: t.id });
-
-    order.forEach((key) => {
+    columnKeys.forEach((key) => {
+      if (key === 'move') {
+        const moveWrap = document.createElement('div');
+        moveWrap.className = 'task-row-move';
+        moveWrap.innerHTML = moveHandleSvg;
+        moveWrap.setAttribute('aria-label', 'Drag to reorder');
+        row.appendChild(moveWrap);
+        return;
+      }
+      if (key === 'status') {
+        const combined = document.createElement('div');
+        combined.className = 'task-cell status-combined-cell';
+        const inner = document.createElement('div');
+        inner.className = 'task-cell-inner';
+        if (showPriority) {
+          const p = t.priority;
+          const cls = priorityClass(p);
+          const title = p != null ? `Priority ${p} (click to change)` : 'No priority (click to set)';
+          const priorityHtml = `<span class="priority-circle-wrap ${cls}" title="${title}">${PRIORITY_CIRCLE_SVG}</span>`;
+          const priorityCell = document.createElement('div');
+          priorityCell.className = 'task-cell priority-cell';
+          priorityCell.innerHTML = priorityHtml;
+          if (t.id) {
+            priorityCell.dataset.priorityTaskId = t.id;
+            priorityCell.dataset.priorityValue = p != null ? String(p) : '';
+          }
+          inner.appendChild(priorityCell);
+        }
+        if (showFlagged) {
+          const flagged = t.flagged === true || t.flagged === 1;
+          const flagCell = document.createElement('div');
+          flagCell.className = 'task-cell flagged-cell';
+          flagCell.innerHTML = `<span class="flagged-icon ${flagged ? '' : 'empty'}" title="${flagged ? 'Flagged (click to unflag)' : 'Click to flag'}">★</span>`;
+          if (t.id) {
+            flagCell.dataset.flaggedTaskId = t.id;
+            flagCell.dataset.flagged = flagged ? '1' : '0';
+          }
+          inner.appendChild(flagCell);
+        }
+        const statusCell = document.createElement('div');
+        statusCell.className = 'task-cell status-cell';
+        statusCell.innerHTML = statusComplete ? circleTickSvg : circleOpenSvg;
+        inner.appendChild(statusCell);
+        combined.appendChild(inner);
+        row.appendChild(combined);
+        return;
+      }
+      if (key === 'title') {
+        addCell('title', `<span class="cell-value">${formatTitleWithTagPills((t.title || '(no title)').trim())}</span>`, { titleTaskId: t.id });
+        return;
+      }
       if (!visible.has(key)) return;
       let html = '';
       if (key === 'available_date') {
@@ -2382,7 +2474,8 @@
         html = calEventSvg + (hasVal ? `<span class="cell-value">${formatDate(t.available_date)}</span>` : `<span class="cell-value empty" title="Click to set date">—</span>`);
         addCell(key, html, { dateField: 'available_date', dateValue: dateVal || '' });
         return;
-      } else if (key === 'due_date') {
+      }
+      if (key === 'due_date') {
         const dateVal = (t.due_date || '').toString().trim().substring(0, 10);
         const hasVal = /^\d{4}-\d{2}-\d{2}$/.test(dateVal);
         const today = hasVal && isToday(t.due_date);
@@ -2393,7 +2486,8 @@
         html = calCheckSvg + (hasVal ? `<span class="cell-value ${stateClass}">${formatDate(t.due_date)}</span>` : `<span class="cell-value empty" title="Click to set date">—</span>`);
         addCell(key, html, { dateField: 'due_date', dateValue: dateVal || '' });
         return;
-      } else if (key === 'description') {
+      }
+      if (key === 'description') {
         const d = (t.notes || t.description || '').trim();
         let tooltip = d ? d.replace(/"/g, '&quot;').replace(/</g, '&lt;') : 'No notes (click to add)';
         if (tooltip.length > 500) tooltip = tooltip.substring(0, 500) + '…';
@@ -2401,7 +2495,8 @@
         html = `<span class="${iconClass}" title="${tooltip}">${documentIconSvg}</span>`;
         addCell(key, html, { descriptionTaskId: t.id });
         return;
-      } else if (key === 'projects') {
+      }
+      if (key === 'projects') {
         const p = (t.projects || []).map((id) => String(id));
         const hasVal = p.length > 0;
         const emptyClass = hasVal ? '' : ' empty';
@@ -2414,7 +2509,8 @@
         }
         addCell(key, html, { projectsTaskId: t.id, projectsJson: JSON.stringify(p) });
         return;
-      } else if (key === 'tags') {
+      }
+      if (key === 'tags') {
         const tg = (t.tags || []).map((x) => String(x).trim()).filter(Boolean);
         const hasVal = tg.length > 0;
         const iconClass = 'tags-icon-wrap ' + (hasVal ? '' : 'empty');
@@ -2422,7 +2518,8 @@
         html = `<span class="${iconClass}" title="${title.replace(/"/g, '&quot;')}">${tagIconSvg}</span>`;
         addCell(key, html, { tagsTaskId: t.id, tagsJson: JSON.stringify(tg) });
         return;
-      } else if (key === 'recurrence') {
+      }
+      if (key === 'recurrence') {
         const hasRec = t.recurrence && typeof t.recurrence === 'object' && (t.recurrence.freq || t.recurrence.interval);
         const iconClass = 'recurrence-icon-wrap ' + (hasRec ? '' : 'empty');
         const title = hasRec ? 'Recurring (click to edit)' : 'Click to set recurrence';
@@ -2534,14 +2631,96 @@
       center.innerHTML = '<p class="placeholder">No tasks.</p>';
       return;
     }
+    const { order, visible, manualSort: showMove } = getDisplayProperties(src);
+    const columnKeys = [];
+    if (showMove) columnKeys.push('move');
+    columnKeys.push('status');
+    columnKeys.push('title');
+    order.forEach((k) => { if (visible.has(k)) columnKeys.push(k); });
+
+    const widths = getTaskListColumnWidths(src);
+    function colWidth(key) {
+      if (key === 'move') return TASK_LIST_MOVE_WIDTH + 'px';
+      if (key === 'title') {
+        const w = widths[key] != null ? widths[key] : (TASK_LIST_DEFAULT_WIDTHS[key] || 180);
+        return `minmax(${Math.max(TASK_LIST_MIN_WIDTH, w)}px, 1fr)`;
+      }
+      const w = widths[key] != null ? widths[key] : (TASK_LIST_DEFAULT_WIDTHS[key] || 100);
+      return `minmax(${TASK_LIST_MIN_WIDTH}px, ${w}px)`;
+    }
+    const gridCols = columnKeys.map(colWidth).join(' ');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'task-list-wrapper';
+    wrapper.style.setProperty('--task-grid-cols', gridCols);
+
+    const headerRow = document.createElement('div');
+    headerRow.className = 'task-list-header-row';
+    columnKeys.forEach((colKey) => {
+      const th = document.createElement('div');
+      let cls = 'task-list-header-cell';
+      if (colKey === 'title') cls += ' task-list-header-cell-title';
+      if (colKey !== 'move') cls += ' has-resize';
+      th.className = cls;
+      th.textContent = TASK_LIST_COLUMN_LABELS[colKey] || colKey;
+      if (colKey !== 'move') {
+        const handle = document.createElement('div');
+        handle.className = 'task-list-resize-handle';
+        handle.setAttribute('aria-label', `Resize ${TASK_LIST_COLUMN_LABELS[colKey] || colKey} column`);
+        handle.dataset.columnKey = colKey;
+        th.appendChild(handle);
+      }
+      headerRow.appendChild(th);
+    });
+    wrapper.appendChild(headerRow);
+
     const ul = document.createElement('ul');
     ul.className = 'task-list';
     ul.style.listStyle = 'none';
     ul.style.padding = '0';
     ul.style.margin = '0';
-    toShow.forEach((t) => ul.appendChild(buildTaskRow(t)));
+    toShow.forEach((t) => ul.appendChild(buildTaskRow(t, columnKeys)));
+    wrapper.appendChild(ul);
     center.innerHTML = '';
-    center.appendChild(ul);
+    center.appendChild(wrapper);
+
+    (function setupResize(headerRowEl, wrapperEl, source) {
+      headerRowEl.querySelectorAll('.task-list-resize-handle').forEach((handle) => {
+        const colKey = handle.dataset.columnKey;
+        if (!colKey) return;
+        handle.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          const startX = e.clientX;
+          const colIndex = columnKeys.indexOf(colKey);
+          if (colIndex < 0) return;
+          const th = headerRowEl.children[colIndex];
+          const defaultW = colKey === 'title' ? (TASK_LIST_DEFAULT_WIDTHS[colKey] || 180) : (TASK_LIST_DEFAULT_WIDTHS[colKey] || 100);
+          const startColW = th ? th.getBoundingClientRect().width : (widths[colKey] != null ? widths[colKey] : defaultW);
+          const onMove = (e2) => {
+            const delta = e2.clientX - startX;
+            let newW = Math.max(TASK_LIST_MIN_WIDTH, startColW + delta);
+            saveTaskListColumnWidth(colKey, newW, source);
+            const newWidths = getTaskListColumnWidths(source);
+            const newGridCols = columnKeys.map((k) => {
+              if (k === 'move') return TASK_LIST_MOVE_WIDTH + 'px';
+              if (k === 'title') {
+                const w = newWidths[k] != null ? newWidths[k] : (TASK_LIST_DEFAULT_WIDTHS[k] || 180);
+                return k === colKey ? `minmax(${newW}px, 1fr)` : `minmax(${Math.max(TASK_LIST_MIN_WIDTH, w)}px, 1fr)`;
+              }
+              const w = newWidths[k] != null ? newWidths[k] : (TASK_LIST_DEFAULT_WIDTHS[k] || 100);
+              return k === colKey ? newW + 'px' : `minmax(${TASK_LIST_MIN_WIDTH}px, ${w}px)`;
+            }).join(' ');
+            wrapperEl.style.setProperty('--task-grid-cols', newGridCols);
+          };
+          const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+          };
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+      });
+    })(headerRow, wrapper, src);
+
     if (!isListSource && manualSort) setupTaskListDrag(center, ul, src);
     const inspectorContent = document.getElementById('inspector-content');
     const shownId = inspectorContent && inspectorContent.dataset.taskId;
@@ -3236,6 +3415,7 @@
   const boardCardsLayerEl = document.getElementById('board-cards-layer');
   const boardAddTaskBtn = document.getElementById('board-add-task-btn');
   const boardAddRegionBtn = document.getElementById('board-add-region-btn');
+  const boardAddAgendaBtn = document.getElementById('board-add-agenda-btn');
   const boardAddTaskPopover = document.getElementById('board-add-task-popover');
   const boardAddTaskListEl = document.getElementById('board-add-task-list');
   const boardZoomOutBtn = document.getElementById('board-zoom-out');
@@ -3285,6 +3465,77 @@
     if (!board) return;
     board.regions = regions;
     saveBoards(boards);
+  }
+
+  /** Agenda: date range as YYYY-MM-DD array (local dates). direction: before | after | before_and_after. days: 1-4. */
+  function getAgendaDateRange(region) {
+    const n = Math.min(4, Math.max(1, parseInt(region.agendaDays, 10) || 1));
+    const dir = region.agendaDirection || 'before_and_after';
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+    const today = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dates = [];
+    if (dir === 'before' || dir === 'before_and_after') {
+      for (let i = n; i >= 1; i--) {
+        const day = new Date(y, m, d - i);
+        dates.push(`${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`);
+      }
+    }
+    dates.push(today);
+    if (dir === 'after' || dir === 'before_and_after') {
+      for (let i = 1; i <= n; i++) {
+        const day = new Date(y, m, d + i);
+        dates.push(`${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`);
+      }
+    }
+    return dates;
+  }
+
+  function formatAgendaDayHeader(dateStr) {
+    const d = parseDateValue(dateStr);
+    if (!d) return dateStr || '';
+    const wd = WEEKDAY_NAMES[d.getDay()];
+    const m = d.getMonth() + 1;
+    const day = d.getDate();
+    return `${wd} ${m}/${day}`;
+  }
+
+  /** Which column indices (0-based) does this task touch? null = outside range. */
+  function getTaskAgendaColumnIndices(task, dateRange) {
+    if (!dateRange.length || !task) return null;
+    const av = (task.available_date) ? String(task.available_date).trim().substring(0, 10) : '';
+    const due = (task.due_date) ? String(task.due_date).trim().substring(0, 10) : '';
+    const dateSet = new Set(dateRange);
+    const hasAv = av && /^\d{4}-\d{2}-\d{2}$/.test(av) && dateSet.has(av);
+    const hasDue = due && /^\d{4}-\d{2}-\d{2}$/.test(due) && dateSet.has(due);
+    if (!hasAv && !hasDue) return null;
+    const avIdx = hasAv ? dateRange.indexOf(av) : -1;
+    const dueIdx = hasDue ? dateRange.indexOf(due) : -1;
+    let startIdx = avIdx >= 0 ? avIdx : dueIdx;
+    let endIdx = dueIdx >= 0 ? dueIdx : avIdx;
+    if (startIdx < 0) return null;
+    if (endIdx < 0) endIdx = startIdx;
+    if (startIdx > endIdx) { const t = startIdx; startIdx = endIdx; endIdx = t; }
+    const out = [];
+    for (let i = startIdx; i <= endIdx; i++) out.push(i);
+    return out;
+  }
+
+  /** Sort for agenda: priority desc (3 first), then due date desc (null last), then name asc. */
+  function agendaTaskSortCompare(a, b) {
+    const pa = a && a.priority != null ? a.priority : -1;
+    const pb = b && b.priority != null ? b.priority : -1;
+    if (pa !== pb) return pb - pa;
+    const da = (a && a.due_date) ? String(a.due_date).trim().substring(0, 10) : '';
+    const db = (b && b.due_date) ? String(b.due_date).trim().substring(0, 10) : '';
+    if (da !== db) {
+      if (!da) return 1;
+      if (!db) return -1;
+      return db.localeCompare(da);
+    }
+    const na = (a && a.title) ? String(a.title) : '';
+    const nb = (b && b.title) ? String(b.title) : '';
+    return na.localeCompare(nb, undefined, { sensitivity: 'base' });
   }
 
   /** Get task for board context: from boardTasksCache if available, else getTaskById. */
@@ -3714,7 +3965,7 @@
           return;
         }
       }
-      if (e.target.closest('.board-zoom-btn') || e.target.closest('.board-grid-btn') || e.target.closest('.board-zoom-select') || e.target.closest('.board-add-task-btn') || e.target.closest('.board-add-region-btn') || e.target.closest('.board-add-task-popover')) return;
+      if (e.target.closest('.board-zoom-btn') || e.target.closest('.board-grid-btn') || e.target.closest('.board-zoom-select') || e.target.closest('.board-add-task-btn') || e.target.closest('.board-add-region-btn') || e.target.closest('.board-add-agenda-btn') || e.target.closest('.board-add-task-popover')) return;
       panStart = { x: e.clientX - boardPanZoom.x, y: e.clientY - boardPanZoom.y };
       boardViewCanvasEl.classList.add('panning');
     });
@@ -3866,23 +4117,60 @@
     });
   }
 
+  const BOARD_AGENDA_DEFAULT_WIDTH = 380;
+  const BOARD_AGENDA_DEFAULT_HEIGHT = 260;
   function setupBoardRegions(boardId) {
-    if (!boardAddRegionBtn || !boardRegionsLayerEl) return;
-    boardAddRegionBtn.onclick = () => {
-      const regions = getBoardRegions(boardId);
-      const id = 'region-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
-      const center = getBoardViewportCenter();
-      const sz = BOARD_REGION_DEFAULT_SIZE;
-      const newRegion = { id, x: Math.round(center.x - sz / 2), y: Math.round(center.y - sz / 2), w: sz, h: sz, title: '', color: BOARD_REGION_COLORS[0], lines: [] };
-      regions.push(newRegion);
-      setBoardRegions(boardId, regions);
-      renderBoardRegions(boardId);
-    };
+    if (!boardRegionsLayerEl) return;
+    if (boardAddRegionBtn) {
+      boardAddRegionBtn.onclick = () => {
+        const regions = getBoardRegions(boardId);
+        const id = 'region-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        const center = getBoardViewportCenter();
+        const sz = BOARD_REGION_DEFAULT_SIZE;
+        const newRegion = { id, x: Math.round(center.x - sz / 2), y: Math.round(center.y - sz / 2), w: sz, h: sz, title: '', color: BOARD_REGION_COLORS[0], lines: [] };
+        regions.push(newRegion);
+        setBoardRegions(boardId, regions);
+        renderBoardRegions(boardId);
+      };
+    }
+    if (boardAddAgendaBtn) {
+      boardAddAgendaBtn.onclick = () => {
+        const regions = getBoardRegions(boardId);
+        const id = 'region-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        const center = getBoardViewportCenter();
+        const w = BOARD_AGENDA_DEFAULT_WIDTH;
+        const h = BOARD_AGENDA_DEFAULT_HEIGHT;
+        const newRegion = {
+          id,
+          type: 'agenda',
+          x: Math.round(center.x - w / 2),
+          y: Math.round(center.y - h / 2),
+          w,
+          h,
+          title: 'Agenda',
+          color: BOARD_REGION_COLORS[0],
+          lines: [],
+          showPriority: true,
+          showFlag: true,
+          agendaDays: 1,
+          agendaDirection: 'before_and_after'
+        };
+        regions.push(newRegion);
+        setBoardRegions(boardId, regions);
+        renderBoardRegions(boardId);
+        if (window.openBoardRegionEdit) window.openBoardRegionEdit(newRegion);
+      };
+    }
     const overlay = document.getElementById('board-region-edit-overlay');
     const titleInput = document.getElementById('board-region-edit-title-input');
+    const regionEditTitleEl = document.getElementById('board-region-edit-title');
     const colorsEl = document.getElementById('board-region-edit-colors');
     const showPriorityCb = document.getElementById('board-region-edit-show-priority');
     const showFlagCb = document.getElementById('board-region-edit-show-flag');
+    const agendaSectionEl = document.getElementById('board-region-edit-agenda-section');
+    const regionOnlySectionEl = document.getElementById('board-region-edit-region-only-section');
+    const agendaDaysInput = document.getElementById('board-region-edit-agenda-days');
+    const agendaDirectionSelect = document.getElementById('board-region-edit-agenda-direction');
     const tagsListEl = document.getElementById('board-region-edit-tags-list');
     const tagsAddBtn = document.getElementById('board-region-edit-tags-add-btn');
     const removeTagsOnUnsnapCb = document.getElementById('board-region-edit-remove-tags-on-unsnap');
@@ -3916,9 +4204,15 @@
     }
     function openRegionEdit(region) {
       editingRegionId = region.id;
-      if (titleInput) titleInput.value = region.title || '';
+      const isAgenda = region.type === 'agenda';
+      if (regionEditTitleEl) regionEditTitleEl.textContent = isAgenda ? 'Agenda' : 'Region';
+      if (titleInput) titleInput.value = region.title || (isAgenda ? 'Agenda' : '');
       if (showPriorityCb) showPriorityCb.checked = region.showPriority !== false;
       if (showFlagCb) showFlagCb.checked = region.showFlag !== false;
+      if (agendaSectionEl) agendaSectionEl.classList.toggle('hidden', !isAgenda);
+      if (regionOnlySectionEl) regionOnlySectionEl.classList.toggle('hidden', !!isAgenda);
+      if (isAgenda && agendaDaysInput) agendaDaysInput.value = Math.min(4, Math.max(1, parseInt(region.agendaDays, 10) || 1));
+      if (isAgenda && agendaDirectionSelect) agendaDirectionSelect.value = region.agendaDirection || 'before_and_after';
       regionEditAddTags = Array.isArray(region.addTags) ? region.addTags.slice() : [];
       regionEditRemoveTagsOnUnsnap = !!region.removeTagsOnUnsnap;
       regionEditSetPriority = region.setPriority;
@@ -3967,12 +4261,17 @@
         r.color = sel && sel.dataset.color ? sel.dataset.color : (r.color || BOARD_REGION_COLORS[0]);
         r.showPriority = showPriorityCb ? showPriorityCb.checked : true;
         r.showFlag = showFlagCb ? showFlagCb.checked : true;
-        r.addTags = Array.isArray(regionEditAddTags) ? regionEditAddTags.slice() : [];
-        r.removeTagsOnUnsnap = !!(removeTagsOnUnsnapCb && removeTagsOnUnsnapCb.checked);
-        const priVal = prioritySelect ? prioritySelect.value : '';
-        if (priVal === '') r.setPriority = undefined;
-        else if (priVal === 'none') r.setPriority = null;
-        else { const n = parseInt(priVal, 10); r.setPriority = (n >= 0 && n <= 3) ? n : undefined; }
+        if (r.type === 'agenda') {
+          r.agendaDays = Math.min(4, Math.max(1, parseInt(agendaDaysInput && agendaDaysInput.value ? agendaDaysInput.value : 1, 10)));
+          r.agendaDirection = (agendaDirectionSelect && agendaDirectionSelect.value) || 'before_and_after';
+        } else {
+          r.addTags = Array.isArray(regionEditAddTags) ? regionEditAddTags.slice() : [];
+          r.removeTagsOnUnsnap = !!(removeTagsOnUnsnapCb && removeTagsOnUnsnapCb.checked);
+          const priVal = prioritySelect ? prioritySelect.value : '';
+          if (priVal === '') r.setPriority = undefined;
+          else if (priVal === 'none') r.setPriority = null;
+          else { const n = parseInt(priVal, 10); r.setPriority = (n >= 0 && n <= 3) ? n : undefined; }
+        }
         setBoardRegions(currentBoardId, regions);
         await applyRegionSettingsToSnappedTasks(r, currentBoardId);
         renderBoardRegions(currentBoardId);
@@ -4016,6 +4315,13 @@
         removeTagsOnUnsnap: !!src.removeTagsOnUnsnap,
         setPriority: src.setPriority
       };
+      if (src.type === 'agenda') {
+        copy.type = 'agenda';
+        copy.agendaDays = Math.min(4, Math.max(1, parseInt(src.agendaDays, 10) || 1));
+        copy.agendaDirection = src.agendaDirection || 'before_and_after';
+        copy.w = src.w || BOARD_AGENDA_DEFAULT_WIDTH;
+        copy.h = src.h || BOARD_AGENDA_DEFAULT_HEIGHT;
+      }
       regions.push(copy);
       setBoardRegions(currentBoardId, regions);
       renderBoardRegions(currentBoardId);
@@ -4031,6 +4337,39 @@
     window.closeBoardRegionEdit = closeRegionEdit;
   }
 
+  function buildBoardRegionLineDiv(taskId, t, region, showPriority, showFlag, boardId) {
+    const bid = boardId != null ? boardId : currentBoardId;
+    const lineDiv = document.createElement('div');
+    lineDiv.className = 'board-region-line';
+    lineDiv.dataset.taskId = taskId;
+    lineDiv.dataset.regionId = region.id;
+    const statusSvg = t && isTaskCompleted(t) ? INSPECTOR_STATUS_TICK_SVG : INSPECTOR_STATUS_OPEN_SVG;
+    const titleText = (t && t.title) ? String(t.title).replace(/</g, '&lt;') : 'Task ' + taskId;
+    const priorityCls = t ? priorityClass(t.priority) : 'priority-empty';
+    const flagged = t && (t.flagged === true || t.flagged === 1);
+    const flagHtml = showFlag ? ('<span class="board-region-line-flagged' + (flagged ? '' : ' empty') + '">★</span>') : '';
+    const priorityHtml = showPriority ? (`<span class="board-region-line-priority priority-circle-wrap ${priorityCls}" data-priority-task-id="${(taskId || '').replace(/"/g, '&quot;')}" title="Priority (click to change)">${PRIORITY_CIRCLE_SVG}</span>`) : '';
+    const av = t && (t.available_date || '').toString().trim().substring(0, 10);
+    const due = t && (t.due_date || '').toString().trim().substring(0, 10);
+    const avStr = av ? formatDate(av) : '';
+    const dueStr = due ? formatDate(due) : '';
+    const duePart = dueStr && t
+      ? (isOverdue(t.due_date) ? `<span class="due-overdue">Due: ${dueStr}</span>` : isToday(t.due_date) ? `<span class="due-today">Due: ${dueStr}</span>` : `Due: ${dueStr}`)
+      : (dueStr ? `Due: ${dueStr}` : '');
+    const datesStr = [avStr && `Avail: ${avStr}`, duePart].filter(Boolean).join(' · ') || '—';
+    const taskIdEsc = (taskId || '').replace(/"/g, '&quot;');
+    lineDiv.innerHTML = priorityHtml + flagHtml + `<span class="board-region-line-status">${statusSvg}</span><div class="board-region-line-text"><span class="board-region-line-title">${titleText}</span><span class="board-region-line-dates">${datesStr}</span></div><button type="button" class="board-region-line-expand" data-task-id="${taskIdEsc}" title="Expand" aria-label="Expand">${BOARD_CARD_EXPAND_SVG}</button>`;
+    const expandBtn = lineDiv.querySelector('.board-region-line-expand');
+    if (expandBtn) expandBtn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); openBoardTaskInspectorModal(taskId, () => refreshBoardAfterTaskUpdate(bid)); });
+    const prioritySpan = lineDiv.querySelector('.board-region-line-priority');
+    const flagSpan = lineDiv.querySelector('.board-region-line-flagged');
+    const statusSpan = lineDiv.querySelector('.board-region-line-status');
+    if (prioritySpan && t) prioritySpan.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); openPriorityDropdown(e, prioritySpan, { onAfterApply: () => refreshBoardAfterTaskUpdate(bid) }); });
+    if (flagSpan && t) flagSpan.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); updateTask(taskId, { flagged: !flagged }).then(() => refreshBoardAfterTaskUpdate(bid)); });
+    if (statusSpan && t) statusSpan.addEventListener('click', (e) => { e.stopPropagation(); const newStatus = isTaskCompleted(t) ? 'incomplete' : 'complete'; updateTask(taskId, { status: newStatus }).then(() => refreshBoardAfterTaskUpdate(bid)); });
+    return lineDiv;
+  }
+
   function renderBoardRegions(boardId) {
     if (!boardRegionsLayerEl) return;
     const regions = getBoardRegions(boardId);
@@ -4039,7 +4378,7 @@
     boardRegionsLayerEl.innerHTML = '';
     regions.forEach((region, regionIndex) => {
       const el = document.createElement('div');
-      el.className = 'board-region';
+      el.className = 'board-region' + (region.type === 'agenda' ? ' board-region-agenda' : '');
       el.dataset.regionId = region.id;
       el.dataset.regionIndex = String(regionIndex);
       el.style.left = (region.x || 0) + 'px';
@@ -4048,6 +4387,90 @@
       el.style.height = (region.h || BOARD_REGION_DEFAULT_SIZE) + 'px';
       el.style.backgroundColor = region.color || BOARD_REGION_COLORS[0];
       const title = (region.title || '').replace(/</g, '&lt;');
+      if (region.type === 'agenda') {
+        const dateRange = getAgendaDateRange(region);
+        const placements = [];
+        const outside = [];
+        (region.lines || []).forEach((line, lineIndex) => {
+          const taskId = String(line.taskId);
+          const t = taskMap.get(taskId);
+          const indices = getTaskAgendaColumnIndices(t, dateRange);
+          if (indices && indices.length) {
+            const startColIdx = indices[0];
+            const endColIdx = indices[indices.length - 1];
+            placements.push({ taskId, task: t, lineIndex, startColIdx, endColIdx });
+          } else {
+            outside.push({ taskId, task: t, lineIndex });
+          }
+        });
+        placements.sort((a, b) => agendaTaskSortCompare(a.task, b.task));
+        outside.sort((a, b) => agendaTaskSortCompare(a.task, b.task));
+        const showPriority = region.showPriority !== false;
+        const showFlag = region.showFlag !== false;
+        const dayHeaders = dateRange.map((d) => formatAgendaDayHeader(d));
+        const numCols = dateRange.length;
+        el.innerHTML = `<div class="board-region-header"><span class="board-region-title">${title || 'Agenda'}</span></div><div class="board-region-agenda-days"></div><div class="board-region-agenda-outside"><div class="board-region-agenda-outside-title">Outside of date range</div><div class="board-region-agenda-outside-lines"></div></div><div class="board-region-resize-handle"></div>`;
+        const daysEl = el.querySelector('.board-region-agenda-days');
+        const outsideLinesEl = el.querySelector('.board-region-agenda-outside-lines');
+        daysEl.style.display = 'grid';
+        daysEl.style.gridTemplateColumns = `repeat(${numCols}, 1fr)`;
+        daysEl.style.gridTemplateRows = 'auto 1fr';
+        dateRange.forEach((_, colIdx) => {
+          const colDiv = document.createElement('div');
+          colDiv.className = 'board-region-agenda-column board-region-agenda-column-header';
+          colDiv.style.gridColumn = String(colIdx + 1);
+          colDiv.style.gridRow = '1';
+          colDiv.innerHTML = `<div class="board-region-agenda-day-header">${(dayHeaders[colIdx] || '').replace(/</g, '&lt;')}</div>`;
+          daysEl.appendChild(colDiv);
+        });
+        const linesContainer = document.createElement('div');
+        linesContainer.className = 'board-region-agenda-lines';
+        linesContainer.style.gridColumn = '1 / -1';
+        linesContainer.style.gridRow = '2';
+        linesContainer.style.display = 'grid';
+        linesContainer.style.gridTemplateColumns = `repeat(${numCols}, 1fr)`;
+        linesContainer.style.gridAutoRows = 'minmax(32px, auto)';
+        linesContainer.style.overflowY = 'auto';
+        linesContainer.style.minHeight = '0';
+        linesContainer.style.gap = '2px';
+        linesContainer.style.padding = '4px 6px 8px';
+        linesContainer.style.alignContent = 'start';
+        if (numCols > 1) {
+          const stops = ['transparent 0%'];
+          for (let i = 1; i < numCols; i++) {
+            const pct = (100 * i / numCols).toFixed(4);
+            stops.push(
+              `transparent calc(${pct}% - 0.5px)`,
+              `rgba(0,0,0,0.08) calc(${pct}% - 0.5px)`,
+              `rgba(0,0,0,0.08) calc(${pct}% + 0.5px)`,
+              `transparent calc(${pct}% + 0.5px)`
+            );
+          }
+          stops.push('transparent 100%');
+          linesContainer.style.backgroundImage = `linear-gradient(to right, ${stops.join(', ')})`;
+        }
+        placements.forEach(({ taskId, task: t, lineIndex, startColIdx, endColIdx }) => {
+          const lineDiv = buildBoardRegionLineDiv(taskId, t, region, showPriority, showFlag, boardId);
+          lineDiv.dataset.lineIndex = String(lineIndex);
+          lineDiv.style.gridColumn = `${startColIdx + 1} / ${endColIdx + 2}`;
+          linesContainer.appendChild(lineDiv);
+          attachBoardRegionLineDrag(lineDiv, boardId, regionIndex, lineIndex);
+        });
+        daysEl.appendChild(linesContainer);
+        outside.forEach(({ taskId, task: t, lineIndex }) => {
+          const lineDiv = buildBoardRegionLineDiv(taskId, t, region, showPriority, showFlag, boardId);
+          lineDiv.dataset.lineIndex = String(lineIndex);
+          outsideLinesEl.appendChild(lineDiv);
+          attachBoardRegionLineDrag(lineDiv, boardId, regionIndex, lineIndex);
+        });
+        const headerEl = el.querySelector('.board-region-header');
+        if (headerEl) attachBoardRegionMove(headerEl, el, boardId, regionIndex);
+        const resizeHandle = el.querySelector('.board-region-resize-handle');
+        if (resizeHandle) attachBoardRegionResize(resizeHandle, el, boardId, regionIndex);
+        el.addEventListener('dblclick', (e) => { if (!e.target.closest('.board-region-line') && !e.target.closest('.board-region-resize-handle')) window.openBoardRegionEdit && window.openBoardRegionEdit(region); });
+        boardRegionsLayerEl.appendChild(el);
+        return;
+      }
       el.innerHTML = `<div class="board-region-header"><span class="board-region-title">${title || 'Region'}</span></div><div class="board-region-lines"></div><div class="board-region-resize-handle"></div>`;
       const linesEl = el.querySelector('.board-region-lines');
       const headerEl = el.querySelector('.board-region-header');
@@ -4087,35 +4510,8 @@
       (region.lines || []).forEach((line, lineIndex) => {
         const taskId = String(line.taskId);
         const t = taskMap.get(taskId);
-        const lineDiv = document.createElement('div');
-        lineDiv.className = 'board-region-line';
-        lineDiv.dataset.taskId = taskId;
-        lineDiv.dataset.regionId = region.id;
+        const lineDiv = buildBoardRegionLineDiv(taskId, t, region, showPriority, showFlag, boardId);
         lineDiv.dataset.lineIndex = String(lineIndex);
-        const statusSvg = t && isTaskCompleted(t) ? INSPECTOR_STATUS_TICK_SVG : INSPECTOR_STATUS_OPEN_SVG;
-        const titleText = (t && t.title) ? String(t.title).replace(/</g, '&lt;') : 'Task ' + taskId;
-        const priorityCls = t ? priorityClass(t.priority) : 'priority-empty';
-        const flagged = t && (t.flagged === true || t.flagged === 1);
-        const flagHtml = showFlag ? ('<span class="board-region-line-flagged' + (flagged ? '' : ' empty') + '">★</span>') : '';
-        const priorityHtml = showPriority ? (`<span class="board-region-line-priority priority-circle-wrap ${priorityCls}" data-priority-task-id="${(taskId || '').replace(/"/g, '&quot;')}" title="Priority (click to change)">${PRIORITY_CIRCLE_SVG}</span>`) : '';
-        const av = t && (t.available_date || '').toString().trim().substring(0, 10);
-        const due = t && (t.due_date || '').toString().trim().substring(0, 10);
-        const avStr = av ? formatDate(av) : '';
-        const dueStr = due ? formatDate(due) : '';
-        const duePart = dueStr && t
-          ? (isOverdue(t.due_date) ? `<span class="due-overdue">Due: ${dueStr}</span>` : isToday(t.due_date) ? `<span class="due-today">Due: ${dueStr}</span>` : `Due: ${dueStr}`)
-          : (dueStr ? `Due: ${dueStr}` : '');
-        const datesStr = [avStr && `Avail: ${avStr}`, duePart].filter(Boolean).join(' · ') || '—';
-        const taskIdEsc = (taskId || '').replace(/"/g, '&quot;');
-        lineDiv.innerHTML = priorityHtml + flagHtml + `<span class="board-region-line-status">${statusSvg}</span><div class="board-region-line-text"><span class="board-region-line-title">${titleText}</span><span class="board-region-line-dates">${datesStr}</span></div><button type="button" class="board-region-line-expand" data-task-id="${taskIdEsc}" title="Expand" aria-label="Expand">${BOARD_CARD_EXPAND_SVG}</button>`;
-        const expandBtn = lineDiv.querySelector('.board-region-line-expand');
-        if (expandBtn) expandBtn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); openBoardTaskInspectorModal(taskId, () => refreshBoardAfterTaskUpdate(boardId)); });
-        const prioritySpan = lineDiv.querySelector('.board-region-line-priority');
-        const flagSpan = lineDiv.querySelector('.board-region-line-flagged');
-        const statusSpan = lineDiv.querySelector('.board-region-line-status');
-        if (prioritySpan && t) prioritySpan.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); openPriorityDropdown(e, prioritySpan, { onAfterApply: () => refreshBoardAfterTaskUpdate(boardId) }); });
-        if (flagSpan && t) flagSpan.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); updateTask(taskId, { flagged: !flagged }).then(() => refreshBoardAfterTaskUpdate(boardId)); });
-        if (statusSpan && t) statusSpan.addEventListener('click', (e) => { e.stopPropagation(); const newStatus = isTaskCompleted(t) ? 'incomplete' : 'complete'; updateTask(taskId, { status: newStatus }).then(() => refreshBoardAfterTaskUpdate(boardId)); });
         linesEl.appendChild(lineDiv);
         attachBoardRegionLineDrag(lineDiv, boardId, regionIndex, lineIndex);
       });
