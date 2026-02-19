@@ -870,9 +870,24 @@ body[data-theme="dark"] .header-icon-settings {
 .task-list .task-row .task-cell.status-combined-cell .task-cell-inner {
   display: flex;
   align-items: center;
-  justify-content: space-evenly;
+  justify-content: center;
+  gap: 2px;
   min-width: 0;
-  width: 100%;
+  width: min-content;
+}
+/* Equal-width slots so the star (middle) is perfectly centered; no extra margin */
+.task-list .task-row .task-cell.status-combined-cell .task-cell-inner .priority-cell,
+.task-list .task-row .task-cell.status-combined-cell .task-cell-inner .flagged-cell,
+.task-list .task-row .task-cell.status-combined-cell .task-cell-inner .status-cell {
+  flex: 0 0 16px;
+  width: 16px;
+  min-width: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  box-sizing: content-box;
 }
 .task-list .task-row .task-cell.title-cell {
   min-width: 0;
