@@ -355,6 +355,13 @@ def _compile_condition(cond: dict[str, Any], params: list[Any], tz_name: str, co
             return f"NOT EXISTS (SELECT 1 FROM task_projects tp WHERE tp.task_id = t.id AND tp.project_id IN ({placeholders}))"
         return "1=0"
 
+    if field == "blocked":
+        if op == "equals":
+            is_blocked = value in (True, 1, "true", "yes", "1")
+            sub = "EXISTS (SELECT 1 FROM task_dependencies d INNER JOIN tasks dep ON dep.id = d.depends_on_task_id WHERE d.task_id = t.id AND (dep.status IS NULL OR dep.status != 'complete'))"
+            return sub if is_blocked else f"NOT ({sub})"
+        return "1=0"
+
     return "1=0"
 
 
@@ -472,6 +479,32 @@ def run_list(
         sql = f"SELECT t.* FROM tasks t WHERE {where} LIMIT ?"
         rows = conn.execute(sql, params).fetchall()
         tasks = [_task_row_to_dict(r) for r in rows]
+        task_ids = [t["id"] for t in tasks if t.get("id")]
+        placeholders = ",".join("?" * len(task_ids)) if task_ids else ""
+        depends_on_by: dict[str, list[str]] = {tid: [] for tid in task_ids}
+        blocks_by: dict[str, list[str]] = {tid: [] for tid in task_ids}
+        if task_ids:
+            for row in conn.execute(
+                f"SELECT task_id, depends_on_task_id FROM task_dependencies WHERE task_id IN ({placeholders})",
+                task_ids,
+            ).fetchall():
+                depends_on_by.setdefault(row[0], []).append(row[1])
+            for row in conn.execute(
+                f"SELECT depends_on_task_id, task_id FROM task_dependencies WHERE depends_on_task_id IN ({placeholders})",
+                task_ids,
+            ).fetchall():
+                blocks_by.setdefault(row[0], []).append(row[1])
+            blocked_task_ids = {
+                row[0]
+                for row in conn.execute(
+                    f"""SELECT d.task_id FROM task_dependencies d
+                        INNER JOIN tasks dep ON dep.id = d.depends_on_task_id
+                        WHERE d.task_id IN ({placeholders}) AND (dep.status IS NULL OR dep.status != 'complete')""",
+                    task_ids,
+                ).fetchall()
+            }
+        else:
+            blocked_task_ids = set()
         for t in tasks:
             tid = t.get("id")
             if tid:
@@ -479,9 +512,15 @@ def run_list(
                 t["projects"] = [p[0] for p in projs]
                 tags_rows = conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (tid,)).fetchall()
                 t["tags"] = [r[0] for r in tags_rows]
+                t["depends_on"] = depends_on_by.get(tid, [])
+                t["blocks"] = blocks_by.get(tid, [])
+                t["is_blocked"] = tid in blocked_task_ids
             else:
                 t["projects"] = []
                 t["tags"] = []
+                t["depends_on"] = []
+                t["blocks"] = []
+                t["is_blocked"] = False
 
         sort_def = lst.get("sort_definition")
         if isinstance(sort_def, str):

@@ -633,6 +633,46 @@ def external_delete_task(task_id: str):
     return {"status": "deleted"}
 
 
+@app.post("/api/external/tasks/{task_id_or_number}/dependencies", dependencies=[Depends(_require_api_key)])
+def external_add_task_dependency(task_id_or_number: str, body: dict):
+    from task_service import get_task, get_task_by_number, add_task_dependency
+    t = get_task(task_id_or_number)
+    if t is None and task_id_or_number.isdigit():
+        t = get_task_by_number(int(task_id_or_number))
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    dep_id = body.get("depends_on_task_id") or (str(body["depends_on_task_number"]) if body.get("depends_on_task_number") is not None else None)
+    if not dep_id:
+        raise HTTPException(status_code=400, detail="depends_on_task_id or depends_on_task_number is required")
+    dep_task = get_task(dep_id)
+    if dep_task is None and dep_id.isdigit():
+        dep_task = get_task_by_number(int(dep_id))
+    if dep_task is None:
+        raise HTTPException(status_code=404, detail="Depends-on task not found")
+    try:
+        add_task_dependency(t["id"], dep_task["id"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return get_task(t["id"])
+
+
+@app.delete("/api/external/tasks/{task_id_or_number}/dependencies/{depends_on_task_id}", dependencies=[Depends(_require_api_key)])
+def external_remove_task_dependency(task_id_or_number: str, depends_on_task_id: str):
+    from task_service import get_task, get_task_by_number, remove_task_dependency
+    t = get_task(task_id_or_number)
+    if t is None and task_id_or_number.isdigit():
+        t = get_task_by_number(int(task_id_or_number))
+    if t is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    dep_task = get_task(depends_on_task_id)
+    if dep_task is None and depends_on_task_id.isdigit():
+        dep_task = get_task_by_number(int(depends_on_task_id))
+    if dep_task is None:
+        raise HTTPException(status_code=404, detail="Depends-on task not found")
+    remove_task_dependency(t["id"], dep_task["id"])
+    return get_task(t["id"])
+
+
 # External: Projects
 @app.get("/api/external/projects", dependencies=[Depends(_require_api_key)])
 def external_list_projects(status: str | None = None):

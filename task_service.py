@@ -214,6 +214,12 @@ def _add_task_relations(conn: sqlite3.Connection, out: dict[str, Any]) -> None:
         out.get("title"), out.get("description"), out.get("notes"),
     )
     out["depends_on"] = [r[0] for r in conn.execute("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?", (tid,))]
+    out["blocks"] = [r[0] for r in conn.execute("SELECT task_id FROM task_dependencies WHERE depends_on_task_id = ?", (tid,))]
+    out["is_blocked"] = conn.execute(
+        """SELECT 1 FROM task_dependencies d INNER JOIN tasks dep ON dep.id = d.depends_on_task_id
+           WHERE d.task_id = ? AND (dep.status IS NULL OR dep.status != 'complete') LIMIT 1""",
+        (tid,),
+    ).fetchone() is not None
 
 
 def get_task_by_number(number: int) -> dict[str, Any] | None:
@@ -268,6 +274,8 @@ def list_tasks(
     sort_by: str | None = None,
     flagged: bool | None = None,
     priority: int | None = None,
+    blocked_by_task_id: str | None = None,
+    blocking_task_id: str | None = None,
     limit: int = 500,
 ) -> list[dict[str, Any]]:
     """List tasks with optional filters. Returns minimal task dicts (no projects/tags/deps).
@@ -279,6 +287,8 @@ def list_tasks(
     q: match tag exactly OR title OR description OR notes (substring). Use for combined/tag search.
     sort_by: due_date, available_date, created_at, completed_at, title (default created_at DESC).
     priority: 0-3 to filter by exact priority (3 = highest).
+    blocked_by_task_id: only tasks that have this task as a dependency (tasks "blocked by" this task / that this task blocks).
+    blocking_task_id: only tasks that are dependencies of this task (tasks that "block" this task).
     inbox: if True, only tasks that have no project (inbox = unassigned). Ignored if project_id/project_ids set.
     tags: list of tag names; tag_mode "any" = task has any of these (OR), "all" = task has all (AND).
     project_ids: list of project ids; project_mode "any" = task in any of these (OR), "all" = task in all (AND).
@@ -380,6 +390,12 @@ def list_tasks(
         if priority is not None and PRIORITY_MIN <= priority <= PRIORITY_MAX:
             sql += " AND priority = ?"
             params.append(priority)
+        if blocked_by_task_id:
+            sql += " AND id IN (SELECT task_id FROM task_dependencies WHERE depends_on_task_id = ?)"
+            params.append(blocked_by_task_id)
+        if blocking_task_id:
+            sql += " AND id IN (SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?)"
+            params.append(blocking_task_id)
         order = "ORDER BY created_at DESC"
         if sort_by:
             sort_by_lower = sort_by.strip().lower()
@@ -397,6 +413,32 @@ def list_tasks(
         params.append(limit)
         rows = conn.execute(sql, params).fetchall()
         out = [_task_row_to_dict(r) for r in rows]
+        task_ids = [t["id"] for t in out if t.get("id")]
+        placeholders = ",".join("?" * len(task_ids)) if task_ids else ""
+        depends_on_by: dict[str, list[str]] = {tid: [] for tid in task_ids}
+        blocks_by: dict[str, list[str]] = {tid: [] for tid in task_ids}
+        if task_ids:
+            for row in conn.execute(
+                f"SELECT task_id, depends_on_task_id FROM task_dependencies WHERE task_id IN ({placeholders})",
+                task_ids,
+            ).fetchall():
+                depends_on_by.setdefault(row[0], []).append(row[1])
+            for row in conn.execute(
+                f"SELECT depends_on_task_id, task_id FROM task_dependencies WHERE depends_on_task_id IN ({placeholders})",
+                task_ids,
+            ).fetchall():
+                blocks_by.setdefault(row[0], []).append(row[1])
+            blocked_task_ids = {
+                row[0]
+                for row in conn.execute(
+                    f"""SELECT d.task_id FROM task_dependencies d
+                        INNER JOIN tasks dep ON dep.id = d.depends_on_task_id
+                        WHERE d.task_id IN ({placeholders}) AND (dep.status IS NULL OR dep.status != 'complete')""",
+                    task_ids,
+                ).fetchall()
+            }
+        else:
+            blocked_task_ids = set()
         for t in out:
             tid = t.get("id")
             if tid:
@@ -411,9 +453,15 @@ def list_tasks(
                     conn, tid,
                     t.get("title"), t.get("description"), t.get("notes"),
                 )
+                t["depends_on"] = depends_on_by.get(tid, [])
+                t["blocks"] = blocks_by.get(tid, [])
+                t["is_blocked"] = tid in blocked_task_ids
             else:
                 t["projects"] = []
                 t["tags"] = []
+                t["depends_on"] = []
+                t["blocks"] = []
+                t["is_blocked"] = False
         return out
     finally:
         conn.close()

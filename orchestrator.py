@@ -145,6 +145,8 @@ Parameters (all optional; include only what the user asked for):
 - tag / tags (array) / tag_mode ("any" or "all"): Filter by tag(s). Strip # from tag names (e.g. "#do" -> tag "do").
 - short_id or project (single), short_ids or projects (array), project_mode ("any" or "all"): Filter by project. Use short_id "inbox" for tasks with no project.
 - flagged (true/false), priority (0-3 or "high"/"medium high"/"medium low"/"low" or "red"/"orange"/"yellow"/"green"), title_contains (substring), sort_by ("due_date", "available_date", "created_at", "title"), completed_by, completed_after.
+- blocked_by_task (number): Tasks that are blocked by this task (tasks that have this task as a dependency). "Show me tasks blocked by task 3" -> {"name": "task_find", "parameters": {"blocked_by_task": 3, "status": "incomplete"}}.
+- blocking_task (number): Tasks that block this task (this task's dependencies). "Show me tasks that block task 3" -> {"name": "task_find", "parameters": {"blocking_task": 3, "status": "incomplete"}}.
 Output: {"name": "task_find", "parameters": { ... }} with every relevant parameter. Examples:
 - "List my tasks" -> {"name": "task_find", "parameters": {"status": "incomplete"}}
 - "Tasks due next Tuesday" -> {"name": "task_find", "parameters": {"when": "due next Tuesday", "status": "incomplete"}}
@@ -155,6 +157,8 @@ Output: {"name": "task_find", "parameters": { ... }} with every relevant paramet
 - "Find tasks about meetings" -> {"name": "task_find", "parameters": {"term": "meetings", "status": "incomplete"}}
 - "Tasks in 1off available tomorrow" -> {"name": "task_find", "parameters": {"when": "available tomorrow", "short_id": "1off", "status": "incomplete"}}
 - "Flagged tasks" -> {"name": "task_find", "parameters": {"flagged": true, "status": "incomplete"}}
+- "Show me tasks blocked by task 3" / "tasks blocked by 3" -> {"name": "task_find", "parameters": {"blocked_by_task": 3, "status": "incomplete"}}
+- "Show me the tasks that block task 3" / "tasks that block 3" -> {"name": "task_find", "parameters": {"blocking_task": 3, "status": "incomplete"}}
 
 task_info: User identifies the task by its friendly id (number). "Tell me about 1", "about task 1", "task #1", "task 1", or just "1" after discussing tasks/projects always means task_info with that number. Never answer with general knowledge about the number—always call task_info.
 Output format: {"name": "task_info", "parameters": {"number": 1}} (use the number the user said).
@@ -376,6 +380,22 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
         p = _parse_priority(params["priority"])
         if p is not None:
             out["priority"] = p
+    # Blocking: blocked_by_task / blocking_task (task number) -> resolve to task id
+    for key, out_key in (("blocked_by_task", "blocked_by_task_id"), ("blocking_task", "blocking_task_id")):
+        val = params.get(key)
+        if val is None:
+            continue
+        try:
+            num = int(val) if isinstance(val, int) else int(str(val).strip().lstrip("#"))
+        except (ValueError, TypeError):
+            continue
+        try:
+            from task_service import get_task_by_number
+            t = get_task_by_number(num)
+            if t and t.get("id"):
+                out[out_key] = t["id"]
+        except Exception:
+            pass
     return out
 
 
@@ -697,6 +717,19 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
     m = re.search(r"(?:list|show|get|give me|gimme|display)\s+(?:my\s+)?#(\w+)\s+tasks?(?:\s*[.?]?\s*)$", msg, re.I | re.S)
     if m:
         return ("task_find", {"tag": m.group(1).strip(), "status": "incomplete"})
+    # Blocking relationships: "tasks blocked by task N", "tasks that block task N"
+    m = re.search(r"\btasks?\s+(?:that\s+are\s+)?blocked\s+by\s+(?:task\s+)?#?(\d+)\s*[.?]?\s*$", msg, re.I)
+    if m:
+        return ("task_find", {"blocked_by_task": int(m.group(1)), "status": "incomplete"})
+    m = re.search(r"(?:show\s+me\s+)?(?:the\s+)?tasks?\s+blocked\s+by\s+(?:task\s+)?#?(\d+)\s*[.?]?\s*$", msg, re.I)
+    if m:
+        return ("task_find", {"blocked_by_task": int(m.group(1)), "status": "incomplete"})
+    m = re.search(r"\btasks?\s+(?:that\s+)?block\s+(?:task\s+)?#?(\d+)\s*[.?]?\s*$", msg, re.I)
+    if m:
+        return ("task_find", {"blocking_task": int(m.group(1)), "status": "incomplete"})
+    m = re.search(r"(?:show\s+me\s+)?(?:the\s+)?tasks?\s+that\s+block\s+(?:task\s+)?#?(\d+)\s*[.?]?\s*$", msg, re.I)
+    if m:
+        return ("task_find", {"blocking_task": int(m.group(1)), "status": "incomplete"})
     # Find/search tasks by term (before generic list tasks)
     m = re.search(r"\b(?:find|search\s+for|look\s+for)\s+(?:tasks?\s+)(?:about|with|containing|matching)\s+(.+?)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
     if m:
@@ -1422,6 +1455,8 @@ def run_orchestrator(
                 sort_by=validated.get("sort_by"),
                 flagged=validated.get("flagged"),
                 priority=validated.get("priority"),
+                blocked_by_task_id=validated.get("blocked_by_task_id"),
+                blocking_task_id=validated.get("blocking_task_id"),
                 q=term if term else None,
             )
         except Exception as e:

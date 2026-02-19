@@ -744,6 +744,40 @@
     </div>
   </div>
 
+  <div id="blocking-modal-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-blocking" role="dialog" aria-labelledby="blocking-modal-title" aria-modal="true">
+      <div class="modal-header">
+        <h2 id="blocking-modal-title">Blocking</h2>
+        <button type="button" id="blocking-modal-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body modal-body-scroll">
+        <p class="blocking-modal-hint">Tasks that must be complete before this task, and tasks that are blocked until this task is complete.</p>
+        <section class="blocking-section">
+          <h3 class="blocking-section-title">Blocked by</h3>
+          <p class="blocking-section-desc">These tasks must be complete before this task.</p>
+          <ul id="blocking-modal-blocked-by-list" class="blocking-task-list"></ul>
+          <div class="blocking-add-row">
+            <label for="blocking-add-blocked-by">Add task</label>
+            <select id="blocking-add-blocked-by" class="blocking-task-picker" aria-label="Choose a task that blocks this one">
+              <option value="">— Choose task —</option>
+            </select>
+          </div>
+        </section>
+        <section class="blocking-section">
+          <h3 class="blocking-section-title">Blocks</h3>
+          <p class="blocking-section-desc">These tasks are blocked until this task is complete.</p>
+          <ul id="blocking-modal-blocks-list" class="blocking-task-list"></ul>
+          <div class="blocking-add-row">
+            <label for="blocking-add-blocks">Add task</label>
+            <select id="blocking-add-blocks" class="blocking-task-picker" aria-label="Choose a task that this task blocks">
+              <option value="">— Choose task —</option>
+            </select>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
   <div id="custom-date-format-overlay" class="modal-overlay hidden" aria-hidden="true">
     <div class="modal modal-small" role="dialog" aria-labelledby="custom-format-title">
       <div class="modal-header">

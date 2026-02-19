@@ -1068,6 +1068,20 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).selected {
   height: 16px;
   flex-shrink: 0;
 }
+.task-list .task-row .task-cell .blocking-icon-wrap {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text);
+}
+.task-list .task-row .task-cell .blocking-icon-wrap.blocking-icon-muted {
+  color: var(--text-muted);
+  opacity: 0.4;
+}
+.task-list .task-row .task-cell .blocking-icon-wrap .blocking-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
 .task-list .task-row .task-cell .tags-icon-wrap {
   display: inline-flex;
   align-items: center;
@@ -3554,6 +3568,96 @@ body[data-theme="orange"] .board-region-agenda-outside {
 .modal.modal-recurrence {
   max-width: 420px;
   width: 100%;
+}
+.modal.modal-blocking {
+  max-width: 440px;
+  width: 100%;
+}
+.modal.modal-blocking .blocking-modal-hint {
+  margin: 0 0 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.modal.modal-blocking .blocking-section {
+  margin-bottom: 20px;
+}
+.modal.modal-blocking .blocking-section-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.modal.modal-blocking .blocking-section-desc {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.modal.modal-blocking .blocking-task-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+.modal.modal-blocking .blocking-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-elevated, var(--border-subtle));
+  margin-bottom: 4px;
+}
+.modal.modal-blocking .blocking-item-label {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modal.modal-blocking .blocking-remove-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.modal.modal-blocking .blocking-remove-btn:hover {
+  color: var(--text);
+  background: var(--border);
+}
+.modal.modal-blocking .blocking-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.modal.modal-blocking .blocking-add-row label {
+  font-size: 13px;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.modal.modal-blocking .blocking-task-picker {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+.inspector-action-icon.inspector-blocking-btn .blocking-icon {
+  width: 18px;
+  height: 18px;
+}
+.inspector-action-icon.inspector-blocking-btn.muted .blocking-icon {
+  opacity: 0.5;
+  color: var(--text-muted);
 }
 /* New task modal: title fills space, icons spread out */
 .modal.modal-new-task .modal-body {

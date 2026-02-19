@@ -31,6 +31,7 @@
     projects: 90,
     tags: 80,
     recurrence: 40,
+    blocking: 40,
   };
   const TASK_LIST_COLUMN_LABELS = {
     status: 'Status',
@@ -41,6 +42,7 @@
     projects: 'Proj',
     tags: 'Tags',
     recurrence: 'Recur',
+    blocking: 'Blocking',
   };
   const TASK_LIST_MIN_WIDTH = 48;
   const TASK_LIST_MOVE_WIDTH = 28;
@@ -65,7 +67,7 @@
   const DEFAULT_OPEN_VIEW_KEY = 'spaztick_default_open_view';
   const TASK_LIST_SEPARATOR_KEY = 'spaztick_task_list_separator';
 
-  const TASK_PROPERTY_KEYS = ['due_date', 'available_date', 'description', 'projects', 'tags', 'recurrence'];
+  const TASK_PROPERTY_KEYS = ['due_date', 'available_date', 'description', 'projects', 'tags', 'recurrence', 'blocking'];
   const TASK_PROPERTY_LABELS = {
     due_date: 'Due date',
     available_date: 'Available date',
@@ -978,6 +980,184 @@
       saveRecurrenceModal();
     });
   }
+
+  const blockingModalOverlay = document.getElementById('blocking-modal-overlay');
+  const blockingModalClose = document.getElementById('blocking-modal-close');
+  let blockingModalTaskId = null;
+  let blockingModalTaskLabelMap = {}; // id -> { number, title }
+
+  function taskToLabel(t) {
+    if (!t) return '(unknown)';
+    const num = t.number != null ? `#${t.number}` : '';
+    const title = (t.title || '').trim() || '(no title)';
+    return num ? `${num} ${title}` : title;
+  }
+
+  async function openBlockingModal(taskId) {
+    if (!taskId) return;
+    blockingModalTaskId = taskId;
+    try {
+      const [task, allTasks] = await Promise.all([
+        api(`/api/external/tasks/${encodeURIComponent(taskId)}`),
+        api('/api/external/tasks?limit=500'),
+      ]);
+      const taskList = Array.isArray(allTasks) ? allTasks : [];
+      blockingModalTaskLabelMap = {};
+      taskList.forEach((t) => {
+        if (t && t.id) blockingModalTaskLabelMap[t.id] = { number: t.number, title: t.title };
+      });
+      if (task && task.id) blockingModalTaskLabelMap[task.id] = { number: task.number, title: task.title };
+
+      const dependsOn = Array.isArray(task.depends_on) ? task.depends_on : [];
+      const blocks = Array.isArray(task.blocks) ? task.blocks : [];
+
+      const blockedByList = document.getElementById('blocking-modal-blocked-by-list');
+      const blocksList = document.getElementById('blocking-modal-blocks-list');
+      const addBlockedBySelect = document.getElementById('blocking-add-blocked-by');
+      const addBlocksSelect = document.getElementById('blocking-add-blocks');
+
+      function renderBlockedBy() {
+        blockedByList.innerHTML = dependsOn.map((id) => {
+          const lab = blockingModalTaskLabelMap[id] ? taskToLabel(blockingModalTaskLabelMap[id]) : (id.substring(0, 8) + '…');
+          const esc = lab.replace(/</g, '&lt;').replace(/"/g, '&quot;');
+          return `<li class="blocking-list-item" data-task-id="${(id || '').replace(/"/g, '&quot;')}">
+            <span class="blocking-item-label">${esc}</span>
+            <button type="button" class="blocking-remove-btn" data-task-id="${(id || '').replace(/"/g, '&quot;')}" aria-label="Remove">×</button>
+          </li>`;
+        }).join('');
+        blockedByList.querySelectorAll('.blocking-remove-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const depId = btn.dataset.taskId;
+            if (!depId) return;
+            try {
+              await api(`/api/external/tasks/${encodeURIComponent(taskId)}/dependencies/${encodeURIComponent(depId)}`, { method: 'DELETE' });
+              const idx = dependsOn.indexOf(depId);
+              if (idx !== -1) dependsOn.splice(idx, 1);
+              renderBlockedBy();
+              renderPickers();
+              const updated = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+              updateTaskInLists(updated);
+              const inspectorDiv = document.getElementById('inspector-content');
+              if (inspectorDiv && inspectorDiv.dataset.taskId === taskId) loadTaskDetails(taskId);
+            } catch (e) {
+              alert(e.message || 'Failed to remove dependency.');
+            }
+          });
+        });
+      }
+
+      function renderBlocks() {
+        blocksList.innerHTML = blocks.map((id) => {
+          const lab = blockingModalTaskLabelMap[id] ? taskToLabel(blockingModalTaskLabelMap[id]) : (id.substring(0, 8) + '…');
+          const esc = lab.replace(/</g, '&lt;').replace(/"/g, '&quot;');
+          return `<li class="blocking-list-item" data-task-id="${(id || '').replace(/"/g, '&quot;')}">
+            <span class="blocking-item-label">${esc}</span>
+            <button type="button" class="blocking-remove-btn" data-task-id="${(id || '').replace(/"/g, '&quot;')}" aria-label="Remove">×</button>
+          </li>`;
+        }).join('');
+        blocksList.querySelectorAll('.blocking-remove-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            const otherId = btn.dataset.taskId;
+            if (!otherId) return;
+            try {
+              await api(`/api/external/tasks/${encodeURIComponent(otherId)}/dependencies/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
+              const idx = blocks.indexOf(otherId);
+              if (idx !== -1) blocks.splice(idx, 1);
+              renderBlocks();
+              renderPickers();
+              const updated = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+              updateTaskInLists(updated);
+              const inspectorDiv = document.getElementById('inspector-content');
+              if (inspectorDiv && inspectorDiv.dataset.taskId === taskId) loadTaskDetails(taskId);
+            } catch (e) {
+              alert(e.message || 'Failed to remove dependency.');
+            }
+          });
+        });
+      }
+
+      function renderPickers() {
+        const others = taskList.filter((t) => t && t.id && t.id !== taskId);
+        const blockedByOptions = others.filter((t) => !dependsOn.includes(t.id));
+        const blocksOptions = others.filter((t) => !blocks.includes(t.id));
+        const option = (t) => `<option value="${(t.id || '').replace(/"/g, '&quot;')}">${taskToLabel(t).replace(/</g, '&lt;')}</option>`;
+        addBlockedBySelect.innerHTML = '<option value="">— Choose task —</option>' + blockedByOptions.map(option).join('');
+        addBlocksSelect.innerHTML = '<option value="">— Choose task —</option>' + blocksOptions.map(option).join('');
+      }
+
+      renderBlockedBy();
+      renderBlocks();
+      renderPickers();
+
+      addBlockedBySelect.onchange = async function () {
+        const depId = this.value;
+        if (!depId) return;
+        try {
+          await api(`/api/external/tasks/${encodeURIComponent(taskId)}/dependencies`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ depends_on_task_id: depId }),
+          });
+          if (!dependsOn.includes(depId)) dependsOn.push(depId);
+          const t = taskList.find((x) => x.id === depId);
+          if (t) blockingModalTaskLabelMap[depId] = { number: t.number, title: t.title };
+          renderBlockedBy();
+          renderPickers();
+          this.value = '';
+          const updated = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+          updateTaskInLists(updated);
+          const inspectorDiv = document.getElementById('inspector-content');
+          if (inspectorDiv && inspectorDiv.dataset.taskId === taskId) loadTaskDetails(taskId);
+        } catch (e) {
+          alert(e.message || 'Failed to add dependency.');
+        }
+      };
+      addBlocksSelect.onchange = async function () {
+        const otherId = this.value;
+        if (!otherId) return;
+        try {
+          await api(`/api/external/tasks/${encodeURIComponent(otherId)}/dependencies`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ depends_on_task_id: taskId }),
+          });
+          if (!blocks.includes(otherId)) blocks.push(otherId);
+          const t = taskList.find((x) => x.id === otherId);
+          if (t) blockingModalTaskLabelMap[otherId] = { number: t.number, title: t.title };
+          renderBlocks();
+          renderPickers();
+          this.value = '';
+          const updated = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+          updateTaskInLists(updated);
+          const inspectorDiv = document.getElementById('inspector-content');
+          if (inspectorDiv && inspectorDiv.dataset.taskId === taskId) loadTaskDetails(taskId);
+        } catch (e) {
+          alert(e.message || 'Failed to add dependency.');
+        }
+      };
+
+      if (blockingModalOverlay) {
+        blockingModalOverlay.classList.remove('hidden');
+        blockingModalOverlay.setAttribute('aria-hidden', 'false');
+      }
+    } catch (e) {
+      console.error('Failed to open blocking modal:', e);
+      alert(e.message || 'Failed to load task.');
+    }
+  }
+
+  function closeBlockingModal() {
+    blockingModalTaskId = null;
+    if (blockingModalOverlay) {
+      blockingModalOverlay.classList.add('hidden');
+      blockingModalOverlay.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  if (blockingModalOverlay) {
+    blockingModalOverlay.addEventListener('click', (e) => { if (e.target === blockingModalOverlay) closeBlockingModal(); });
+  }
+  if (blockingModalClose) blockingModalClose.addEventListener('click', closeBlockingModal);
   const recurrenceFreqEl = document.getElementById('recurrence-freq');
   if (recurrenceFreqEl) recurrenceFreqEl.addEventListener('change', updateRecurrenceFreqOptions);
   const recurrenceIntervalEl = document.getElementById('recurrence-interval');
@@ -1394,6 +1574,7 @@
         // would trigger updateTaskInLists -> redrawDisplayedTasks -> loadTaskDetails again (loop).
       }
     }
+    applyBlockingHighlights();
   }
 
   function updateTaskInLists(updatedTask, opts) {
@@ -1540,6 +1721,8 @@
   const CAL_CHECK_SVG = '<svg class="date-icon calendar-check-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4 8H20M4 8V16.8002C4 17.9203 4 18.4801 4.21799 18.9079C4.40973 19.2842 4.71547 19.5905 5.0918 19.7822C5.5192 20 6.07899 20 7.19691 20H16.8031C17.921 20 18.48 20 18.9074 19.7822C19.2837 19.5905 19.5905 19.2842 19.7822 18.9079C20 18.4805 20 17.9215 20 16.8036V8M4 8V7.2002C4 6.08009 4 5.51962 4.21799 5.0918C4.40973 4.71547 4.71547 4.40973 5.0918 4.21799C5.51962 4 6.08009 4 7.2002 4H8M20 8V7.19691C20 6.07899 20 5.5192 19.7822 5.0918C19.5905 4.71547 19.2837 4.40973 18.9074 4.21799C18.4796 4 17.9203 4 16.8002 4H16M8 4H16M8 4V2M16 4V2M15 12L11 16L9 14"/></svg>';
 
   const RECURRENCE_ICON_SVG = '<svg class="recurrence-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M4.06 13C4.02 12.67 4 12.34 4 12c0-4.42 3.58-8 8-8 2.5 0 4.73 1.15 6.2 2.94M19.94 11C19.98 11.33 20 11.66 20 12c0 4.42-3.58 8-8 8-2.5 0-4.73-1.15-6.2-2.94M9 17H6v.29M18.2 4v2.94M18.2 6.94V7L15.2 7M6 20v-2.71"/></svg>';
+  /** Stop-palm icon (themeable via currentColor). Add class .blocking-icon-muted for muted state. */
+  const BLOCKING_ICON_SVG = '<svg class="blocking-icon" viewBox="0 0 512 512" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M387.187,68.12c-4.226,0-8.328,0.524-12.249,1.511V55.44c0-27.622-22.472-50.094-50.094-50.094c-10.293,0-19.865,3.123-27.834,8.461C288.017,5.252,275.869,0,262.508,0c-22.84,0-42.156,15.365-48.16,36.302c-5.268-1.887-10.935-2.912-16.844-2.912c-27.622,0-50.094,22.472-50.094,50.094v82.984c-5.996-2.332-12.508-3.616-19.318-3.616c-29.43,0-53.373,23.936-53.373,53.366v99.695c0,63.299,38.525,185.645,184.315,195.649c4.274,0.289,8.586,0.438,12.813,0.438c91.218,0,165.435-72.378,165.435-161.35V118.214C437.281,90.592,414.81,68.12,387.187,68.12z M271.846,483.947c-3.585,0-7.209-0.126-10.896-0.376c-134.659-9.237-158.179-126.668-158.179-167.659v-99.695c0-13.979,11.341-25.313,25.32-25.313c13.98,0,25.321,11.334,25.321,25.313v76.997h22.05V83.485c0-12.172,9.87-22.042,22.041-22.042c12.172,0,22.042,9.87,22.042,22.042v152.959h20.922V50.094c0-12.172,9.87-22.041,22.041-22.041c12.172,0,22.042,9.87,22.042,22.041v186.35h18.253V55.44c0-12.172,9.87-22.041,22.042-22.041c12.171,0,22.041,9.87,22.041,22.041v181.004h18.261v-118.23c0-12.172,9.87-22.042,22.041-22.042c12.172,0,22.042,9.87,22.042,22.042V350.65C409.229,419.748,353.445,483.947,271.846,483.947z"/></svg>';
 
   const PRIORITY_CIRCLE_SVG = '<svg class="priority-circle-icon" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><circle cx="8" cy="8" r="8" fill="currentColor" stroke="none"/></svg>';
   function priorityClass(p) {
@@ -2367,6 +2550,7 @@
     row.dataset.id = t.id || '';
     row.dataset.number = t.number != null ? String(t.number) : '';
     row.dataset.statusComplete = isTaskCompleted(t) ? '1' : '0';
+    if (t.is_blocked) row.classList.add('task-blocked');
     const moveHandleSvg = '<svg class="task-move-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
     const statusComplete = isTaskCompleted(t);
     const circleOpenSvg = '<svg class="status-icon" viewBox="0 0 32 32" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M0 16q0 3.264 1.28 6.208t3.392 5.12 5.12 3.424 6.208 1.248 6.208-1.248 5.12-3.424 3.392-5.12 1.28-6.208-1.28-6.208-3.392-5.12-5.088-3.392-6.24-1.28q-3.264 0-6.208 1.28t-5.12 3.392-3.392 5.12-1.28 6.208zM4 16q0-3.264 1.6-6.016t4.384-4.352 6.016-1.632 6.016 1.632 4.384 4.352 1.6 6.016-1.6 6.048-4.384 4.352-6.016 1.6-6.016-1.6-4.384-4.352-1.6-6.048z"/></svg>';
@@ -2409,6 +2593,9 @@
       if (opts && opts.tagsTaskId != null) {
         cell.dataset.tagsTaskId = opts.tagsTaskId;
         cell.dataset.tagsJson = opts.tagsJson != null ? opts.tagsJson : '[]';
+      }
+      if (opts && opts.blockingTaskId != null) {
+        cell.dataset.blockingTaskId = opts.blockingTaskId;
       }
       row.appendChild(cell);
     }
@@ -2527,6 +2714,16 @@
         addCell(key, html, { recurrenceTaskId: t.id });
         return;
       }
+      if (key === 'blocking') {
+        const dependsOn = (t.depends_on || []);
+        const blocks = (t.blocks || []);
+        const hasBlocking = dependsOn.length > 0 || blocks.length > 0;
+        const iconClass = 'blocking-icon-wrap ' + (hasBlocking ? '' : 'blocking-icon-muted');
+        const title = hasBlocking ? 'Blocking (click to edit)' : 'Click to set blocking';
+        html = `<span class="${iconClass}" title="${title}">${BLOCKING_ICON_SVG}</span>`;
+        addCell(key, html, { blockingTaskId: t.id });
+        return;
+      }
       addCell(key, html);
     });
 
@@ -2545,6 +2742,8 @@
     if (priorityCell && priorityCell.dataset.priorityTaskId) priorityCell.classList.add('task-cell-clickable');
     const recurrenceCell = row.querySelector('.recurrence-cell');
     if (recurrenceCell && recurrenceCell.dataset.recurrenceTaskId) recurrenceCell.classList.add('task-cell-clickable');
+    const blockingCell = row.querySelector('.blocking-cell');
+    if (blockingCell && blockingCell.dataset.blockingTaskId) blockingCell.classList.add('task-cell-clickable');
 
     return row;
   }
@@ -2661,7 +2860,7 @@
       if (colKey === 'title') cls += ' task-list-header-cell-title';
       if (colKey !== 'move') cls += ' has-resize';
       th.className = cls;
-      th.textContent = TASK_LIST_COLUMN_LABELS[colKey] || colKey;
+      th.textContent = colKey === 'move' ? '' : (TASK_LIST_COLUMN_LABELS[colKey] || colKey);
       if (colKey !== 'move') {
         const handle = document.createElement('div');
         handle.className = 'task-list-resize-handle';
@@ -2863,6 +3062,12 @@
         openRecurrenceModal(recurrenceCell.dataset.recurrenceTaskId);
         return;
       }
+      const blockingCell = ev.target.closest('.blocking-cell');
+      if (blockingCell && blockingCell.dataset.blockingTaskId) {
+        ev.stopPropagation();
+        openBlockingModal(blockingCell.dataset.blockingTaskId);
+        return;
+      }
       ev.stopPropagation();
       onTaskClick(ev, row);
     });
@@ -2896,6 +3101,8 @@
     document.getElementById('center-content').innerHTML = '<p class="placeholder">Loading…</p>';
     document.getElementById('inspector-title').textContent = 'Inspector';
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
+    lastSelectedTaskBlocking = null;
+    applyBlockingHighlights();
     updateCenterHeaderForSource();
     loadInboxTasks();
   }
@@ -2930,6 +3137,8 @@
     if (centerTitle) centerTitle.textContent = `Search for "${q}"`;
     if (centerDesc) centerDesc.textContent = '';
     center.innerHTML = '<p class="placeholder">Searching…</p>';
+    lastSelectedTaskBlocking = null;
+    applyBlockingHighlights();
     if (inboxItem) inboxItem.classList.remove('selected');
     if (projectsList) projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
@@ -4662,11 +4871,33 @@
   function renderBoardConnections(boardId) {
     if (!boardConnectionsLayerEl || !boardCardsLayerEl) return;
     const visibleIds = getBoardVisibleTaskIds(boardId);
-    const allConnections = getBoardConnections(boardId);
-    const connections = allConnections.filter((c) => {
+    const storedConnections = getBoardConnections(boardId);
+    const storedFiltered = storedConnections.filter((c) => {
       if (String(c.fromTaskId) === String(c.toTaskId)) return false;
       return visibleIds.has(String(c.fromTaskId)) && visibleIds.has(String(c.toTaskId));
     });
+    const storedPair = new Set(storedFiltered.map((c) => `${c.fromTaskId}\t${c.toTaskId}`));
+    const taskList = (boardTasksCache[boardId] || []).filter((t) => t && visibleIds.has(String(t.id)));
+    const dependencyConnections = [];
+    taskList.forEach((task) => {
+      const toId = String(task.id);
+      (task.depends_on || []).forEach((depId) => {
+        const fromId = String(depId);
+        if (!visibleIds.has(fromId) || fromId === toId) return;
+        if (storedPair.has(`${fromId}\t${toId}`)) return;
+        dependencyConnections.push({
+          id: 'dep-' + fromId + '-' + toId,
+          fromTaskId: fromId,
+          toTaskId: toId,
+          fromSide: 'right',
+          toSide: 'left',
+          label: '',
+          fromDependency: true,
+        });
+      });
+    });
+    const allConnections = [...storedFiltered, ...dependencyConnections];
+    const connections = allConnections;
     function getCardEl(taskId) {
       return boardCardsLayerEl.querySelector(`.board-card[data-task-id="${String(taskId).replace(/"/g, '\\"')}"]`);
     }
@@ -4740,17 +4971,29 @@
       hitPath.style.display = 'block';
       hitPath.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (conn.fromDependency) return;
         const label = prompt('Connection label:', conn.label || '') || '';
         conn.label = label;
-        setBoardConnections(boardId, allConnections);
+        setBoardConnections(boardId, getBoardConnections(boardId));
         renderBoardConnections(boardId);
       });
       hitPath.addEventListener('contextmenu', (e) => {
         e.preventDefault();
-        if (!confirm('Delete this connection?')) return;
-        const conns = allConnections.filter((c) => c.id !== conn.id);
-        setBoardConnections(boardId, conns);
-        renderBoardConnections(boardId);
+        if (!confirm('Delete this connection? This will also remove the blocking relationship between these tasks.')) return;
+        const toId = String(conn.toTaskId);
+        const fromId = String(conn.fromTaskId);
+        api(`/api/external/tasks/${encodeURIComponent(toId)}/dependencies/${encodeURIComponent(fromId)}`, { method: 'DELETE' })
+          .then(() => {
+            if (!conn.fromDependency) {
+              const conns = getBoardConnections(boardId).filter((c) => c.id !== conn.id);
+              setBoardConnections(boardId, conns);
+            }
+            return refreshBoardAfterTaskUpdate(boardId);
+          })
+          .catch((err) => {
+            console.error('Failed to remove blocking relationship:', err);
+            alert(err.message || 'Failed to remove blocking relationship.');
+          });
       });
       group.appendChild(hitPath);
       const controlCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -4762,11 +5005,11 @@
       controlCircle.setAttribute('stroke-width', '1.5');
       controlCircle.setAttribute('data-connection-id', conn.id);
       controlCircle.setAttribute('class', 'board-connection-control');
-      controlCircle.style.cursor = 'move';
+      controlCircle.style.cursor = conn.fromDependency ? 'default' : 'move';
       controlCircle.style.pointerEvents = 'all';
       controlCircle.style.display = 'block';
       connectionElements.set(conn.id, { path, hitPath, controlCircle, labelEl, p1, p2 });
-      controlCircle.addEventListener('mousedown', (e) => {
+      if (!conn.fromDependency) controlCircle.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
         const startX = e.clientX;
@@ -4797,7 +5040,7 @@
         function onUp() {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
-          setBoardConnections(boardId, allConnections);
+          if (!conn.fromDependency) setBoardConnections(boardId, getBoardConnections(boardId));
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
@@ -4855,6 +5098,8 @@
               if (!sameAsOther && toTaskId && !wouldBeSelf) {
                 const newAnchor = anchor(toCard, toSide);
                 if (newAnchor) {
+                  const oldFromId = String(conn.fromTaskId);
+                  const oldToId = String(conn.toTaskId);
                   const currentCx = conn.controlX != null ? conn.controlX : (p1.x + p2.x) / 2;
                   const currentCy = conn.controlY != null ? conn.controlY : (p1.y + p2.y) / 2;
                   if (isFrom) {
@@ -4872,8 +5117,21 @@
                     conn.controlX = currentCx + dx;
                     conn.controlY = currentCy + dy;
                   }
-                  setBoardConnections(boardId, allConnections);
+                  setBoardConnections(boardId, getBoardConnections(boardId));
                   renderBoardConnections(boardId);
+                  const newToId = String(conn.toTaskId);
+                  const newFromId = String(conn.fromTaskId);
+                  api(`/api/external/tasks/${encodeURIComponent(oldToId)}/dependencies/${encodeURIComponent(oldFromId)}`, { method: 'DELETE' })
+                    .then(() => api(`/api/external/tasks/${encodeURIComponent(newToId)}/dependencies`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ depends_on_task_id: newFromId }),
+                    }))
+                    .then(() => refreshBoardAfterTaskUpdate(boardId))
+                    .catch((err) => {
+                      console.error('Failed to update blocking relationship:', err);
+                      alert(err.message || 'Failed to update blocking relationship.');
+                    });
                 }
               }
             }
@@ -4893,9 +5151,9 @@
       startCircle.setAttribute('class', 'board-connection-endpoint');
       startCircle.setAttribute('data-connection-id', conn.id);
       startCircle.setAttribute('data-endpoint', 'from');
-      startCircle.style.cursor = 'grab';
+      startCircle.style.cursor = conn.fromDependency ? 'default' : 'grab';
       startCircle.style.pointerEvents = 'all';
-      attachEndpointDrag(startCircle, 'from');
+      if (!conn.fromDependency) attachEndpointDrag(startCircle, 'from');
       group.appendChild(startCircle);
 
       const endCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -4908,9 +5166,9 @@
       endCircle.setAttribute('class', 'board-connection-endpoint');
       endCircle.setAttribute('data-connection-id', conn.id);
       endCircle.setAttribute('data-endpoint', 'to');
-      endCircle.style.cursor = 'grab';
+      endCircle.style.cursor = conn.fromDependency ? 'default' : 'grab';
       endCircle.style.pointerEvents = 'all';
-      attachEndpointDrag(endCircle, 'to');
+      if (!conn.fromDependency) attachEndpointDrag(endCircle, 'to');
       group.appendChild(endCircle);
 
       svgHit.appendChild(group);
@@ -5194,6 +5452,17 @@
             connections.push({ id, fromTaskId: taskId, toTaskId, fromSide: side, toSide, label: '' });
             setBoardConnections(boardId, connections);
             renderBoardConnections(boardId);
+            api(`/api/external/tasks/${encodeURIComponent(toTaskId)}/dependencies`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ depends_on_task_id: taskId }),
+            }).then(() => refreshBoardAfterTaskUpdate(boardId)).catch((err) => {
+              console.error('Failed to add blocking relationship:', err);
+              const conns = getBoardConnections(boardId).filter((c) => c.id !== id);
+              setBoardConnections(boardId, conns);
+              renderBoardConnections(boardId);
+              alert(err.message || 'Failed to add blocking relationship.');
+            });
           }
         }
         document.addEventListener('mousemove', onMove);
@@ -6062,6 +6331,8 @@
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   }
   async function loadProjectDetails(projectIdOrShortId) {
+    lastSelectedTaskBlocking = null;
+    applyBlockingHighlights();
     try {
       const p = await api(`/api/external/projects/${encodeURIComponent(projectIdOrShortId)}`);
       const div = document.getElementById('inspector-content');
@@ -6173,6 +6444,8 @@
   }
 
   async function loadListDetails(listId) {
+    lastSelectedTaskBlocking = null;
+    applyBlockingHighlights();
     try {
       const lst = await api(`/api/external/lists/${encodeURIComponent(listId)}`);
       const div = document.getElementById('inspector-content');
@@ -6365,6 +6638,10 @@
       html += '<button type="button" class="inspector-action-icon inspector-recurrence-btn' + (hasRecurrence ? '' : ' muted') + '" data-task-id="' + escapeAttr(taskId) + '" title="' + (hasRecurrence ? 'Edit recurrence' : 'Set recurrence') + '" aria-label="Recurrence">';
       html += RECURRENCE_ICON_SVG;
       html += '</button>';
+      const hasBlockingRel = ((t.depends_on || []).length > 0) || ((t.blocks || []).length > 0);
+      html += '<button type="button" class="inspector-action-icon inspector-blocking-btn' + (hasBlockingRel ? '' : ' muted') + '" data-task-id="' + escapeAttr(taskId) + '" title="Blocking" aria-label="Blocking">';
+      html += BLOCKING_ICON_SVG;
+      html += '</button>';
       html += '<button type="button" class="inspector-action-icon inspector-delete-btn" data-task-id="' + escapeAttr(taskId) + '" title="Delete task" aria-label="Delete">';
       html += INSPECTOR_TRASH_SVG;
       html += '</button>';
@@ -6397,6 +6674,9 @@
 
       div.querySelectorAll('.inspector-recurrence-btn').forEach((btn) => {
         btn.addEventListener('click', () => openRecurrenceModal(btn.dataset.taskId));
+      });
+      div.querySelectorAll('.inspector-blocking-btn').forEach((btn) => {
+        btn.addEventListener('click', () => openBlockingModal(btn.dataset.taskId));
       });
 
       div.querySelectorAll('.inspector-date-row').forEach((row) => {
@@ -6485,8 +6765,21 @@
           }
         });
       });
+      const isMainInspector = !opts || !opts.container;
+      if (isMainInspector) {
+        lastSelectedTaskBlocking = {
+          depends_on: (t.depends_on || []).map(String),
+          blocks: (t.blocks || []).map(String),
+        };
+        applyBlockingHighlights();
+      }
     } catch (e) {
-      document.getElementById('inspector-content').innerHTML = `<div class="inspector-content-inner"><p class="placeholder">${e.message || 'Error'}</p></div>`;
+      const mainDiv = document.getElementById('inspector-content');
+      if (mainDiv) mainDiv.innerHTML = `<div class="inspector-content-inner"><p class="placeholder">${e.message || 'Error'}</p></div>`;
+      if (!opts || !opts.container) {
+        lastSelectedTaskBlocking = null;
+        applyBlockingHighlights();
+      }
     }
   }
 
@@ -6832,6 +7125,7 @@
       { op: 'equals', label: 'equals' }, { op: 'greater_than', label: '>' }, { op: 'less_than', label: '<' }, { op: 'greater_or_equal', label: '>=' }, { op: 'less_or_equal', label: '<=' }
     ]},
     { field: 'flagged', label: 'Focused', valueType: 'flagged', operators: [{ op: 'equals', label: 'is' }] },
+    { field: 'blocked', label: 'Blocked', valueType: 'blocked', operators: [{ op: 'equals', label: 'is' }] },
     { field: 'tags', label: 'Tags', valueType: 'tags', operators: [{ op: 'is_empty', label: 'has no tags' }, { op: 'includes', label: 'is tagged' }, { op: 'excludes', label: 'is not tagged' }] },
     { field: 'project', label: 'Project', valueType: 'projects', operators: [{ op: 'is_empty', label: 'is empty' }, { op: 'includes', label: 'is in' }, { op: 'excludes', label: 'is not in' }] },
   ];
@@ -6839,6 +7133,26 @@
     { key: 'due_date', label: 'Due date' }, { key: 'available_date', label: 'Available date' }, { key: 'created_at', label: 'Created' }, { key: 'completed_at', label: 'Completed' }, { key: 'title', label: 'Name' }, { key: 'priority', label: 'Priority' }, { key: 'status', label: 'Status' }
   ];
   let currentListSettingsListId = null;
+  let lastSelectedTaskBlocking = null;
+
+  function applyBlockingHighlights() {
+    const center = document.getElementById('center-content');
+    if (!center) return;
+    const rows = center.querySelectorAll('.task-row');
+    rows.forEach((row) => {
+      row.classList.remove('blocking-selected', 'blocked-by-selected');
+    });
+    if (lastSelectedTaskBlocking) {
+      const depSet = new Set((lastSelectedTaskBlocking.depends_on || []).map(String));
+      const blocksSet = new Set((lastSelectedTaskBlocking.blocks || []).map(String));
+      rows.forEach((row) => {
+        const id = row.dataset.id;
+        if (!id) return;
+        if (depSet.has(id)) row.classList.add('blocking-selected');
+        if (blocksSet.has(id)) row.classList.add('blocked-by-selected');
+      });
+    }
+  }
 
   function syncDatePickerFromText(row) {
     const dateInput = row && row.querySelector('.list-filter-date-picker');
@@ -6879,7 +7193,7 @@
       ? `<div class="filter-value-wrap"><input type="text" class="list-filter-value" placeholder="e.g. today, today+3" value="${(valueStr || '').replace(/"/g, '&quot;')}" /><input type="date" class="list-filter-date-picker" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button></div>`
       : fieldConfig.valueType === 'status'
         ? `<div class="filter-value-wrap"><select class="list-filter-value"><option value="incomplete" ${valueStr === 'incomplete' ? 'selected' : ''}>Incomplete</option><option value="complete" ${valueStr === 'complete' ? 'selected' : ''}>Complete</option></select></div>`
-        : fieldConfig.valueType === 'flagged'
+        : fieldConfig.valueType === 'flagged' || fieldConfig.valueType === 'blocked'
           ? `<div class="filter-value-wrap"><select class="list-filter-value"><option value="false" ${valueStr === 'false' || valueStr === '0' ? 'selected' : ''}>No</option><option value="true" ${valueStr === 'true' || valueStr === '1' ? 'selected' : ''}>Yes</option></select></div>`
           : `<div class="filter-value-wrap"><input type="text" class="list-filter-value" placeholder="${fieldConfig.valueType === 'tags' ? 'e.g. work, urgent' : fieldConfig.valueType === 'projects' ? 'comma-separated short ids, e.g. 1off, work' : fieldConfig.valueType === 'number' ? '0-3' : 'value'}" value="${(valueStr || '').replace(/"/g, '&quot;')}" /></div>`;
     return `<div class="list-settings-filter-row" data-field="${fieldConfig.field}">
@@ -7051,9 +7365,9 @@
         const isDate = f.valueType === 'date';
         const newValueHtml = isDate
           ? `<input type="text" class="list-filter-value" placeholder="e.g. today, today+3" /><input type="date" class="list-filter-date-picker" title="Pick date" /><button type="button" class="date-picker-btn" aria-label="Pick date">Date</button>`
-          : f.valueType === 'status'
+            : f.valueType === 'status'
             ? `<select class="list-filter-value"><option value="incomplete">Incomplete</option><option value="complete">Complete</option></select>`
-            : f.valueType === 'flagged'
+            : f.valueType === 'flagged' || f.valueType === 'blocked'
               ? `<select class="list-filter-value"><option value="false">No</option><option value="true">Yes</option></select>`
               : `<input type="text" class="list-filter-value" placeholder="${f.valueType === 'tags' ? 'e.g. work, urgent' : f.valueType === 'projects' ? 'short ids: 1off, work' : f.valueType === 'number' ? '0-3' : 'value'}" />`;
         valueWrap.innerHTML = newValueHtml;
@@ -7153,7 +7467,7 @@
     if (f.valueType === 'number' && value !== '') value = parseInt(value, 10);
     if (f.valueType === 'tags' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
     if (f.valueType === 'projects' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
-    if (f.valueType === 'flagged') value = value === 'true' || value === '1';
+    if (f.valueType === 'flagged' || f.valueType === 'blocked') value = value === 'true' || value === '1';
     if (op === 'is_empty') value = null;
     return { type: 'condition', field, operator: op, value };
   }
