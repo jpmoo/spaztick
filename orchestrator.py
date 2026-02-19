@@ -827,16 +827,24 @@ def _format_datetime_info(iso_datetime: str | None, tz_name: str) -> str:
         return str(iso_datetime or "")
 
 
+def _format_task_dates_short(task: dict[str, Any], tz_name: str) -> str:
+    """Return ' a:{date} d:{date}' for available_date and due_date when present (for API/Telegram)."""
+    parts = []
+    if task.get("available_date"):
+        parts.append("a:" + _friendly_date(task["available_date"], tz_name))
+    if task.get("due_date"):
+        parts.append("d:" + _friendly_date(task["due_date"], tz_name))
+    return " " + " ".join(parts) if parts else ""
+
+
 def _format_task_created_for_telegram(task: dict[str, Any], tz_name: str = "UTC") -> str:
     """Format a created task as a user-friendly message for Telegram."""
     title = (task.get("title") or "").strip() or "(no title)"
     status = task.get("status") or "incomplete"
-    due = task.get("due_date")
     num = task.get("number")
     prefix = f"Task {num} created: " if num is not None else "Task created: "
     msg = prefix + f"{title} [{status}]"
-    if due:
-        msg += f" — due {_friendly_date(due, tz_name)}"
+    msg += _format_task_dates_short(task, tz_name)
     return msg + "."
 
 
@@ -880,18 +888,21 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
             in_projects = ", ".join(short_ids) if short_ids else "inbox"
         else:
             in_projects = "inbox"
-        # no circle / yellow (due today) / red (overdue) + due_date
-        due_part = ""
+        # a: / d: dates; only due gets 🟡 (today) or 🔴 (overdue) at the end of the date
+        date_parts = []
+        if t.get("available_date"):
+            date_parts.append("a:" + _friendly_date(t["available_date"], tz_name))
         if t.get("due_date"):
             due = t["due_date"]
             due_friendly = _friendly_date(due, tz_name)
             if due < today:
-                due_part = f" 🔴 {due_friendly}"
+                date_parts.append("d:" + due_friendly + "🔴")
             elif due == today:
-                due_part = f" 🟡 {due_friendly}"
+                date_parts.append("d:" + due_friendly + "🟡")
             else:
-                due_part = f" {due_friendly}"
-        part = f"{status_icon}{' ' + flag_str if flag_str else ''} {title} {num_str} in {in_projects}{due_part}"
+                date_parts.append("d:" + due_friendly)
+        date_part = " " + " ".join(date_parts) if date_parts else ""
+        part = f"{status_icon}{' ' + flag_str if flag_str else ''} {title} {num_str} in {in_projects}{date_part}"
         lines.append(part)
     if total > max_show:
         lines.append(f"... and {total - max_show} more.")
@@ -975,10 +986,9 @@ def _format_task_info_text(
         lines.append(f"Description: {task['description'].strip()}")
     if task.get("notes"):
         lines.append(f"Notes: {task['notes'].strip()}")
-    if task.get("available_date"):
-        lines.append(f"Available: {_friendly_date(task['available_date'], tz_name)}")
-    if task.get("due_date"):
-        lines.append(f"Due: {_friendly_date(task['due_date'], tz_name)}")
+    dates_line = _format_task_dates_short(task, tz_name).strip()
+    if dates_line:
+        lines.append(dates_line)
     if project_labels:
         lines.append(f"Projects: {', '.join(project_labels)}")
     elif task.get("projects"):
@@ -1034,8 +1044,8 @@ def _format_project_info_text(
         label = str(num) if num is not None else task.get("id", "")[:8]
         title = (task.get("title") or "").strip() or "(no title)"
         status = task.get("status") or "incomplete"
-        due = f" — due {_friendly_date(task.get('due_date'), tz_name)}" if task.get("due_date") else ""
-        lines.append(f"  {label}. {title} [{status}]{due}")
+        date_suffix = _format_task_dates_short(task, tz_name)
+        lines.append(f"  {label}. {title} [{status}]{date_suffix}")
         if subtasks:
             sub_parts = [f"{t.get('number')} {((t.get('title') or '').strip() or '(no title)')}" for t in subtasks if t.get("number") is not None]
             if not sub_parts:

@@ -866,14 +866,13 @@ body[data-theme="dark"] .header-icon-settings {
 }
 .task-list .task-row .task-cell.status-combined-cell {
   justify-content: center;
-  gap: 6px;
 }
 .task-list .task-row .task-cell.status-combined-cell .task-cell-inner {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  justify-content: space-evenly;
   min-width: 0;
+  width: 100%;
 }
 .task-list .task-row .task-cell.title-cell {
   min-width: 0;

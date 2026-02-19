@@ -24,7 +24,7 @@
   const DEFAULT_INSPECTOR_HEIGHT = 220;
   const TASK_LIST_DEFAULT_WIDTHS = {
     title: 180,
-    status: 88,
+    status: 72,
     available_date: 100,
     due_date: 100,
     description: 40,
