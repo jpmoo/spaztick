@@ -634,6 +634,14 @@ def _extract_list_identifier_from_message(user_message: str) -> str | None:
     m = re.search(r"\b(?:tasks?\s+)?on\s+list\s+([a-z0-9_-]+)\b", msg, re.I)
     if m:
         return m.group(1).strip()
+    # give me tasks in list X / tasks in list X / in list X
+    m = re.search(r"\b(?:tasks?\s+)?in\s+list\s+([a-z0-9_-]+)\b", msg, re.I)
+    if m:
+        return m.group(1).strip()
+    # tasks from list X / from list X
+    m = re.search(r"\b(?:tasks?\s+)?from\s+list\s+([a-z0-9_-]+)\b", msg, re.I)
+    if m:
+        return m.group(1).strip()
     # open/display list X
     m = re.search(r"\b(?:open|display)\s+list\s+([a-z0-9_-]+)\b", msg, re.I)
     if m:
