@@ -202,6 +202,10 @@ def update_list(
                 sd = json.dumps(sd)
             updates.append("sort_definition = ?")
             params.append((sd or "").strip() or None)
+        if telegram_send_cron is not None:
+            raw = (telegram_send_cron or "").strip() or None
+            updates.append("telegram_send_cron = ?")
+            params.append(raw)
         params.append(resolved)
         conn.execute(f"UPDATE saved_lists SET {', '.join(updates)} WHERE id = ?", params)
         conn.commit()
