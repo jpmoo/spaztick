@@ -133,7 +133,7 @@ Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume th
 
 # Available tools section (unchanged from original)
 AVAILABLE_TOOLS_SECTION = """
-Available tools: task_create, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_view, list_lists, tag_list, tag_rename, tag_delete.
+Available tools: task_create, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_lists, tag_list, tag_rename, tag_delete.
 
 task_create: Use when the user says "add task", "create task", "new task" with a title. Required: title. Optional: due_date, available_date, project or short_id (single project by short_id, e.g. hous, 1off), projects (array of short_ids), tags (array), priority, description, notes, flagged. You MAY include as many optional parameters as the user provides. Parse the full phrase: "add task roast coffee due today in hous" -> title "roast coffee", due_date "today", project "hous". "create task buy milk in 1off" -> title "buy milk", short_id "1off". Use natural language for dates (today, tomorrow, next week). Output: {"name": "task_create", "parameters": {"title": "...", "due_date": "today", "short_id": "hous"}} with every option the user mentioned.
 
@@ -144,6 +144,7 @@ Parameters (all optional; include only what the user asked for):
 - status: "incomplete" (default), "complete", or "all". Omit completed unless the user asks for completed/done tasks or "all".
 - tag / tags (array) / tag_mode ("any" or "all"): Filter by tag(s). Strip # from tag names (e.g. "#do" -> tag "do").
 - short_id or project (single), short_ids or projects (array), project_mode ("any" or "all"): Filter by project. Use short_id "inbox" for tasks with no project.
+- list_id (string): Saved list short_id. Use for "view list X", "tasks on list X", "tasks in list X", "give me tasks from list X". Returns tasks from that list's query (same as in the app). Example: "Tasks on list focu" -> {"name": "task_find", "parameters": {"list_id": "focu"}}.
 - flagged (true/false), priority (0-3 or "high"/"medium high"/"medium low"/"low" or "red"/"orange"/"yellow"/"green"), title_contains (substring), sort_by ("due_date", "available_date", "created_at", "title"), completed_by, completed_after.
 - blocked_by_task (number): Tasks that are blocked by this task (tasks that have this task as a dependency). "Show me tasks blocked by task 3" -> {"name": "task_find", "parameters": {"blocked_by_task": 3, "status": "incomplete"}}.
 - blocking_task (number): Tasks that block this task (this task's dependencies). "Show me tasks that block task 3" -> {"name": "task_find", "parameters": {"blocking_task": 3, "status": "incomplete"}}.
@@ -153,6 +154,8 @@ Output: {"name": "task_find", "parameters": { ... }} with every relevant paramet
 - "Show me tasks available tomorrow" -> {"name": "task_find", "parameters": {"when": "available tomorrow", "status": "incomplete"}}
 - "Overdue tasks" -> {"name": "task_find", "parameters": {"when": "overdue", "status": "incomplete"}}
 - "Tasks in 1off" -> {"name": "task_find", "parameters": {"short_id": "1off", "status": "incomplete"}}
+- "Tasks on list focu" / "view list test" / "tasks in list work" -> {"name": "task_find", "parameters": {"list_id": "focu"}} (use the list's short_id).
+- "Give me tasks in focu" / "tasks in 1off" -> Use list_id when X is a list short_id, short_id when X is a project short_id. If unsure, use list_id (system will fall back to project if no list).
 - "Tasks tagged #do" / "show me #do tasks" -> {"name": "task_find", "parameters": {"tag": "do", "status": "incomplete"}}
 - "Find tasks about meetings" -> {"name": "task_find", "parameters": {"term": "meetings", "status": "incomplete"}}
 - "Tasks in 1off available tomorrow" -> {"name": "task_find", "parameters": {"when": "available tomorrow", "short_id": "1off", "status": "incomplete"}}
@@ -189,10 +192,6 @@ Output format: {"name": "project_unarchive", "parameters": {"short_id": "1off"}}
 
 delete_project: User identifies the project by short_id only (e.g. "1off", "work"). First call without confirm; when the user confirms (e.g. "yes"), call again with "confirm": true. In this chat we never use full project names—only short_id.
 Output format: {"name": "delete_project", "parameters": {"short_id": "1off"}} or {"name": "delete_project", "parameters": {"short_id": "1off", "confirm": true}}.
-
-list_view: Show tasks from a saved list. Use when the user says "view list X", "show tasks on list X", "list tasks on list X", or asks for tasks from a named list. X is always the list's short_id (e.g. "test", "work"). Tasks are returned in the list's configured sort order (same as in the app). Prefer list_view over task_find when the user asks for a specific list by name or short_id.
-Parameters: list_id (the list's short_id). In this chat we never refer to lists by full name—only by short_id.
-Output format: {"name": "list_view", "parameters": {"list_id": "test"}}.
 
 list_lists: List all saved lists with their short_ids. Use when the user asks to list saved lists, show lists, or see list short names (e.g. "list lists", "show my lists").
 Output format: {"name": "list_lists", "parameters": {}}.
@@ -694,6 +693,36 @@ def _infer_add_task_from_message(user_message: str) -> tuple[str, dict[str, Any]
     return ("task_create", params)
 
 
+def _extract_tasks_in_identifier(user_message: str) -> str | None:
+    """Extract identifier from 'give me tasks in X' or 'tasks in X'. Returns X (e.g. 'focu', '1off') or None. Skips when X is 'list' (so 'tasks in list focu' is handled by list patterns)."""
+    if not user_message or not isinstance(user_message, str):
+        return None
+    m = re.search(r"\b(?:give me\s+)?tasks?\s+in\s+([a-z0-9_-]+)\b", user_message.strip(), re.I)
+    if not m:
+        return None
+    x = m.group(1).strip()
+    if x.lower() == "list":
+        return None
+    return x
+
+
+def _resolve_identifier_to_task_find_params(identifier: str) -> dict[str, Any]:
+    """Resolve 'focu' or '1off' to task_find params: list_id if it's a list, short_id if it's a project. Prefer list when both exist."""
+    try:
+        from list_service import get_list
+        if get_list(identifier):
+            return {"list_id": identifier}
+    except Exception:
+        pass
+    try:
+        from project_service import get_project_by_short_id
+        if get_project_by_short_id(identifier):
+            return {"short_id": identifier, "status": "incomplete"}
+    except Exception:
+        pass
+    return {"list_id": identifier}
+
+
 def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any]] | None:
     """If the user message is clearly a list/show tasks or list/show projects command, return (tool_name, params) so we can run the tool even when the model replied conversationally. Conservative: only list/show tasks/projects (bare or with trailing filter words)."""
     if not user_message or not isinstance(user_message, str):
@@ -708,7 +737,11 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
     # View/show a specific list by name or short_id (must come before generic "show lists")
     list_id = _extract_list_identifier_from_message(user_message)
     if list_id:
-        return ("list_view", {"list_id": list_id})
+        return ("task_find", {"list_id": list_id})
+    # "give me tasks in focu" / "tasks in 1off" — X can be list short_id or project short_id
+    in_id = _extract_tasks_in_identifier(user_message)
+    if in_id:
+        return ("task_find", _resolve_identifier_to_task_find_params(in_id))
     # Tag-only: "tasks tagged #do", "show me #do tasks", "tasks with tag work" -> task_find (no date)
     m = re.search(r"\btasks?\s+tagged\s+#?(\w+)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
     if m:
@@ -1422,6 +1455,43 @@ def run_orchestrator(
             tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
         except Exception:
             pass
+        # List by list_id: run the saved list's query and return tasks (same as app list view)
+        list_id = (params.get("list_id") or params.get("name") or "").strip()
+        if not list_id:
+            extracted = _extract_list_identifier_from_message(user_message)
+            if extracted:
+                list_id = extracted
+        if list_id:
+            try:
+                from list_service import get_list, run_list
+            except Exception as e:
+                return (f"Error loading list service: {e}", False, None, used_fallback)
+            lst = get_list(list_id)
+            if lst:
+                try:
+                    tasks = run_list(list_id, limit=500, tz_name=tz_name)
+                except Exception as e:
+                    return (f"Error running list: {e}", False, None, used_fallback)
+                list_label = (lst.get("name") or "").strip() or list_id
+                short_id = (lst.get("short_id") or "").strip()
+                header = f"List: {list_label} ({short_id})\n" if short_id else f"List: {list_label}\n"
+                return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
+            # No list found: try as project short_id (e.g. "tasks in 1off" where 1off is a project)
+            try:
+                from project_service import get_project_by_short_id
+                from task_service import list_tasks as svc_list_tasks
+                project = get_project_by_short_id(list_id)
+            except Exception:
+                project = None
+            if project:
+                try:
+                    tasks = svc_list_tasks(project_id=project["id"], limit=500)
+                except Exception as e:
+                    return (f"Error listing project tasks: {e}", False, None, used_fallback)
+                proj_label = (project.get("name") or "").strip() or list_id
+                header = f"Project {list_id}: {proj_label}\n"
+                return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
+            return (f"List \"{list_id}\" not found. Use list_lists to see short_ids.", False, None, used_fallback)
         merged = dict(params)
         when = (merged.pop("when", None) or "").strip()
         term = (merged.get("term") or merged.get("query") or "").strip()
@@ -1470,39 +1540,6 @@ def run_orchestrator(
         except Exception as e:
             return (f"Error listing tasks: {e}", False, None, used_fallback)
         header = (f"Tasks matching \"{term}\":\n" if term else "")
-        return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
-    if name == "list_view":
-        list_id = (params.get("list_id") or params.get("name") or "").strip()
-        if not list_id:
-            # Try to extract list short_id from user message (e.g. "View test list", "show tasks on list test")
-            extracted = _extract_list_identifier_from_message(user_message)
-            if extracted:
-                list_id = extracted
-            else:
-                return ("list_view requires list_id (the list's short_id). Use list_lists to see short_ids.", False, None, used_fallback)
-        try:
-            from list_service import get_list, run_list
-        except Exception as e:
-            return (f"Error loading list service: {e}", False, None, used_fallback)
-        lst = get_list(list_id)
-        if not lst:
-            return (f"List \"{list_id}\" not found. Use list_lists to see short_ids.", False, None, used_fallback)
-        tz_name = "UTC"
-        try:
-            from config import load as load_config
-            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
-        except Exception:
-            pass
-        try:
-            tasks = run_list(list_id, limit=500, tz_name=tz_name)
-        except Exception as e:
-            return (f"Error running list: {e}", False, None, used_fallback)
-        list_label = (lst.get("name") or "").strip() or list_id
-        short_id = (lst.get("short_id") or "").strip()
-        if short_id:
-            header = f"List: {list_label} ({short_id})\n"
-        else:
-            header = f"List: {list_label}\n"
         return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
     if name == "list_lists":
         try:

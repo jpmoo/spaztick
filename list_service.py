@@ -471,7 +471,7 @@ def run_list(
     """
     Load a saved list, compile its query_definition to SQL, run the query,
     apply sort_definition, and return tasks (with projects populated).
-    Order is the same for in-app, API (GET lists/{id}/tasks), and Telegram/chat (list_view).
+    Order is the same for in-app, API (GET lists/{id}/tasks), and Telegram/chat (task_find with list_id).
     """
     lst = get_list(list_id)
     if not lst:
