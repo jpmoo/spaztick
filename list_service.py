@@ -116,9 +116,9 @@ def create_list(
         _ensure_list_short_ids(conn)
         short_id = _find_available_short_id(conn, name.strip())
         conn.execute(
-            """INSERT INTO saved_lists (id, short_id, name, description, query_definition, sort_definition, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (lid, short_id, name.strip(), (description or "").strip() or None, qd, sd, now, now),
+            """INSERT INTO saved_lists (id, short_id, name, description, query_definition, sort_definition, created_at, updated_at, telegram_send_cron)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (lid, short_id, name.strip(), (description or "").strip() or None, qd, sd, now, now, None),
         )
         conn.commit()
         return get_list(lid) or {}
@@ -156,7 +156,7 @@ def list_lists() -> list[dict[str, Any]]:
     try:
         _ensure_list_short_ids(conn)
         rows = conn.execute(
-            "SELECT id, short_id, name, description, query_definition, sort_definition, created_at, updated_at FROM saved_lists ORDER BY name"
+            "SELECT id, short_id, name, description, query_definition, sort_definition, created_at, updated_at, telegram_send_cron FROM saved_lists ORDER BY name"
         ).fetchall()
         return [_list_row_to_dict(r) for r in rows]
     finally:
@@ -170,6 +170,7 @@ def update_list(
     description: str | None = None,
     query_definition: dict | str | None = None,
     sort_definition: dict | str | None = None,
+    telegram_send_cron: str | None = None,
 ) -> dict[str, Any] | None:
     """Update a saved list. list_id may be id or short_id. Only provided fields are changed."""
     conn = get_connection()
@@ -220,6 +221,21 @@ def delete_list(list_id: str) -> bool:
         cur = conn.execute("DELETE FROM saved_lists WHERE id = ?", (resolved,))
         conn.commit()
         return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_lists_with_telegram_cron() -> list[dict[str, Any]]:
+    """Return lists that have telegram_send_cron set (id, short_id, name, telegram_send_cron). For scheduler."""
+    conn = get_connection()
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT id, short_id, name, telegram_send_cron FROM saved_lists WHERE telegram_send_cron IS NOT NULL AND trim(telegram_send_cron) != ''"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [dict(zip(("id", "short_id", "name", "telegram_send_cron"), r)) for r in rows]
     finally:
         conn.close()
 

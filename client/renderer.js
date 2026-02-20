@@ -6626,6 +6626,7 @@
       const updatedVal = lst.updated_at ? formatDateTimeForInspector(lst.updated_at) : '—';
       const nameVal = escapeAttr(lst.name ?? '');
       const descVal = String(lst.description ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      const telegramCronVal = escapeAttr((lst.telegram_send_cron ?? '').trim());
       div.innerHTML = `
         <div class="inspector-content-inner">
           <p><strong>Short ID:</strong> ${shortId || '—'}</p>
@@ -6638,6 +6639,10 @@
           <div class="setting-row">
             <label for="inspector-list-description"><strong>Description</strong></label>
             <textarea id="inspector-list-description" rows="3" class="inspector-edit-textarea">${descVal}</textarea>
+          </div>
+          <div class="setting-row">
+            <label for="inspector-list-telegram-cron"><strong>Send to Telegram (cron)</strong></label>
+            <input type="text" id="inspector-list-telegram-cron" value="${telegramCronVal}" class="inspector-edit-input" placeholder="e.g. 0 9 * * * (9am daily)" aria-label="Cron: when to send this list via Telegram" />
           </div>
         </div>
         <div class="inspector-project-actions">
@@ -6662,14 +6667,17 @@
       }
       const nameInput = document.getElementById('inspector-list-name');
       const descInput = document.getElementById('inspector-list-description');
+      const telegramCronInput = document.getElementById('inspector-list-telegram-cron');
       document.getElementById('inspector-list-save').addEventListener('click', async () => {
         try {
+          const cronRaw = telegramCronInput && telegramCronInput.value ? telegramCronInput.value.trim() : '';
           await api(`/api/external/lists/${encodeURIComponent(lid)}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               name: (nameInput && nameInput.value) ? nameInput.value.trim() : undefined,
               description: (descInput && descInput.value) ? descInput.value.trim() : undefined,
+              telegram_send_cron: cronRaw,
             }),
           });
           if (titleEl) titleEl.textContent = (nameInput && nameInput.value) ? nameInput.value.trim() : '(no name)';
@@ -6760,7 +6768,6 @@
 
       const titleVal = (t.title || '').trim();
       let html = '';
-      html += '<p class="inspector-immediate-note">All changes are applied immediately.</p>';
       html += `<p class="inspector-label-line"><strong>Created:</strong> ${createdVal}</p>`;
       html += `<p class="inspector-label-line"><strong>Updated:</strong> ${updatedVal}</p>`;
       if (completedVal) html += `<p class="inspector-label-line"><strong>Last completed:</strong> ${completedVal}</p>`;
@@ -6816,7 +6823,7 @@
       html += '</button>';
       html += '</div>';
 
-      div.innerHTML = '<div class="inspector-content-inner">' + html + '</div>';
+      div.innerHTML = '<div class="inspector-content-inner"><div class="inspector-scroll">' + html + '</div><p class="inspector-immediate-note">All changes are applied immediately</p></div>';
 
       const titleInput = div.querySelector('.inspector-title-input');
       if (titleInput) {

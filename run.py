@@ -72,6 +72,13 @@ def main() -> None:
         signal.signal(signal.SIGTERM, lambda *_: (stop_telegram_bot(), sys.exit(0)))
         time.sleep(0.5)
 
+    # Start scheduler for list→Telegram cron (runs in this process)
+    try:
+        from telegram_cron import start_telegram_cron_scheduler
+        start_telegram_cron_scheduler()
+    except Exception:
+        pass
+
     # Run web app (blocking)
     import uvicorn
     config = load_config()

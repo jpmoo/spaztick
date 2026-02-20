@@ -6,3 +6,4 @@ pydantic>=2.0
 pydantic-settings>=2.0
 python-ulid>=2.0
 pyyaml>=6.0
+croniter>=2.0.0

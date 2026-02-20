@@ -63,6 +63,7 @@ class ConfigUpdate(BaseModel):
     system_message: str = "You are a helpful assistant."
     telegram_bot_token: str = ""
     telegram_allowed_users: str = ""
+    telegram_cron_chat_id: str = ""
     telegram_listener_port: int = Field(8443, ge=1, le=65535)
     webhook_public_url: str = ""
     web_ui_port: int = Field(8081, ge=1, le=65535)
@@ -87,6 +88,7 @@ def get_config() -> ConfigUpdate:
         system_message=c.system_message,
         telegram_bot_token=c.telegram_bot_token if c.telegram_bot_token else "",
         telegram_allowed_users=getattr(c, "telegram_allowed_users", "") or "",
+        telegram_cron_chat_id=getattr(c, "telegram_cron_chat_id", "") or "",
         telegram_listener_port=c.telegram_listener_port,
         webhook_public_url=c.webhook_public_url or "",
         web_ui_port=c.web_ui_port,
@@ -108,6 +110,7 @@ def put_config(body: ConfigUpdate) -> dict[str, str]:
     c.system_message = body.system_message
     c.telegram_bot_token = body.telegram_bot_token
     c.telegram_allowed_users = getattr(body, "telegram_allowed_users", "") or ""
+    c.telegram_cron_chat_id = getattr(body, "telegram_cron_chat_id", "") or ""
     c.telegram_listener_port = body.telegram_listener_port
     c.webhook_public_url = body.webhook_public_url
     c.web_ui_port = body.web_ui_port
@@ -790,6 +793,7 @@ def external_update_list(list_id: str, body: dict):
         description=body.get("description") if "description" in body else None,
         query_definition=body.get("query_definition") if "query_definition" in body else None,
         sort_definition=body.get("sort_definition") if "sort_definition" in body else None,
+        telegram_send_cron=body.get("telegram_send_cron") if "telegram_send_cron" in body else None,
     )
     return updated or {}
 
@@ -949,6 +953,11 @@ HTML_PAGE = """<!DOCTYPE html>
       <input type="text" id="telegram_allowed_users" placeholder="@jpmoo, @other (comma-separated @usernames)" />
       <span class="status" style="display:block;margin-top:0.25rem;">Only these @usernames can use the bot. Leave <strong>empty</strong> to allow everyone. Otherwise non-listed users get &quot;Unauthorized&quot;. Save settings to apply.</span>
     </div>
+    <div>
+      <label>Chat ID for scheduled list digests</label>
+      <input type="text" id="telegram_cron_chat_id" placeholder="e.g. 123456789 (numeric chat ID)" />
+      <span class="status" style="display:block;margin-top:0.25rem;">When lists have a &quot;Send to Telegram (cron)&quot; set, they are sent to this chat. Get your chat ID by messaging the bot and checking logs or use getUpdates. Leave empty to disable cron sends.</span>
+    </div>
     <div class="row">
       <div>
         <label><input type="checkbox" id="use_polling" checked /> Use long polling</label>
@@ -1069,6 +1078,7 @@ HTML_PAGE = """<!DOCTYPE html>
       $('system_message').value = c.system_message || '';
       $('telegram_bot_token').value = c.telegram_bot_token || '';
       $('telegram_allowed_users').value = c.telegram_allowed_users || '';
+      $('telegram_cron_chat_id').value = c.telegram_cron_chat_id || '';
       $('telegram_listener_port').value = c.telegram_listener_port ?? 8443;
       $('webhook_public_url').value = c.webhook_public_url || '';
       $('web_ui_port').value = c.web_ui_port ?? 8081;
@@ -1125,6 +1135,7 @@ HTML_PAGE = """<!DOCTYPE html>
         system_message: $('system_message').value.trim() || 'You are a helpful assistant.',
         telegram_bot_token: $('telegram_bot_token').value.trim(),
         telegram_allowed_users: $('telegram_allowed_users').value.trim(),
+        telegram_cron_chat_id: $('telegram_cron_chat_id').value.trim(),
         telegram_listener_port: parseInt($('telegram_listener_port').value, 10) || 8443,
         webhook_public_url: $('webhook_public_url').value.trim(),
         web_ui_port: parseInt($('web_ui_port').value, 10) || 8081,

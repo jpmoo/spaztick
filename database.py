@@ -172,6 +172,12 @@ def init_database(path: Path | None = None) -> Path:
     except sqlite3.OperationalError as e:
         if "duplicate column" not in str(e).lower():
             raise
+    # Migration: add telegram_send_cron for scheduled Telegram list delivery
+    try:
+        conn.execute("ALTER TABLE saved_lists ADD COLUMN telegram_send_cron TEXT")
+    except sqlite3.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
     conn.commit()
     conn.close()
     return db_path
