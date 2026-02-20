@@ -6,6 +6,7 @@ __pycache__/
 config.json
 spaztick.db
 telegram_pending_confirm.json
+telegram_known_chats.json
 *.db
 .env
 *.egg-info/

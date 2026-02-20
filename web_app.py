@@ -956,7 +956,7 @@ HTML_PAGE = """<!DOCTYPE html>
     <div>
       <label>Chat ID for scheduled list digests</label>
       <input type="text" id="telegram_cron_chat_id" placeholder="e.g. 123456789 (numeric chat ID)" />
-      <span class="status" style="display:block;margin-top:0.25rem;">When lists have a &quot;Send to Telegram (cron)&quot; set, they are sent to this chat. Get your chat ID by messaging the bot and checking logs or use getUpdates. Leave empty to disable cron sends.</span>
+      <span class="status" style="display:block;margin-top:0.25rem;">Optional. When lists have a &quot;Send to Telegram (cron)&quot; set, they are sent here. Leave <strong>empty</strong> to send to every whitelisted user who has messaged the bot (each gets the list). Or set one numeric chat ID to send only there.</span>
     </div>
     <div class="row">
       <div>

@@ -62,8 +62,20 @@ def _run_due_list_sends() -> None:
         logger.debug("Could not load config for telegram cron: %s", e)
         return
     token = (getattr(config, "telegram_bot_token", "") or "").strip()
-    chat_id = (getattr(config, "telegram_cron_chat_id", "") or "").strip()
-    if not token or not chat_id:
+    if not token:
+        return
+    # Send to configured chat ID if set, otherwise to all known (whitelisted) users who have messaged the bot
+    configured_chat = (getattr(config, "telegram_cron_chat_id", "") or "").strip()
+    if configured_chat:
+        chat_ids = [configured_chat]
+    else:
+        try:
+            from telegram_chats import get_known_chat_ids
+            chat_ids = [str(cid) for cid in get_known_chat_ids()]
+        except Exception as e:
+            logger.debug("Could not load known Telegram chats: %s", e)
+            chat_ids = []
+    if not chat_ids:
         return
     tz_name = (getattr(config, "user_timezone", "") or "UTC").strip() or "UTC"
     try:
@@ -113,10 +125,11 @@ def _run_due_list_sends() -> None:
             header = f"List: {list_label}\n"
         body = _format_task_list_for_telegram(tasks, 50, tz_name)
         text = header + body
-        if _send_telegram_message(token, chat_id, text):
-            logger.info("Sent list %s to Telegram (cron)", list_id)
-        else:
-            logger.warning("Failed to send list %s to Telegram", list_id)
+        for cid in chat_ids:
+            if _send_telegram_message(token, cid, text):
+                logger.info("Sent list %s to Telegram (cron) chat_id=%s", list_id, cid)
+            else:
+                logger.warning("Failed to send list %s to Telegram chat_id=%s", list_id, cid)
 
 
 def _scheduler_loop() -> None:

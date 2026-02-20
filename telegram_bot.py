@@ -21,6 +21,7 @@ from telegram import Update
 from telegram.ext import Application, ContextTypes, CommandHandler, MessageHandler, filters
 
 from config import load as load_config
+from telegram_chats import add_known_chat
 
 # Run migration at startup so DB has tasks.number before first message
 try:
@@ -121,6 +122,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Unauthorized")
         return
     chat_id = update.message.chat.id
+    add_known_chat(chat_id)
     _chat_histories[chat_id] = []
     _set_pending_confirm(chat_id, None)
     logger.info("Telegram /reset from allowed user chat_id=%s", chat_id)
@@ -135,6 +137,7 @@ async def cmd_history(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text("Unauthorized")
         return
     chat_id = update.message.chat.id
+    add_known_chat(chat_id)
     logger.info("Telegram /history from allowed user chat_id=%s", chat_id)
     history = _chat_histories.get(chat_id, [])
     if not history:
@@ -203,6 +206,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not _is_user_allowed(update):
         await update.message.reply_text("Unauthorized")
         return
+    add_known_chat(update.message.chat.id)
     logger.info("Telegram message from allowed user chat_id=%s", update.message.chat.id)
     text = update.message.text.strip()
     if not text:
