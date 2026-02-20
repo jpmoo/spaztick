@@ -260,8 +260,8 @@ def _compile_condition(cond: dict[str, Any], params: list[Any], tz_name: str, co
             return "t.title NOT LIKE ?"
         return "1=0"
 
-    if field in ("available_date", "due_date"):
-        col = "t.available_date" if field == "available_date" else "t.due_date"
+    if field in ("available_date", "due_date", "completed_at"):
+        col = "t.available_date" if field == "available_date" else ("t.due_date" if field == "due_date" else "t.completed_at")
         resolved = _resolve_date_value(value, tz_name) if op != "is_empty" else None
         if op == "is_empty":
             return f"({col} IS NULL OR {col} = '')"

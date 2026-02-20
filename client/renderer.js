@@ -42,7 +42,7 @@
     projects: 'Proj',
     tags: 'Tags',
     recurrence: 'Recur',
-    blocking: 'Blocking',
+    blocking: 'Block',
   };
   const TASK_LIST_MIN_WIDTH = 48;
   const TASK_LIST_MOVE_WIDTH = 28;
@@ -76,6 +76,7 @@
     projects: 'Projects',
     tags: 'Tags',
     recurrence: 'Recurrence',
+    blocking: 'Blocking',
   };
   const SORT_FIELD_KEYS = ['title', 'available_date', 'due_date', 'priority', 'status'];
   const SORT_FIELD_LABELS = {
@@ -1033,6 +1034,8 @@
               await api(`/api/external/tasks/${encodeURIComponent(taskId)}/dependencies/${encodeURIComponent(depId)}`, { method: 'DELETE' });
               const idx = dependsOn.indexOf(depId);
               if (idx !== -1) dependsOn.splice(idx, 1);
+              removeBoardConnectionsBetweenTasks(taskId, depId);
+              if (currentBoardId) refreshBoardAfterTaskUpdate(currentBoardId).catch(() => {});
               renderBlockedBy();
               renderPickers();
               const updated = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
@@ -1063,6 +1066,8 @@
               await api(`/api/external/tasks/${encodeURIComponent(otherId)}/dependencies/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
               const idx = blocks.indexOf(otherId);
               if (idx !== -1) blocks.splice(idx, 1);
+              removeBoardConnectionsBetweenTasks(taskId, otherId);
+              if (currentBoardId) refreshBoardAfterTaskUpdate(currentBoardId).catch(() => {});
               renderBlocks();
               renderPickers();
               const updated = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
@@ -1410,6 +1415,8 @@
     ladderEl.innerHTML = rows.map((s, i) => {
       const fieldOpts = SORT_FIELD_KEYS.map((k) => `<option value="${k}" ${s.key === k ? 'selected' : ''}>${SORT_FIELD_LABELS[k] || k}</option>`).join('');
       return `<div class="display-sort-row" data-index="${i}">
+        <button type="button" class="display-sort-move display-sort-move-up" aria-label="Move up">↑</button>
+        <button type="button" class="display-sort-move display-sort-move-down" aria-label="Move down">↓</button>
         <select class="display-sort-field" aria-label="Sort by">${fieldOpts}</select>
         <select class="display-sort-dir" aria-label="Direction">
           <option value="asc" ${s.dir === 'asc' ? 'selected' : ''}>Asc</option>
@@ -1435,6 +1442,28 @@
       btn.addEventListener('click', () => {
         const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
         const next = sb.filter((_, j) => j !== i);
+        saveDisplayProperties(source, o, v, sf, sc, sh, sp, next);
+        renderSortLadder(source);
+        refreshTaskList();
+      });
+    });
+    ladderEl.querySelectorAll('.display-sort-move-up').forEach((btn, i) => {
+      btn.addEventListener('click', () => {
+        if (i === 0) return;
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
+        const next = [...sb];
+        [next[i - 1], next[i]] = [next[i], next[i - 1]];
+        saveDisplayProperties(source, o, v, sf, sc, sh, sp, next);
+        renderSortLadder(source);
+        refreshTaskList();
+      });
+    });
+    ladderEl.querySelectorAll('.display-sort-move-down').forEach((btn, i) => {
+      btn.addEventListener('click', () => {
+        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
+        if (i >= sb.length - 1) return;
+        const next = [...sb];
+        [next[i], next[i + 1]] = [next[i + 1], next[i]];
         saveDisplayProperties(source, o, v, sf, sc, sh, sp, next);
         renderSortLadder(source);
         refreshTaskList();
@@ -1507,6 +1536,9 @@
           va = (a.title || '').trim().toLowerCase();
           vb = (b.title || '').trim().toLowerCase();
         } else if (field === 'available_date' || field === 'due_date') {
+          va = (va || '').toString().trim().substring(0, 10);
+          vb = (vb || '').toString().trim().substring(0, 10);
+        } else if (field === 'completed_at') {
           va = (va || '').toString().trim().substring(0, 10);
           vb = (vb || '').toString().trim().substring(0, 10);
         }
@@ -1608,7 +1640,7 @@
   }
 
   const DISPLAY_SETTINGS_ICON = '<svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8L15 8M15 8C15 9.65686 16.3431 11 18 11C19.6569 11 21 9.65685 21 8C21 6.34315 19.6569 5 18 5C16.3431 5 15 6.34315 15 8ZM9 16L21 16M9 16C9 17.6569 7.65685 19 6 19C4.34315 19 3 17.6569 3 16C3 14.3431 4.34315 13 6 13C7.65685 13 9 14.3431 9 16Z"/></svg>';
-  const LIST_SETTINGS_ICON = '<img src="assets/settings-04-svgrepo-com.svg" class="header-icon header-icon-settings" alt="" width="20" height="20" />';
+  const LIST_SETTINGS_ICON = '<svg class="header-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M3 8L15 8M15 8C15 9.65686 16.3431 11 18 11C19.6569 11 21 9.65685 21 8C21 6.34315 19.6569 5 18 5C16.3431 5 15 6.34315 15 8ZM9 16L21 16M9 16C9 17.6569 7.65685 19 6 19C4.34315 19 3 17.6569 3 16C3 14.3431 4.34315 13 6 13C7.65685 13 9 14.3431 9 16Z"/></svg>';
   function updateCenterHeaderForSource() {
     const displaySettingsBtn = document.getElementById('display-settings-btn');
     const displayDropdown = document.getElementById('display-settings-dropdown');
@@ -2858,6 +2890,7 @@
       const th = document.createElement('div');
       let cls = 'task-list-header-cell';
       if (colKey === 'title') cls += ' task-list-header-cell-title';
+      if (colKey === 'blocking') cls += ' task-list-header-cell-blocking';
       if (colKey !== 'move') cls += ' has-resize';
       th.className = cls;
       th.textContent = colKey === 'move' ? '' : (TASK_LIST_COLUMN_LABELS[colKey] || colKey);
@@ -3825,6 +3858,67 @@
     if (!board) return;
     board.connections = connections;
     saveBoards(boards);
+  }
+
+  /** Persist a connection's curve (control point) to storage. Use after dragging control or moving an endpoint. */
+  function persistConnectionCurve(boardId, conn) {
+    const boards = getBoards();
+    const board = boards.find((b) => String(b.id) === String(boardId));
+    if (!board) return;
+    if (!Array.isArray(board.connections)) board.connections = [];
+    const fromId = String(conn.fromTaskId);
+    const toId = String(conn.toTaskId);
+    const existing = board.connections.find((c) => String(c.fromTaskId) === fromId && String(c.toTaskId) === toId);
+    if (existing) {
+      existing.controlX = conn.controlX;
+      existing.controlY = conn.controlY;
+      existing.fromSide = conn.fromSide;
+      existing.toSide = conn.toSide;
+    } else {
+      board.connections.push({
+        id: conn.id,
+        fromTaskId: conn.fromTaskId,
+        toTaskId: conn.toTaskId,
+        fromSide: conn.fromSide || 'right',
+        toSide: conn.toSide || 'left',
+        controlX: conn.controlX,
+        controlY: conn.controlY,
+        label: conn.label || '',
+        fromDependency: !!conn.fromDependency,
+      });
+    }
+    saveBoards(boards);
+  }
+
+  /** Remove one stored connection with the given from-to pair (e.g. when moving an endpoint to a new card). */
+  function removeBoardConnection(boardId, fromTaskId, toTaskId) {
+    const boards = getBoards();
+    const board = boards.find((b) => String(b.id) === String(boardId));
+    if (!board || !Array.isArray(board.connections)) return;
+    const fromId = String(fromTaskId);
+    const toId = String(toTaskId);
+    board.connections = board.connections.filter(
+      (c) => !(String(c.fromTaskId) === fromId && String(c.toTaskId) === toId)
+    );
+    saveBoards(boards);
+  }
+
+  /** Remove any stored board connection between two tasks (e.g. after deleting a dependency in blocking modal). */
+  function removeBoardConnectionsBetweenTasks(taskIdA, taskIdB) {
+    const a = String(taskIdA);
+    const b = String(taskIdB);
+    const boards = getBoards();
+    let anyChanged = false;
+    boards.forEach((board) => {
+      if (!Array.isArray(board.connections)) return;
+      const prevLen = board.connections.length;
+      board.connections = board.connections.filter(
+        (c) => !(String(c.fromTaskId) === a && String(c.toTaskId) === b) && !(String(c.fromTaskId) === b && String(c.toTaskId) === a)
+      );
+      if (board.connections.length !== prevLen) anyChanged = true;
+    });
+    if (anyChanged) saveBoards(boards);
+    if (currentBoardId) renderBoardConnections(currentBoardId);
   }
 
   /** Task IDs that are currently on the board (as cards or in region lines). Connections only show when both ends are visible. */
@@ -4913,6 +5007,49 @@
       if (side === 'bottom') return { x: l + w / 2, y: t + h };
       return { x: l + w, y: t + h / 2 };
     }
+    const SIDES = ['left', 'right', 'top', 'bottom'];
+    /** Outward unit vector from card edge for the given side (points away from card). */
+    function outward(side) {
+      if (side === 'left') return { x: -1, y: 0 };
+      if (side === 'right') return { x: 1, y: 0 };
+      if (side === 'top') return { x: 0, y: -1 };
+      if (side === 'bottom') return { x: 0, y: 1 };
+      return { x: 1, y: 0 };
+    }
+    /** True if segment from fromAnchor to control would go back into the from-card. */
+    function fromSegmentCrossesCard(anchorPt, controlX, controlY, side) {
+      const out = outward(side);
+      return (controlX - anchorPt.x) * out.x + (controlY - anchorPt.y) * out.y < 0;
+    }
+    /** True if segment from control to toAnchor would go back into the to-card. */
+    function toSegmentCrossesCard(anchorPt, controlX, controlY, side) {
+      const out = outward(side);
+      return (anchorPt.x - controlX) * out.x + (anchorPt.y - controlY) * out.y < 0;
+    }
+    /** Pick fromSide and toSide that minimize total segment length (fromAnchor->control + control->toAnchor). Always prefer the shortest line. */
+    function pickHandlesForShortestLine(fromEl, toEl, cx, cy, currentFrom, currentTo) {
+      if (!fromEl || !toEl) return null;
+      let bestLen = Infinity;
+      let bestFrom = currentFrom || 'right';
+      let bestTo = currentTo || 'left';
+      for (const fs of SIDES) {
+        const a1 = anchor(fromEl, fs);
+        if (!a1) continue;
+        const d1 = Math.hypot(cx - a1.x, cy - a1.y);
+        for (const ts of SIDES) {
+          const a2 = anchor(toEl, ts);
+          if (!a2) continue;
+          const d2 = Math.hypot(a2.x - cx, a2.y - cy);
+          const len = d1 + d2;
+          if (len < bestLen) {
+            bestLen = len;
+            bestFrom = fs;
+            bestTo = ts;
+          }
+        }
+      }
+      return { fromSide: bestFrom, toSide: bestTo };
+    }
     boardConnectionsLayerEl.innerHTML = '';
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('class', 'board-connections-svg');
@@ -4929,11 +5066,23 @@
       const fromEl = getCardEl(conn.fromTaskId);
       const toEl = getCardEl(conn.toTaskId);
       if (!fromEl || !toEl) return;
+      let cx = conn.controlX != null ? conn.controlX : 0;
+      let cy = conn.controlY != null ? conn.controlY : 0;
+      const defaultP1 = anchor(fromEl, 'right');
+      const defaultP2 = anchor(toEl, 'left');
+      if (!defaultP1 || !defaultP2) return;
+      if (conn.controlX == null || conn.controlY == null) {
+        cx = (defaultP1.x + defaultP2.x) / 2;
+        cy = (defaultP1.y + defaultP2.y) / 2;
+      }
+      const best = pickHandlesForShortestLine(fromEl, toEl, cx, cy, conn.fromSide, conn.toSide);
+      if (best) {
+        conn.fromSide = best.fromSide;
+        conn.toSide = best.toSide;
+      }
       const p1 = anchor(fromEl, conn.fromSide || 'right');
       const p2 = anchor(toEl, conn.toSide || 'left');
       if (!p1 || !p2) return;
-      const cx = conn.controlX != null ? conn.controlX : (p1.x + p2.x) / 2;
-      const cy = conn.controlY != null ? conn.controlY : (p1.y + p2.y) / 2;
       const d = `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`;
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', d);
@@ -4984,10 +5133,7 @@
         const fromId = String(conn.fromTaskId);
         api(`/api/external/tasks/${encodeURIComponent(toId)}/dependencies/${encodeURIComponent(fromId)}`, { method: 'DELETE' })
           .then(() => {
-            if (!conn.fromDependency) {
-              const conns = getBoardConnections(boardId).filter((c) => c.id !== conn.id);
-              setBoardConnections(boardId, conns);
-            }
+            removeBoardConnectionsBetweenTasks(fromId, toId);
             return refreshBoardAfterTaskUpdate(boardId);
           })
           .catch((err) => {
@@ -5005,11 +5151,11 @@
       controlCircle.setAttribute('stroke-width', '1.5');
       controlCircle.setAttribute('data-connection-id', conn.id);
       controlCircle.setAttribute('class', 'board-connection-control');
-      controlCircle.style.cursor = conn.fromDependency ? 'default' : 'move';
+      controlCircle.style.cursor = 'move';
       controlCircle.style.pointerEvents = 'all';
       controlCircle.style.display = 'block';
       connectionElements.set(conn.id, { path, hitPath, controlCircle, labelEl, p1, p2 });
-      if (!conn.fromDependency) controlCircle.addEventListener('mousedown', (e) => {
+      controlCircle.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
         const startX = e.clientX;
@@ -5023,9 +5169,22 @@
           conn.controlY = startCY + (ev.clientY - startY) / scale;
           const ncx = conn.controlX;
           const ncy = conn.controlY;
-          const nd = `M ${p1.x} ${p1.y} Q ${ncx} ${ncy} ${p2.x} ${p2.y}`;
-          const nmidX = (1 - midT) * (1 - midT) * p1.x + 2 * (1 - midT) * midT * ncx + midT * midT * p2.x;
-          const nmidY = (1 - midT) * (1 - midT) * p1.y + 2 * (1 - midT) * midT * ncy + midT * midT * p2.y;
+          const fromEl = getCardEl(conn.fromTaskId);
+          const toEl = getCardEl(conn.toTaskId);
+          const best = pickHandlesForShortestLine(fromEl, toEl, ncx, ncy, conn.fromSide, conn.toSide);
+          if (best) {
+            conn.fromSide = best.fromSide;
+            conn.toSide = best.toSide;
+          }
+          const curP1 = anchor(fromEl, conn.fromSide || 'right');
+          const curP2 = anchor(toEl, conn.toSide || 'left');
+          const ax = curP1 ? curP1.x : p1.x;
+          const ay = curP1 ? curP1.y : p1.y;
+          const bx = curP2 ? curP2.x : p2.x;
+          const by = curP2 ? curP2.y : p2.y;
+          const nd = `M ${ax} ${ay} Q ${ncx} ${ncy} ${bx} ${by}`;
+          const nmidX = (1 - midT) * (1 - midT) * ax + 2 * (1 - midT) * midT * ncx + midT * midT * bx;
+          const nmidY = (1 - midT) * (1 - midT) * ay + 2 * (1 - midT) * midT * ncy + midT * midT * by;
           if (el) {
             el.path.setAttribute('d', nd);
             el.hitPath.setAttribute('d', nd);
@@ -5040,7 +5199,8 @@
         function onUp() {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
-          if (!conn.fromDependency) setBoardConnections(boardId, getBoardConnections(boardId));
+          persistConnectionCurve(boardId, conn);
+          renderBoardConnections(boardId);
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
@@ -5087,10 +5247,18 @@
             const target = document.elementFromPoint(ev.clientX, ev.clientY);
             if (layer) layer.style.pointerEvents = prevPointer || '';
             const toHandle = target && target.closest('.board-connection-handle');
-            const toCard = toHandle && toHandle.closest('.board-card');
+            const toCard = (toHandle && toHandle.closest('.board-card')) || (target && target.closest('.board-card'));
             if (toCard) {
               const toTaskId = toCard.dataset.taskId;
-              const toSide = (toHandle && toHandle.dataset.side) || 'right';
+              let toSide = (toHandle && toHandle.dataset.side) || null;
+              if (!toSide && toCard.getBoundingClientRect) {
+                const rect = toCard.getBoundingClientRect();
+                const x = ev.clientX - (rect.left + rect.width / 2);
+                const y = ev.clientY - (rect.top + rect.height / 2);
+                if (Math.abs(x) > Math.abs(y)) toSide = x > 0 ? 'right' : 'left';
+                else toSide = y > 0 ? 'bottom' : 'top';
+              }
+              toSide = toSide || 'right';
               const sameAsOther = isFrom
                 ? (String(toTaskId) === String(conn.toTaskId) && toSide === (conn.toSide || 'left'))
                 : (String(toTaskId) === String(conn.fromTaskId) && toSide === (conn.fromSide || 'right'));
@@ -5114,10 +5282,11 @@
                     const dy = newAnchor.y - p2.y;
                     conn.toTaskId = toTaskId;
                     conn.toSide = toSide;
-                    conn.controlX = currentCx + dx;
-                    conn.controlY = currentCy + dy;
+                  conn.controlX = currentCx + dx;
+                  conn.controlY = currentCy + dy;
                   }
-                  setBoardConnections(boardId, getBoardConnections(boardId));
+                  removeBoardConnection(boardId, oldFromId, oldToId);
+                  persistConnectionCurve(boardId, conn);
                   renderBoardConnections(boardId);
                   const newToId = String(conn.toTaskId);
                   const newFromId = String(conn.fromTaskId);
@@ -5151,9 +5320,9 @@
       startCircle.setAttribute('class', 'board-connection-endpoint');
       startCircle.setAttribute('data-connection-id', conn.id);
       startCircle.setAttribute('data-endpoint', 'from');
-      startCircle.style.cursor = conn.fromDependency ? 'default' : 'grab';
+      startCircle.style.cursor = 'grab';
       startCircle.style.pointerEvents = 'all';
-      if (!conn.fromDependency) attachEndpointDrag(startCircle, 'from');
+      attachEndpointDrag(startCircle, 'from');
       group.appendChild(startCircle);
 
       const endCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
@@ -5166,9 +5335,9 @@
       endCircle.setAttribute('class', 'board-connection-endpoint');
       endCircle.setAttribute('data-connection-id', conn.id);
       endCircle.setAttribute('data-endpoint', 'to');
-      endCircle.style.cursor = conn.fromDependency ? 'default' : 'grab';
+      endCircle.style.cursor = 'grab';
       endCircle.style.pointerEvents = 'all';
-      if (!conn.fromDependency) attachEndpointDrag(endCircle, 'to');
+      attachEndpointDrag(endCircle, 'to');
       group.appendChild(endCircle);
 
       svgHit.appendChild(group);
@@ -7121,6 +7290,9 @@
     { field: 'available_date', label: 'Available date', valueType: 'date', operators: [
       { op: 'is_empty', label: 'is empty' }, { op: 'is_on', label: 'is on' }, { op: 'is_before', label: 'is before' }, { op: 'is_after', label: 'is after' }, { op: 'is_on_or_before', label: 'on or before' }, { op: 'is_on_or_after', label: 'on or after' }
     ]},
+    { field: 'completed_at', label: 'Completed date', valueType: 'date', operators: [
+      { op: 'is_empty', label: 'is empty' }, { op: 'is_on', label: 'is on' }, { op: 'is_before', label: 'is before' }, { op: 'is_after', label: 'is after' }, { op: 'is_on_or_before', label: 'on or before' }, { op: 'is_on_or_after', label: 'on or after' }
+    ]},
     { field: 'priority', label: 'Priority', valueType: 'number', operators: [
       { op: 'equals', label: 'equals' }, { op: 'greater_than', label: '>' }, { op: 'less_than', label: '<' }, { op: 'greater_or_equal', label: '>=' }, { op: 'less_or_equal', label: '<=' }
     ]},
@@ -7130,7 +7302,7 @@
     { field: 'project', label: 'Project', valueType: 'projects', operators: [{ op: 'is_empty', label: 'is empty' }, { op: 'includes', label: 'is in' }, { op: 'excludes', label: 'is not in' }] },
   ];
   const LIST_SORT_FIELDS = [
-    { key: 'due_date', label: 'Due date' }, { key: 'available_date', label: 'Available date' }, { key: 'created_at', label: 'Created' }, { key: 'completed_at', label: 'Completed' }, { key: 'title', label: 'Name' }, { key: 'priority', label: 'Priority' }, { key: 'status', label: 'Status' }
+    { key: 'due_date', label: 'Due date' }, { key: 'available_date', label: 'Available date' }, { key: 'completed_at', label: 'Completed date' }, { key: 'created_at', label: 'Created' }, { key: 'title', label: 'Name' }, { key: 'priority', label: 'Priority' }, { key: 'status', label: 'Status' }
   ];
   let currentListSettingsListId = null;
   let lastSelectedTaskBlocking = null;
@@ -7455,6 +7627,20 @@
     }
   }
 
+  /** Resolve relative date strings to YYYY-MM-DD for list filter payload so the API gets a concrete date. */
+  function resolveListFilterDateValue(str) {
+    if (str == null || typeof str !== 'string') return str;
+    const s = str.trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+    const todayLower = s.toLowerCase();
+    if (todayLower === 'today') return todayDateStr();
+    const plusMatch = s.match(/^today\s*\+\s*(\d+)$/i);
+    if (plusMatch) return dateAddDays(todayDateStr(), parseInt(plusMatch[1], 10));
+    const minusMatch = s.match(/^today\s*-\s*(\d+)$/i);
+    if (minusMatch) return dateAddDays(todayDateStr(), -parseInt(minusMatch[1], 10));
+    return s;
+  }
+
   function collectConditionFromRow(row) {
     const fieldSelect = row.querySelector('.list-filter-field');
     const opSelect = row.querySelector('.list-filter-op');
@@ -7468,6 +7654,7 @@
     if (f.valueType === 'tags' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
     if (f.valueType === 'projects' && value) value = value.split(',').map((s) => s.trim()).filter(Boolean);
     if (f.valueType === 'flagged' || f.valueType === 'blocked') value = value === 'true' || value === '1';
+    if (f.valueType === 'date' && typeof value === 'string' && value) value = resolveListFilterDateValue(value);
     if (op === 'is_empty') value = null;
     return { type: 'condition', field, operator: op, value };
   }
