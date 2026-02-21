@@ -173,7 +173,7 @@ def _run_orchestrator(
 ) -> tuple[str, bool, dict | None, bool]:
     """Sync orchestrator call (run in executor). Returns (response_text, tool_used, pending_confirm, used_fallback)."""
     from orchestrator import run_orchestrator
-    return run_orchestrator(user_message, base_url, model, system_prefix, history=history)
+    return run_orchestrator(user_message, base_url, model, system_prefix, history=history, response_format="telegram")
 
 
 def _execute_pending_confirm_http(web_base_url: str, payload: dict) -> tuple[bool, str]:

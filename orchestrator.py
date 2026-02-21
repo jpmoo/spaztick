@@ -4,6 +4,7 @@ AI never writes directly to the database; all mutations go through task_service.
 """
 from __future__ import annotations
 
+import html
 import json
 import logging
 import re
@@ -997,6 +998,67 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
     return "```diff\n" + "\n".join(diff_lines) + "\n```"
 
 
+def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
+    """Format task list for API (HTML): same structure as Telegram but use HTML for styling. Overdue=red, due today=yellow/orange; a:/d: labels in bold."""
+    if not tasks:
+        return "<p>No tasks yet.</p>"
+    try:
+        from date_utils import resolve_relative_date
+        today = resolve_relative_date("today", tz_name)
+    except Exception:
+        from datetime import date
+        today = date.today().isoformat()
+    if not today:
+        from datetime import date
+        today = date.today().isoformat()
+    total = len(tasks)
+    show = tasks[:max_show]
+    try:
+        from project_service import get_project
+    except ImportError:
+        get_project = None
+    lines = [f"<p><strong>Tasks ({total}):</strong></p>"]
+    for t in show:
+        priority = t.get("priority")
+        prio_emoji = _priority_emoji(priority)
+        flagged = t.get("flagged") in (1, True, "1")
+        status = t.get("status") or "incomplete"
+        status_icon = "■" if status == "complete" else "□"
+        flag_str = "★" if flagged else ""
+        title = html.escape((t.get("title") or "").strip() or "(no title)")
+        num = t.get("number")
+        num_str = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
+        if get_project and t.get("projects"):
+            short_ids = []
+            for pid in t["projects"]:
+                p = get_project(pid)
+                if p:
+                    short_id = (p.get("short_id") or "").strip() or (p.get("id") or "")[:8]
+                    if short_id:
+                        short_ids.append(html.escape(short_id))
+            in_projects = ", ".join(short_ids) if short_ids else "inbox"
+        else:
+            in_projects = "inbox"
+        date_parts = []
+        if t.get("available_date"):
+            date_parts.append("<b>a:</b>" + html.escape(_friendly_date(t["available_date"], tz_name)))
+        due = t.get("due_date")
+        if due:
+            date_parts.append("<b>d:</b>" + html.escape(_friendly_date(due, tz_name)))
+        date_part = " " + " ".join(date_parts) if date_parts else ""
+        line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_part}"
+        if due and due < today:
+            line_content = f'<div style="color:red">{line_content}</div>'
+        elif due and due == today:
+            line_content = f'<div style="color:darkgoldenrod">{line_content}</div>'
+        else:
+            line_content = f"<div>{line_content}</div>"
+        lines.append(line_content)
+    if total > max_show:
+        lines.append(f"<p>... and {total - max_show} more.</p>")
+    return "\n".join(lines)
+
+
 def _format_project_created_for_telegram(project: dict[str, Any]) -> str:
     """Format a created project as a user-friendly message for Telegram."""
     name = (project.get("name") or "").strip() or "(no name)"
@@ -1206,9 +1268,11 @@ def run_orchestrator(
     model: str,
     system_prefix: str,
     history: list[dict[str, str]] | None = None,
+    response_format: str = "api",
 ) -> tuple[str, bool, dict[str, Any] | None, bool]:
     """
     Run the orchestrator. Returns (response_text, tool_used, pending_confirm, used_fallback).
+    response_format: "api" (HTML for task lists) or "telegram" (diff code block for Telegram).
     pending_confirm is set when delete_task/delete_project was run without confirm (caller can execute it when user says "yes").
     tool_used is True when a mutating tool was successfully executed (caller should clear history). For delete_* without confirm, tool_used is False.
     used_fallback is True when the tool was inferred from the user message (quick-add) rather than chosen by the AI.
@@ -1489,7 +1553,8 @@ def run_orchestrator(
                 list_label = (lst.get("name") or "").strip() or list_id
                 short_id = (lst.get("short_id") or "").strip()
                 header = f"List: {list_label} ({short_id})\n" if short_id else f"List: {list_label}\n"
-                return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
+                fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
+                return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
             # No list found: try as project short_id (e.g. "tasks in 1off" where 1off is a project)
             try:
                 from project_service import get_project_by_short_id
@@ -1504,7 +1569,8 @@ def run_orchestrator(
                     return (f"Error listing project tasks: {e}", False, None, used_fallback)
                 proj_label = (project.get("name") or "").strip() or list_id
                 header = f"Project {list_id}: {proj_label}\n"
-                return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
+                fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
+                return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
             return (f"List \"{list_id}\" not found. Use list_lists to see short_ids.", False, None, used_fallback)
         merged = dict(params)
         when = (merged.pop("when", None) or "").strip()
@@ -1554,7 +1620,8 @@ def run_orchestrator(
         except Exception as e:
             return (f"Error listing tasks: {e}", False, None, used_fallback)
         header = (f"Tasks matching \"{term}\":\n" if term else "")
-        return (header + _format_task_list_for_telegram(tasks, 50, tz_name), True, None, used_fallback)
+        fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
+        return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
     if name == "list_lists":
         try:
             from list_service import list_lists as list_lists_svc
