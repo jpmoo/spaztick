@@ -1638,6 +1638,10 @@ def run_orchestrator(
             if not when_params:
                 return (f"Could not parse date from \"{when_for_date}\". Try: due today, due or available today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fallback)
             merged.update(when_params)
+            # So "due or available today" isn't narrowed: drop other date filters when we have available_or_due_by
+            if when_params.get("available_or_due_by"):
+                for k in ("due_on", "due_by", "due_before", "available_by", "available_by_required"):
+                    merged.pop(k, None)
         merged.setdefault("status", "incomplete")
         try:
             validated = _validate_task_list_params(merged, tz_name)
