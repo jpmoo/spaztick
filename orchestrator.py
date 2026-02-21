@@ -616,6 +616,62 @@ def _parse_tool_call(response_text: str) -> tuple[str, dict[str, Any]] | None:
     return (str(name).strip(), params if isinstance(params, dict) else {})
 
 
+# Pairs (from, to) for user-facing messages. Order: longer phrases first to avoid partial replacements.
+RESPONSE_FRIENDLY_REPLACEMENTS: list[tuple[str, str]] = [
+    # Explicit orchestrator messages
+    ("project_info requires short_id (the project's friendly id, e.g. 1off or work).", "I need the project's code (e.g. 1off or work) to show it."),
+    ("project_archive requires short_id (e.g. 1off or work).", "I need the project's code (e.g. 1off or work) to archive it."),
+    ("project_unarchive requires short_id (e.g. 1off or work).", "I need the project's code (e.g. 1off or work) to unarchive it."),
+    ("delete_project requires short_id (the project's friendly id, e.g. 1off or work).", "I need the project's code (e.g. 1off or work) to delete it."),
+    ("delete_task requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", "I need the task number (e.g. 1). List tasks to see their numbers."),
+    ("task_info requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", "I need the task number (e.g. 1). List tasks to see their numbers."),
+    ("List projects to see short_ids.", "List projects to see each project's code."),
+    ("List projects to see short_ids", "List projects to see each project's code"),
+    ("List archived projects to see short_ids.", "List archived projects to see each project's code."),
+    ("List archived projects to see short_ids", "List archived projects to see each project's code"),
+    ("List tasks to see numbers.", "List tasks to see their numbers."),
+    ("List tasks to see numbers", "List tasks to see their numbers"),
+    ("Use list_lists to see short_ids.", "Ask to list your saved lists to see each list's code."),
+    ("Use list_lists to see short_ids", "Ask to list your saved lists to see each list's code"),
+    (" not found. Use list_lists to see short_ids.", " not found. Ask to list your saved lists to see each list's code."),
+    ("No project with id \"", "No project with code \""),
+    ("tag_rename requires old_tag.", "I need the current tag name to rename it."),
+    ("tag_rename requires new_tag.", "I need the new tag name."),
+    ("tag_delete requires tag.", "I need the tag name to remove it."),
+    ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", "Nothing to update. Say what to change (e.g. status, due date, title, or tags)."),
+    # Generic tool/param names (for LLM slip-through)
+    ("list_lists", "list your saved lists"),
+    (" short_ids", " codes"),
+    (" short_id ", " code "),
+    (" short_id.", " code."),
+    (" short_id)", " code)"),
+    ("task_find", "list or search tasks"),
+    ("project_list", "list projects"),
+    ("project_info", "view a project"),
+    ("task_info", "view a task"),
+    ("project_archived", "list archived projects"),
+    ("project_archive", "archive a project"),
+    ("project_unarchive", "unarchive a project"),
+    ("delete_project", "delete a project"),
+    ("delete_task", "delete a task"),
+    ("task_create", "create a task"),
+    ("task_update", "update a task"),
+    ("tag_list", "list tags"),
+    ("tag_rename", "rename a tag"),
+    ("tag_delete", "remove a tag"),
+]
+
+
+def friendly_response_text(text: str | None) -> str:
+    """Replace technical tool/column names with friendlier wording for API and Telegram."""
+    if not text or not isinstance(text, str):
+        return text or ""
+    out = text
+    for old, new in RESPONSE_FRIENDLY_REPLACEMENTS:
+        out = out.replace(old, new)
+    return out
+
+
 def _extract_list_identifier_from_message(user_message: str) -> str | None:
     """Extract a list short_id from phrases like 'view test list', 'view list test', 'show me my tasks on list test'. Returns the short_id (e.g. 'test') or None."""
     if not user_message or not isinstance(user_message, str):
@@ -984,7 +1040,7 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
 
 
 def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
-    """Format task list for API (HTML): same structure as Telegram. Only d:date is colored: red (overdue), darkgoldenrod (due today)."""
+    """Format task list for API per PDF (native UI): bold header, emoji per line, monospace for dates. Output as HTML for client chat."""
     if not tasks:
         return "<p>No tasks yet.</p>"
     try:
@@ -1002,7 +1058,8 @@ def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, t
         from project_service import get_project
     except ImportError:
         get_project = None
-    lines = [f"<p><strong>Tasks ({total}):</strong></p>"]
+    # Bold header (PDF: **List: Focused (9)**)
+    lines = [f"<p><strong>Tasks ({total})</strong></p>"]
     for t in show:
         priority = t.get("priority")
         prio_emoji = _priority_emoji(priority)
@@ -1024,6 +1081,7 @@ def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, t
             in_projects = ", ".join(short_ids) if short_ids else "inbox"
         else:
             in_projects = "inbox"
+        # Monospace for dates (PDF: `a:2/18 d:yesterday`). d: colored if overdue/due today.
         date_parts = []
         if t.get("available_date"):
             date_parts.append("a:" + html.escape(_friendly_date(t["available_date"], tz_name)))
@@ -1037,8 +1095,9 @@ def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, t
             else:
                 date_parts.append("d:" + due_friendly)
         date_part = " " + " ".join(date_parts) if date_parts else ""
-        line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_part}"
-        lines.append(f"<div>{line_content}</div>")
+        date_block = f' <code>{date_part}</code>' if date_parts else ""
+        line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_block}"
+        lines.append(f"<p>{line_content}</p>")
     if total > max_show:
         lines.append(f"<p>... and {total - max_show} more.</p>")
     return "\n".join(lines)

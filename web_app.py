@@ -828,7 +828,7 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/external/chat", dependencies=[Depends(_require_api_key)])
 def external_chat(request: Request, body: ChatRequest):
-    from orchestrator import run_orchestrator
+    from orchestrator import run_orchestrator, friendly_response_text
     from datetime import datetime
     try:
         from zoneinfo import ZoneInfo
@@ -842,7 +842,7 @@ def external_chat(request: Request, body: ChatRequest):
         if pending:
             _external_pending.pop(api_key, None)
             ok, response_message = _execute_pending_confirm_payload(pending)
-            return {"response": response_message, "tool_used": True}
+            return {"response": friendly_response_text(response_message or ""), "tool_used": True}
     c = load_config()
     base_url = c.ollama_base_url
     model = (body.model or c.model or "llama3.2").strip()
@@ -864,11 +864,12 @@ def external_chat(request: Request, body: ChatRequest):
         system_prefix = f"{date_line}\n\n{system_prefix}".strip()
     try:
         response_text, tool_used, pending_confirm, used_fallback = run_orchestrator(msg, base_url, model, system_prefix, history=[])
+        response_text = friendly_response_text(response_text or "")
         if pending_confirm and api_key:
             _external_pending[api_key] = pending_confirm
         if tool_used and api_key:
             _external_pending.pop(api_key, None)
-        return {"response": response_text or "", "tool_used": tool_used, "source": "fallback" if used_fallback else "ai"}
+        return {"response": response_text, "tool_used": tool_used, "source": "fallback" if used_fallback else "ai"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

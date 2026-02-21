@@ -259,6 +259,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             None,
             lambda: _run_orchestrator(text, base_url, model, system_prefix, effective_history),
         )
+        from orchestrator import friendly_response_text
+        response = friendly_response_text(response)
         if pending_confirm:
             # Store context so on "yes" we can send one-turn history and let the model confirm
             _set_pending_confirm(chat_id, {
