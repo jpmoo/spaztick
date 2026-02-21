@@ -127,9 +127,8 @@ def _run_due_list_sends() -> None:
             header = f"List: {list_label}\n"
         body = _format_task_list_for_telegram(tasks, 50, tz_name)
         text = header + body
-        use_markdown = "```" in body
         for cid in chat_ids:
-            if _send_telegram_message(token, cid, text, parse_mode="Markdown" if use_markdown else None):
+            if _send_telegram_message(token, cid, text, parse_mode="Markdown"):
                 logger.info("Sent list %s to Telegram (cron) chat_id=%s", list_id, cid)
             else:
                 logger.warning("Failed to send list %s to Telegram chat_id=%s", list_id, cid)

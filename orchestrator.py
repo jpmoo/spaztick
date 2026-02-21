@@ -993,8 +993,15 @@ def _priority_emoji(priority: int | None) -> str:
     return "🟢"
 
 
+def _escape_telegram_markdown(s: str) -> str:
+    """Escape characters that are special in Telegram Markdown so user content doesn't break formatting."""
+    for char in ("\\", "*", "_", "`", "["):
+        s = s.replace(char, "\\" + char)
+    return s
+
+
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
-    """Format task list for Telegram using a fenced JSON code block (per PDF guide): clean syntax highlighting without + / - symbols."""
+    """Format task list for Telegram (native UI): bold header, emoji per line, monospace for dates. No fenced code block."""
     if not tasks:
         return "No tasks yet."
     total = len(tasks)
@@ -1003,7 +1010,8 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         from project_service import get_project
     except ImportError:
         get_project = None
-    lines = []
+    # Bold header (PDF: **List: Focused (9)**)
+    lines = [f"*Tasks ({total})*"]
     for t in show:
         priority = t.get("priority")
         prio_emoji = _priority_emoji(priority)
@@ -1011,7 +1019,7 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         status = t.get("status") or "incomplete"
         status_icon = "■" if status == "complete" else "□"
         flag_str = "★" if flagged else ""
-        title = (t.get("title") or "").strip() or "(no title)"
+        title = _escape_telegram_markdown((t.get("title") or "").strip() or "(no title)")
         num = t.get("number")
         num_str = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
         if get_project and t.get("projects"):
@@ -1021,7 +1029,7 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
                 if p:
                     short_id = (p.get("short_id") or "").strip() or (p.get("id") or "")[:8]
                     if short_id:
-                        short_ids.append(short_id)
+                        short_ids.append(_escape_telegram_markdown(short_id))
             in_projects = ", ".join(short_ids) if short_ids else "inbox"
         else:
             in_projects = "inbox"
@@ -1030,13 +1038,12 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
             date_parts.append("a:" + _friendly_date(t["available_date"], tz_name))
         if t.get("due_date"):
             date_parts.append("d:" + _friendly_date(t["due_date"], tz_name))
-        date_part = " " + " ".join(date_parts) if date_parts else ""
-        line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_part}"
+        date_block = f" `{' '.join(date_parts)}`" if date_parts else ""
+        line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_block}"
         lines.append(line_content)
     if total > max_show:
         lines.append(f"... and {total - max_show} more.")
-    payload = {"title": f"Tasks ({total})", "list": lines}
-    return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2) + "\n```"
+    return "\n".join(lines)
 
 
 def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
