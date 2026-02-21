@@ -25,12 +25,14 @@ _scheduler_thread: threading.Thread | None = None
 _stop_event: threading.Event | None = None
 
 
-def _send_telegram_message(token: str, chat_id: str, text: str) -> bool:
-    """Send a text message via Telegram Bot API. Returns True on success."""
+def _send_telegram_message(token: str, chat_id: str, text: str, parse_mode: str | None = None) -> bool:
+    """Send a text message via Telegram Bot API. Returns True on success. Use parse_mode='Markdown' for diff/code blocks."""
     if not token or not chat_id:
         return False
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     data = {"chat_id": chat_id.strip(), "text": text}
+    if parse_mode:
+        data["parse_mode"] = parse_mode
     try:
         req = urllib.request.Request(
             url,
@@ -125,8 +127,9 @@ def _run_due_list_sends() -> None:
             header = f"List: {list_label}\n"
         body = _format_task_list_for_telegram(tasks, 50, tz_name)
         text = header + body
+        use_markdown = "```diff" in body
         for cid in chat_ids:
-            if _send_telegram_message(token, cid, text):
+            if _send_telegram_message(token, cid, text, parse_mode="Markdown" if use_markdown else None):
                 logger.info("Sent list %s to Telegram (cron) chat_id=%s", list_id, cid)
             else:
                 logger.warning("Failed to send list %s to Telegram chat_id=%s", list_id, cid)

@@ -183,6 +183,8 @@
 
   let lastTasks = [];
   let lastTaskSource = null;
+  /** When viewing a list, cache list meta (sort_definition etc.) for display dropdown. */
+  let lastListMeta = null;
   let lastSearchQuery = '';
   let displayedTasks = [];
   let currentInspectorTag = null;
@@ -1374,11 +1376,10 @@
     const addSortBtn = document.getElementById('display-sort-add');
     if (addSortBtn) {
       addSortBtn.onclick = () => {
-        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
-        const next = [...sb, { key: 'due_date', dir: 'asc' }];
-        saveDisplayProperties(source, o, v, sf, sc, sh, sp, next);
+        const current = getDisplaySortRows(source);
+        const next = [...current, { key: 'due_date', dir: 'asc' }];
+        applyDisplaySort(source, next);
         renderSortLadder(source);
-        refreshTaskList();
       };
     }
     const allOrdered = [...order];
@@ -1407,11 +1408,59 @@
     setupDisplayListDrag(listEl, source);
   }
 
+  function listSortDefinitionToSortBy(listMeta) {
+    if (!listMeta || !listMeta.sort_definition) return [];
+    let sd = listMeta.sort_definition;
+    if (typeof sd === 'string') {
+      try { sd = JSON.parse(sd); } catch (_) { return []; }
+    }
+    const within = (sd && Array.isArray(sd.sort_within_group)) ? sd.sort_within_group : [];
+    return within.map((s) => ({
+      key: (s && SORT_FIELD_KEYS.includes(s.field)) ? s.field : 'due_date',
+      dir: (s && (s.direction === 'desc' || s.direction === 'asc')) ? s.direction : 'asc',
+    })).filter((s) => SORT_FIELD_KEYS.includes(s.key));
+  }
+
+  function getDisplaySortRows(source) {
+    const isListSource = typeof source === 'string' && source.startsWith('list:');
+    const listId = isListSource ? source.slice(5) : null;
+    const listMetaMatches = listId && lastListMeta && (String(lastListMeta.id) === String(listId) || String(lastListMeta.short_id) === String(listId));
+    if (isListSource && listMetaMatches) {
+      const fromServer = listSortDefinitionToSortBy(lastListMeta);
+      return fromServer.length ? fromServer : [{ key: 'due_date', dir: 'asc' }];
+    }
+    const { sortBy } = getDisplayProperties(source);
+    return sortBy.length ? sortBy.map((s) => ({ key: s.key || 'due_date', dir: s.dir || 'asc' })) : [];
+  }
+
+  function applyDisplaySort(source, sb) {
+    const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(source);
+    saveDisplayProperties(source, o, v, sf, sc, sh, sp, sb);
+    const isListSource = typeof source === 'string' && source.startsWith('list:');
+    const listId = isListSource ? source.slice(5) : null;
+    if (isListSource && listId) {
+      const sort_definition = { group_by: [], sort_within_group: sb.map((s) => ({ field: s.key, direction: s.dir })) };
+      api(`/api/external/lists/${encodeURIComponent(listId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sort_definition }),
+      }).then(() => {
+        if (lastListMeta && (String(lastListMeta.id) === String(listId) || String(lastListMeta.short_id) === String(listId))) {
+          lastListMeta.sort_definition = sort_definition;
+        }
+        refreshTaskList();
+      }).catch((e) => {
+        alert(e.message || 'Failed to save list sort.');
+      });
+    } else {
+      refreshTaskList();
+    }
+  }
+
   function renderSortLadder(source) {
     const ladderEl = document.getElementById('display-sort-ladder');
     if (!ladderEl) return;
-    const { sortBy } = getDisplayProperties(source);
-    const rows = sortBy.length ? sortBy.map((s) => ({ key: s.key || 'due_date', dir: s.dir || 'asc' })) : [];
+    const rows = getDisplaySortRows(source);
     ladderEl.innerHTML = rows.map((s, i) => {
       const fieldOpts = SORT_FIELD_KEYS.map((k) => `<option value="${k}" ${s.key === k ? 'selected' : ''}>${SORT_FIELD_LABELS[k] || k}</option>`).join('');
       return `<div class="display-sort-row" data-index="${i}">
@@ -1425,48 +1474,58 @@
         <button type="button" class="display-sort-remove" aria-label="Remove sort level">×</button>
       </div>`;
     }).join('');
+    const applySortChange = (sb) => {
+      applyDisplaySort(source, sb);
+    };
     const syncSortBy = () => {
-      const rows = ladderEl.querySelectorAll('.display-sort-row');
-      const sb = Array.from(rows).map((row) => ({
+      const rowEls = ladderEl.querySelectorAll('.display-sort-row');
+      const sb = Array.from(rowEls).map((row) => ({
         key: row.querySelector('.display-sort-field').value,
         dir: row.querySelector('.display-sort-dir').value,
       }));
-      const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp } = getDisplayProperties(source);
-      saveDisplayProperties(source, o, v, sf, sc, sh, sp, sb);
-      refreshTaskList();
+      applySortChange(sb);
     };
     ladderEl.querySelectorAll('.display-sort-field, .display-sort-dir').forEach((el) => {
       el.addEventListener('change', syncSortBy);
     });
     ladderEl.querySelectorAll('.display-sort-remove').forEach((btn, i) => {
       btn.addEventListener('click', () => {
-        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
+        const rowEls = ladderEl.querySelectorAll('.display-sort-row');
+        const sb = Array.from(rowEls).map((row) => ({
+          key: row.querySelector('.display-sort-field').value,
+          dir: row.querySelector('.display-sort-dir').value,
+        }));
         const next = sb.filter((_, j) => j !== i);
-        saveDisplayProperties(source, o, v, sf, sc, sh, sp, next);
+        applySortChange(next.length ? next : [{ key: 'due_date', dir: 'asc' }]);
         renderSortLadder(source);
-        refreshTaskList();
       });
     });
     ladderEl.querySelectorAll('.display-sort-move-up').forEach((btn, i) => {
       btn.addEventListener('click', () => {
         if (i === 0) return;
-        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
+        const rowEls = ladderEl.querySelectorAll('.display-sort-row');
+        const sb = Array.from(rowEls).map((row) => ({
+          key: row.querySelector('.display-sort-field').value,
+          dir: row.querySelector('.display-sort-dir').value,
+        }));
         const next = [...sb];
         [next[i - 1], next[i]] = [next[i], next[i - 1]];
-        saveDisplayProperties(source, o, v, sf, sc, sh, sp, next);
+        applySortChange(next);
         renderSortLadder(source);
-        refreshTaskList();
       });
     });
     ladderEl.querySelectorAll('.display-sort-move-down').forEach((btn, i) => {
       btn.addEventListener('click', () => {
-        const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(source);
+        const rowEls = ladderEl.querySelectorAll('.display-sort-row');
+        const sb = Array.from(rowEls).map((row) => ({
+          key: row.querySelector('.display-sort-field').value,
+          dir: row.querySelector('.display-sort-dir').value,
+        }));
         if (i >= sb.length - 1) return;
         const next = [...sb];
         [next[i], next[i + 1]] = [next[i + 1], next[i]];
-        saveDisplayProperties(source, o, v, sf, sc, sh, sp, next);
+        applySortChange(next);
         renderSortLadder(source);
-        refreshTaskList();
       });
     });
   }
@@ -1690,10 +1749,15 @@
     const center = document.getElementById('center-content');
     if (!center) return;
     center.innerHTML = '<p class="placeholder">Loading…</p>';
+    lastListMeta = null;
     try {
-      const tasks = await api(`/api/external/lists/${encodeURIComponent(listId)}/tasks?limit=500`);
-      const list = lastTaskSource && lastTaskSource.startsWith('list:') ? lastTaskSource : 'list:' + listId;
-      renderTaskList(Array.isArray(tasks) ? tasks : [], list);
+      const [tasks, list] = await Promise.all([
+        api(`/api/external/lists/${encodeURIComponent(listId)}/tasks?limit=500`),
+        api(`/api/external/lists/${encodeURIComponent(listId)}`),
+      ]);
+      lastListMeta = list && list.id ? list : null;
+      const listSource = lastTaskSource && lastTaskSource.startsWith('list:') ? lastTaskSource : 'list:' + listId;
+      renderTaskList(Array.isArray(tasks) ? tasks : [], listSource);
     } catch (e) {
       center.innerHTML = `<p class="placeholder">${e.message || 'Failed to load list tasks.'}</p>`;
     }

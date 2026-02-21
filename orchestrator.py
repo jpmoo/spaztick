@@ -922,8 +922,20 @@ def _format_task_created_for_telegram(task: dict[str, Any], tz_name: str = "UTC"
     return msg + "."
 
 
+def _priority_emoji(priority: int | None) -> str:
+    """Priority at front: red (3), yellow (2), green (1). No emoji for 0."""
+    p = 0 if priority is None else (int(priority) if isinstance(priority, (int, float)) else 0)
+    if p >= 3:
+        return "🔴"
+    if p == 2:
+        return "🟡"
+    if p == 1:
+        return "🟢"
+    return ""
+
+
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
-    """Format task list for external API/Telegram: status (□/■) flag (★ if set) title (number) in {short_ids or inbox} [🟡/🔴] due_date."""
+    """Format task list for Telegram: [priority 🔴/🟡/🟢] ★ status (□/■) title ... a:/d: dates. Wrapped in ```diff``` for highlighting: - overdue (red), ! due today (yellow/orange), + rest."""
     if not tasks:
         return "No tasks yet."
     try:
@@ -937,12 +949,15 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         today = date.today().isoformat()
     total = len(tasks)
     show = tasks[:max_show]
-    lines = [f"Tasks ({total}):"]
     try:
         from project_service import get_project
     except ImportError:
         get_project = None
+    # Build lines with diff prefix for Telegram syntax highlighting: - red (overdue), ! orange/yellow (due today), + green (rest)
+    diff_lines = ["+ Tasks ({total}):".format(total=total)]
     for t in show:
+        priority = t.get("priority")
+        prio_emoji = _priority_emoji(priority)
         flagged = t.get("flagged") in (1, True, "1")
         status = t.get("status") or "incomplete"
         status_icon = "■" if status == "complete" else "□"
@@ -950,7 +965,6 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         title = (t.get("title") or "").strip() or "(no title)"
         num = t.get("number")
         num_str = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
-        # in {short_id, short_id} or inbox
         if get_project and t.get("projects"):
             short_ids = []
             for pid in t["projects"]:
@@ -962,25 +976,25 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
             in_projects = ", ".join(short_ids) if short_ids else "inbox"
         else:
             in_projects = "inbox"
-        # a: / d: dates; only due gets 🟡 (today) or 🔴 (overdue) at the end of the date
         date_parts = []
         if t.get("available_date"):
             date_parts.append("a:" + _friendly_date(t["available_date"], tz_name))
-        if t.get("due_date"):
-            due = t["due_date"]
-            due_friendly = _friendly_date(due, tz_name)
-            if due < today:
-                date_parts.append("d:" + due_friendly + "🔴")
-            elif due == today:
-                date_parts.append("d:" + due_friendly + "🟡")
-            else:
-                date_parts.append("d:" + due_friendly)
+        due = t.get("due_date")
+        if due:
+            date_parts.append("d:" + _friendly_date(due, tz_name))
         date_part = " " + " ".join(date_parts) if date_parts else ""
-        part = f"{status_icon}{' ' + flag_str if flag_str else ''} {title} {num_str} in {in_projects}{date_part}"
-        lines.append(part)
+        # Order: [priority] ★ □/■ title ...
+        line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_part}"
+        if due and due < today:
+            prefix = "- "
+        elif due and due == today:
+            prefix = "! "
+        else:
+            prefix = "+ "
+        diff_lines.append(prefix + line_content)
     if total > max_show:
-        lines.append(f"... and {total - max_show} more.")
-    return "\n".join(lines)
+        diff_lines.append("+ ... and {n} more.".format(n=total - max_show))
+    return "```diff\n" + "\n".join(diff_lines) + "\n```"
 
 
 def _format_project_created_for_telegram(project: dict[str, Any]) -> str:

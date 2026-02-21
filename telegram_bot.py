@@ -270,7 +270,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             _set_pending_confirm(chat_id, None)
         if not response:
             response = "(No response)"
-        await update.message.reply_text(response)
+        await update.message.reply_text(
+            response,
+            parse_mode="Markdown" if "```diff" in (response or "") else None,
+        )
         if USE_HISTORY:
             if tool_used:
                 _chat_histories[chat_id] = []
