@@ -19,6 +19,20 @@ def _today_in_tz(tz_name: str) -> date:
     return datetime.now(tz).date()
 
 
+_WEEKDAY_ABBREV = {
+    "mon": "monday", "tue": "tuesday", "wed": "wednesday", "thu": "thursday",
+    "fri": "friday", "sat": "saturday", "sun": "sunday",
+}
+
+
+def _normalize_weekday_abbrev(day: str) -> str | None:
+    """Return full weekday name for 'wed' -> 'wednesday', etc.; else None."""
+    if not day or not day.strip():
+        return None
+    d = day.strip().lower()
+    return _WEEKDAY_ABBREV.get(d) or (d if d in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday") else None)
+
+
 def resolve_date_expression(value: str | None, tz_name: str = "UTC") -> str | None:
     """
     Resolve list query date expressions to YYYY-MM-DD.
@@ -94,6 +108,13 @@ def resolve_relative_date(value: str | None, tz_name: str = "UTC") -> str | None
     if raw == "this week":
         days_until_sunday = (6 - today.weekday()) % 7  # 6 = Sunday in Python weekday()
         return (today + timedelta(days=days_until_sunday)).isoformat()
+    # "this week on Wednesday" / "this week on wed" -> same as "this Wednesday"
+    m = re.match(r"^this\s+week\s+on\s+(.+)$", raw)
+    if m:
+        day_part = m.group(1).strip().lower()
+        day_full = _normalize_weekday_abbrev(day_part) or day_part
+        if day_full in ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"):
+            return resolve_relative_date("this " + day_full, tz_name)
     # "in N days" / "in the next N days" / "within the next N days"
     m = re.match(r"^in\s+(\d+)\s+days?$", raw)
     if m:
@@ -107,7 +128,8 @@ def resolve_relative_date(value: str | None, tz_name: str = "UTC") -> str | None
     if m:
         n = int(m.group(1))
         return (today + timedelta(days=n)).isoformat()
-    # Day names: monday, tuesday, ... (next occurrence of that weekday)
+    # Day names: monday, tuesday, wed, ... (next occurrence of that weekday)
+    raw = _normalize_weekday_abbrev(raw) or raw
     weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
     if raw in weekdays:
         target_weekday = weekdays.index(raw)  # 0=Monday
@@ -116,20 +138,23 @@ def resolve_relative_date(value: str | None, tz_name: str = "UTC") -> str | None
         if days_ahead == 0:
             days_ahead = 7  # "next" Monday if today is Monday
         return (today + timedelta(days=days_ahead)).isoformat()
-    # "next Friday" / "next monday" etc. (same as bare weekday = next occurrence)
-    m = re.match(r"^next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?$", raw)
+    # "next Friday" / "next wed" etc. (same as bare weekday = next occurrence)
+    m = re.match(r"^next\s+(.+)$", raw)
     if m:
-        return resolve_relative_date(m.group(1), tz_name)
-    # "this Friday" = this week's occurrence (or next if already past)
-    m = re.match(r"^this\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?$", raw)
+        wd = _normalize_weekday_abbrev(m.group(1).strip().lower()) or m.group(1).strip().lower()
+        if wd in weekdays:
+            return resolve_relative_date(wd, tz_name)
+    # "this Friday" / "this wed" = this week's occurrence (or next if already past)
+    m = re.match(r"^this\s+(.+)$", raw)
     if m:
-        wd = m.group(1)
-        target_weekday = weekdays.index(wd)
-        current_weekday = today.weekday()
-        days_ahead = (target_weekday - current_weekday) % 7
-        if days_ahead == 0:
-            days_ahead = 7
-        return (today + timedelta(days=days_ahead)).isoformat()
+        wd = _normalize_weekday_abbrev(m.group(1).strip().lower()) or m.group(1).strip().lower()
+        if wd in weekdays:
+            target_weekday = weekdays.index(wd)
+            current_weekday = today.weekday()
+            days_ahead = (target_weekday - current_weekday) % 7
+            if days_ahead == 0:
+                days_ahead = 7
+            return (today + timedelta(days=days_ahead)).isoformat()
     # "end of month" / "eom" = last day of current month
     if raw in ("end of month", "eom", "end of this month"):
         try:
