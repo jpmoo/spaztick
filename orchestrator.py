@@ -924,38 +924,30 @@ def _format_task_created_for_telegram(task: dict[str, Any], tz_name: str = "UTC"
 
 
 def _priority_emoji(priority: int | None) -> str:
-    """Priority at front: red (3), yellow (2), green (1). No emoji for 0."""
+    """Priority at front: 3=red, 2=orange, 1=yellow, 0=green."""
     p = 0 if priority is None else (int(priority) if isinstance(priority, (int, float)) else 0)
     if p >= 3:
         return "🔴"
     if p == 2:
-        return "🟡"
+        return "🟠"
     if p == 1:
+        return "🟡"
+    if p == 0:
         return "🟢"
-    return ""
+    return "🟢"
 
 
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
-    """Format task list for Telegram: [priority 🔴/🟡/🟢] ★ status (□/■) title ... a:/d: dates. Wrapped in ```diff``` for highlighting: - overdue (red), ! due today (yellow/orange), + rest."""
+    """Format task list for Telegram using a fenced JSON code block (per PDF guide): clean syntax highlighting without + / - symbols."""
     if not tasks:
         return "No tasks yet."
-    try:
-        from date_utils import resolve_relative_date
-        today = resolve_relative_date("today", tz_name)
-    except Exception:
-        from datetime import date
-        today = date.today().isoformat()
-    if not today:
-        from datetime import date
-        today = date.today().isoformat()
     total = len(tasks)
     show = tasks[:max_show]
     try:
         from project_service import get_project
     except ImportError:
         get_project = None
-    # Build lines with diff prefix for Telegram syntax highlighting: - red (overdue), ! orange/yellow (due today), + green (rest)
-    diff_lines = ["+ Tasks ({total}):".format(total=total)]
+    lines = []
     for t in show:
         priority = t.get("priority")
         prio_emoji = _priority_emoji(priority)
@@ -980,26 +972,19 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         date_parts = []
         if t.get("available_date"):
             date_parts.append("a:" + _friendly_date(t["available_date"], tz_name))
-        due = t.get("due_date")
-        if due:
-            date_parts.append("d:" + _friendly_date(due, tz_name))
+        if t.get("due_date"):
+            date_parts.append("d:" + _friendly_date(t["due_date"], tz_name))
         date_part = " " + " ".join(date_parts) if date_parts else ""
-        # Order: [priority] ★ □/■ title ...
         line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_part}"
-        if due and due < today:
-            prefix = "- "
-        elif due and due == today:
-            prefix = "! "
-        else:
-            prefix = "+ "
-        diff_lines.append(prefix + line_content)
+        lines.append(line_content)
     if total > max_show:
-        diff_lines.append("+ ... and {n} more.".format(n=total - max_show))
-    return "```diff\n" + "\n".join(diff_lines) + "\n```"
+        lines.append(f"... and {total - max_show} more.")
+    payload = {"title": f"Tasks ({total})", "list": lines}
+    return "```json\n" + json.dumps(payload, ensure_ascii=False, indent=2) + "\n```"
 
 
 def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
-    """Format task list for API (HTML): same structure as Telegram but use HTML for styling. Overdue=red, due today=yellow/orange; a:/d: labels in bold."""
+    """Format task list for API (HTML): same structure as Telegram. Only d:date is colored: red (overdue), darkgoldenrod (due today)."""
     if not tasks:
         return "<p>No tasks yet.</p>"
     try:
@@ -1041,19 +1026,19 @@ def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, t
             in_projects = "inbox"
         date_parts = []
         if t.get("available_date"):
-            date_parts.append("<b>a:</b>" + html.escape(_friendly_date(t["available_date"], tz_name)))
+            date_parts.append("a:" + html.escape(_friendly_date(t["available_date"], tz_name)))
         due = t.get("due_date")
         if due:
-            date_parts.append("<b>d:</b>" + html.escape(_friendly_date(due, tz_name)))
+            due_friendly = html.escape(_friendly_date(due, tz_name))
+            if due < today:
+                date_parts.append(f'<span style="color:red">d:{due_friendly}</span>')
+            elif due == today:
+                date_parts.append(f'<span style="color:darkgoldenrod">d:{due_friendly}</span>')
+            else:
+                date_parts.append("d:" + due_friendly)
         date_part = " " + " ".join(date_parts) if date_parts else ""
         line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_part}"
-        if due and due < today:
-            line_content = f'<div style="color:red">{line_content}</div>'
-        elif due and due == today:
-            line_content = f'<div style="color:darkgoldenrod">{line_content}</div>'
-        else:
-            line_content = f"<div>{line_content}</div>"
-        lines.append(line_content)
+        lines.append(f"<div>{line_content}</div>")
     if total > max_show:
         lines.append(f"<p>... and {total - max_show} more.</p>")
     return "\n".join(lines)

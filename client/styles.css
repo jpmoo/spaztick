@@ -2543,6 +2543,16 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   word-break: break-word;
   line-height: 1.45;
 }
+.chat-message .bubble.chat-bubble-html {
+  white-space: normal;
+}
+.chat-message .bubble.chat-bubble-html p {
+  margin: 0 0 0.5em;
+}
+.chat-message .bubble.chat-bubble-html p:last-child,
+.chat-message .bubble.chat-bubble-html div:last-child {
+  margin-bottom: 0;
+}
 .chat-message.user .bubble {
   background: var(--accent);
   color: #fff;

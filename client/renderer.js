@@ -7028,8 +7028,17 @@
     hideTypingIndicator();
     const wrap = document.createElement('div');
     wrap.className = `chat-message ${role}`;
-    const escaped = String(text).replace(/</g, '&lt;').replace(/\n/g, '<br>');
-    wrap.innerHTML = `<div class="bubble"><span class="text">${escaped}</span></div>`;
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+    const str = String(text ?? '');
+    if (role === 'model' && /<[a-z][\s\S]*>/i.test(str)) {
+      bubble.classList.add('chat-bubble-html');
+      bubble.innerHTML = str;
+    } else {
+      const escaped = str.replace(/</g, '&lt;').replace(/\n/g, '<br>');
+      bubble.innerHTML = `<span class="text">${escaped}</span>`;
+    }
+    wrap.appendChild(bubble);
     chatMessages.appendChild(wrap);
     scrollChatToBottom();
   }
