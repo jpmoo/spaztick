@@ -156,6 +156,17 @@ def _parse_one_date_condition(raw: str, today: date, tz_name: str) -> dict[str, 
         out["overdue"] = True
         return out
 
+    # "due today,available today" / "due today, available today" (exact phrases, any order) -> available_or_due_by
+    normalized = re.sub(r"\s+", " ", raw).strip()
+    if normalized in (
+        "due today,available today",
+        "due today, available today",
+        "available today,due today",
+        "available today, due today",
+    ):
+        out["available_or_due_by"] = today.isoformat()
+        return out
+
     # "due or available X" / "available or due X" -> available_or_due_by (tasks due by X or available by X)
     m = re.match(r"^(?:due\s+or\s+available|available\s+or\s+due)\s+(.+)$", raw)
     if m:
@@ -238,13 +249,16 @@ def parse_date_condition(phrase: str | None, tz_name: str = "UTC") -> dict[str, 
     if not phrase or not str(phrase).strip():
         return out
     raw = str(phrase).strip().lower()
+    # Normalize commas (Unicode fullwidth, etc.) and spacing so "due today,available today" always splits
+    raw = raw.replace("\uff0c", ",").replace("\u201a", ",")  # fullwidth comma, single low-9 quote
+    raw = re.sub(r",\s*", ", ", raw).strip()  # normalize ", " after comma
     try:
         today = _today_in_tz((tz_name or "").strip() or "UTC")
     except Exception:
         today = date.today()
 
     # "due X, available X" or "due X and available X" (same date) -> available_or_due_by (OR semantics)
-    for sep in (" and ", ", ", ","):
+    for sep in (" and ", ", "):
         if sep in raw:
             parts = [p.strip() for p in raw.split(sep, 1)]
             if len(parts) == 2 and parts[0] and parts[1]:
