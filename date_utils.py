@@ -156,6 +156,15 @@ def _parse_one_date_condition(raw: str, today: date, tz_name: str) -> dict[str, 
         out["overdue"] = True
         return out
 
+    # "due or available X" / "available or due X" -> available_or_due_by (tasks due by X or available by X)
+    m = re.match(r"^(?:due\s+or\s+available|available\s+or\s+due)\s+(.+)$", raw)
+    if m:
+        date_expr = m.group(1).strip()
+        resolved = resolve_relative_date(date_expr, tz_name)
+        if resolved:
+            out["available_or_due_by"] = resolved
+            return out
+
     # "due before X" / "due before next Friday" -> due_before (strictly before X)
     m = re.match(r"^due\s+before\s+(.+)$", raw)
     if m:
@@ -216,12 +225,13 @@ def _parse_one_date_condition(raw: str, today: date, tz_name: str) -> dict[str, 
 def parse_date_condition(phrase: str | None, tz_name: str = "UTC") -> dict[str, Any]:
     """
     Parse a natural-language date condition for task queries (task_find).
-    Returns a dict with one or more of: due_on, due_by, due_before, available_by, available_by_required, overdue.
+    Returns a dict with one or more of: due_on, due_by, due_before, available_by, available_by_required, available_or_due_by, overdue.
 
     - "due next Tuesday" / "due Friday" / "due tomorrow" -> due_on (tasks due on that exact date only)
     - "due by Friday" / "due within the next week" / "due in 5 days" -> due_by (on or before)
     - "due before next Friday" -> due_before (strictly before)
     - "available today" / "available now" / "available tomorrow" -> available_by + available_by_required True (only tasks with available_date <= date)
+    - "due or available today" / "due today, available today" -> available_or_due_by (tasks due on or available by that date)
     - "overdue" -> overdue = True
     """
     out: dict[str, Any] = {}
@@ -233,18 +243,25 @@ def parse_date_condition(phrase: str | None, tz_name: str = "UTC") -> dict[str, 
     except Exception:
         today = date.today()
 
-    # Compound: "available today and due friday" or "available now, due in 3 days" -> parse each part and merge
-    for sep in (" and ", ", "):
+    # "due X, available X" or "due X and available X" (same date) -> available_or_due_by (OR semantics)
+    for sep in (" and ", ", ", ","):
         if sep in raw:
             parts = [p.strip() for p in raw.split(sep, 1)]
             if len(parts) == 2 and parts[0] and parts[1]:
                 a = _parse_one_date_condition(parts[0], today, tz_name)
                 b = _parse_one_date_condition(parts[1], today, tz_name)
+                if a and b:
+                    # Both parsed: if one is due_on/due_by and the other available_by with same date -> available_or_due_by
+                    date_a = (a.get("due_on") or a.get("due_by") or a.get("available_by"))
+                    date_b = (b.get("due_on") or b.get("due_by") or b.get("available_by"))
+                    if date_a and date_b and date_a == date_b:
+                        out["available_or_due_by"] = date_a
+                        return out
                 if a or b:
                     out.update(a)
-                    out.update(b)  # second part can add due_by if first had available_by
+                    out.update(b)
                     return out
-            break  # only try one separator
+            break
     return _parse_one_date_condition(raw, today, tz_name)
 
 

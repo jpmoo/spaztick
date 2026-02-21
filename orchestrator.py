@@ -1636,7 +1636,7 @@ def run_orchestrator(
         if when_for_date:
             when_params = _parse_when_to_task_list_params(when_for_date, tz_name)
             if not when_params:
-                return (f"Could not parse date from \"{when_for_date}\". Try: due today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fallback)
+                return (f"Could not parse date from \"{when_for_date}\". Try: due today, due or available today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fallback)
             merged.update(when_params)
         merged.setdefault("status", "incomplete")
         try:
