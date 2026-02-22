@@ -343,6 +343,7 @@ def api_update_task(task_id: str, body: dict):
     else:
         try:
             from task_service import _UNSET
+            from date_utils import normalize_date_clear_value
             update_task(
                 task_id,
                 title=body.get("title"),
@@ -350,8 +351,8 @@ def api_update_task(task_id: str, body: dict):
                 notes=body.get("notes"),
                 status=body.get("status"),
                 priority=body["priority"] if "priority" in body else _UNSET,
-                available_date=(body.get("available_date") or None) if "available_date" in body else _UNSET,
-                due_date=(body.get("due_date") or None) if "due_date" in body else _UNSET,
+                available_date=normalize_date_clear_value(body["available_date"]) if "available_date" in body else _UNSET,
+                due_date=normalize_date_clear_value(body["due_date"]) if "due_date" in body else _UNSET,
                 flagged=body.get("flagged") if "flagged" in body else None,
                 recurrence=body["recurrence"] if "recurrence" in body else _UNSET,
             )
@@ -585,6 +586,7 @@ async def external_update_task(task_id: str, request: Request):
     else:
         try:
             from task_service import _UNSET
+            from date_utils import normalize_date_clear_value
             update_task(
                 tid,
                 title=body.get("title"),
@@ -592,8 +594,8 @@ async def external_update_task(task_id: str, request: Request):
                 notes=body.get("notes"),
                 status=body.get("status"),
                 priority=body["priority"] if "priority" in body else _UNSET,
-                available_date=(body["available_date"] or None) if "available_date" in body else _UNSET,
-                due_date=(body["due_date"] or None) if "due_date" in body else _UNSET,
+                available_date=normalize_date_clear_value(body["available_date"]) if "available_date" in body else _UNSET,
+                due_date=normalize_date_clear_value(body["due_date"]) if "due_date" in body else _UNSET,
                 flagged=body.get("flagged") if "flagged" in body else None,
                 recurrence=body["recurrence"] if "recurrence" in body else _UNSET,
             )

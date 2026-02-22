@@ -554,11 +554,15 @@ def _validate_task_update(params: dict[str, Any], tz_name: str = "UTC") -> dict[
             out["flagged"] = True
         else:
             out["flagged"] = False
+    from date_utils import normalize_date_clear_value
     for key in ("due_date", "available_date", "title", "description", "notes"):
-        if key in params and params[key] is not None:
-            val = str(params[key]).strip() or None
-            if val is not None or key in ("due_date", "available_date"):
-                out[key] = val if val else None
+        if key in params:
+            if key in ("due_date", "available_date"):
+                # nothing, nil, blank, 0, etc. -> None (clear the date)
+                out[key] = normalize_date_clear_value(params[key])
+            elif params[key] is not None:
+                val = str(params[key]).strip() or None
+                out[key] = val
     if "priority" in params and params["priority"] is not None and str(params["priority"]).strip() != "":
         p = _parse_priority(params["priority"])
         if p is not None:
@@ -1787,7 +1791,7 @@ def run_orchestrator(
             return (f"No task {num}. List tasks to see numbers.", False, None, used_fallback)
         task_id = task["id"]
         scalar_keys = ("status", "flagged", "due_date", "available_date", "title", "description", "notes", "priority")
-        kwargs = {k: v for k, v in validated.items() if k in scalar_keys and v is not None}
+        kwargs = {k: v for k, v in validated.items() if k in scalar_keys and (v is not None or k in ("due_date", "available_date"))}
         has_projects = "projects" in validated
         has_remove_projects = "remove_projects" in validated and validated["remove_projects"]
         has_tags = "tags" in validated

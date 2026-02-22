@@ -12,6 +12,25 @@ from zoneinfo import ZoneInfo
 # Already ISO date
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
+# Values that mean "clear/remove this date" in API and Telegram
+_DATE_CLEAR_VALUES = frozenset(
+    {"", "0", "nil", "null", "nothing", "blank", "none", "clear", "remove", "empty", "n/a", "na"}
+)
+
+
+def normalize_date_clear_value(value: Any) -> str | None:
+    """Return None if value means 'clear/remove date' (nothing, nil, blank, 0, empty, etc.); otherwise return str(value).strip() or None. Used by API and Telegram task update."""
+    if value is None:
+        return None
+    if value == 0 or value == 0.0:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.lower() in _DATE_CLEAR_VALUES:
+        return None
+    return s
+
 
 def _today_in_tz(tz_name: str) -> date:
     name = (tz_name or "").strip() or "UTC"
