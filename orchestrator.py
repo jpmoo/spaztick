@@ -1857,9 +1857,9 @@ def run_orchestrator(
         if "flagged" in kwargs:
             parts.append("flagged" if kwargs["flagged"] else "unflagged")
         if "due_date" in kwargs:
-            parts.append(f"due {kwargs['due_date']}")
+            parts.append("due date cleared" if kwargs["due_date"] is None else f"due {kwargs['due_date']}")
         if "available_date" in kwargs:
-            parts.append(f"available {kwargs['available_date']}")
+            parts.append("available date cleared" if kwargs["available_date"] is None else f"available {kwargs['available_date']}")
         if "title" in kwargs:
             parts.append("title updated")
         if "description" in kwargs or "notes" in kwargs or "priority" in kwargs:
