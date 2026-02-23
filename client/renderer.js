@@ -156,6 +156,8 @@
   const settingsDateFormat = document.getElementById('settings-date-format');
   const settingsDefaultOpenView = document.getElementById('settings-default-open-view');
   const settingsTaskListSeparator = document.getElementById('settings-task-list-separator');
+  const settingsArchiveCron = document.getElementById('settings-archive-cron');
+  const settingsArchiveNowBtn = document.getElementById('settings-archive-now');
   const customFormatEditBtn = document.getElementById('custom-format-edit-btn');
   const customFormatOverlay = document.getElementById('custom-date-format-overlay');
   const customFormatInput = document.getElementById('custom-format-input');
@@ -436,13 +438,21 @@
 
   // --- Settings modal ---
   const settingsShowDueOverdueCounts = document.getElementById('settings-show-due-overdue-counts');
-  function openSettings() {
+  async function openSettings() {
     settingsApiBase.value = getApiBase();
     settingsApiKey.value = getApiKey();
     if (settingsShowDueOverdueCounts) settingsShowDueOverdueCounts.checked = getShowDueOverdueCounts();
     if (settingsTaskListSeparator) settingsTaskListSeparator.value = getTaskListSeparator();
     if (settingsDateFormat) settingsDateFormat.value = getDateFormat();
     if (customFormatEditBtn) customFormatEditBtn.classList.toggle('hidden', settingsDateFormat?.value !== 'custom');
+    if (settingsArchiveCron) {
+      try {
+        const data = await api('/api/external/settings/archive-cron');
+        settingsArchiveCron.value = (data && data.archive_cron) || '';
+      } catch (_) {
+        settingsArchiveCron.value = '';
+      }
+    }
     if (settingsDefaultOpenView) {
       const current = getDefaultOpenView();
       const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -469,7 +479,7 @@
     settingsOverlay.setAttribute('aria-hidden', 'true');
   }
 
-  function saveSettings() {
+  async function saveSettings() {
     const base = settingsApiBase.value.trim() || 'http://localhost:8081';
     const key = settingsApiKey.value.trim();
     setApiConfig(base, key);
@@ -477,6 +487,17 @@
     if (settingsTaskListSeparator) setTaskListSeparator(settingsTaskListSeparator.value);
     if (settingsDateFormat) setDateFormat(settingsDateFormat.value);
     if (settingsDefaultOpenView) setDefaultOpenView(settingsDefaultOpenView.value);
+    if (settingsArchiveCron) {
+      try {
+        await api('/api/external/settings/archive-cron', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ archive_cron: settingsArchiveCron.value.trim() }),
+        });
+      } catch (e) {
+        console.warn('Failed to save archive cron:', e);
+      }
+    }
     applyTaskListSeparator();
     closeSettings();
     checkConnection();
@@ -559,6 +580,18 @@
   if (settingsExportData) settingsExportData.addEventListener('click', exportAppData);
   if (settingsImportData) settingsImportData.addEventListener('click', importAppData);
 
+  if (settingsArchiveNowBtn) {
+    settingsArchiveNowBtn.addEventListener('click', async () => {
+      if (!confirm('Archive all completed tasks now? They will be moved to the archive table and a digest may be sent to Telegram.')) return;
+      try {
+        const data = await api('/api/external/settings/archive-cron/run', { method: 'POST' });
+        const n = data && typeof data.archived === 'number' ? data.archived : 0;
+        alert(n > 0 ? `Archived ${n} completed task(s).` : 'No completed tasks to archive.');
+      } catch (e) {
+        alert(e.message || 'Failed to run archive.');
+      }
+    });
+  }
   settingsBtn.addEventListener('click', openSettings);
   settingsClose.addEventListener('click', closeSettings);
   settingsSave.addEventListener('click', saveSettings);

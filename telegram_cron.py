@@ -135,12 +135,17 @@ def _run_due_list_sends() -> None:
 
 
 def _scheduler_loop() -> None:
-    """Run every minute and send due lists."""
+    """Run every minute: send due lists and run archive if due."""
     while _stop_event and not _stop_event.is_set():
         try:
             _run_due_list_sends()
         except Exception as e:
             logger.warning("Telegram cron tick failed: %s", e)
+        try:
+            from archive_cron import run_archive_if_due
+            run_archive_if_due()
+        except Exception as e:
+            logger.warning("Archive cron tick failed: %s", e)
         if _stop_event:
             _stop_event.wait(timeout=60)
 

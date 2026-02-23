@@ -71,6 +71,7 @@ class ConfigUpdate(BaseModel):
     database_path: str = ""
     user_timezone: str = "UTC"
     api_key: str = ""
+    archive_cron: str = ""
 
 
 # --- API routes ---
@@ -96,6 +97,7 @@ def get_config() -> ConfigUpdate:
         database_path=getattr(c, "database_path", "") or "",
         user_timezone=getattr(c, "user_timezone", "") or "UTC",
         api_key=getattr(c, "api_key", "") or "",
+        archive_cron=getattr(c, "archive_cron", "") or "",
     )
 
 
@@ -118,6 +120,7 @@ def put_config(body: ConfigUpdate) -> dict[str, str]:
     c.database_path = getattr(body, "database_path", "") or ""
     c.user_timezone = getattr(body, "user_timezone", "") or "UTC"
     c.api_key = getattr(body, "api_key", "") or ""
+    c.archive_cron = getattr(body, "archive_cron", "") or ""
     c.save()
     return {"status": "saved"}
 
@@ -822,6 +825,35 @@ def external_list_tags():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# External: Archive cron (client setting; server runs the schedule job)
+@app.get("/api/external/settings/archive-cron", dependencies=[Depends(_require_api_key)])
+def external_get_archive_cron() -> dict:
+    """Return archive cron setting (used by client settings). Server runs the archive job at this schedule."""
+    c = load_config()
+    return {"archive_cron": getattr(c, "archive_cron", "") or ""}
+
+
+@app.put("/api/external/settings/archive-cron", dependencies=[Depends(_require_api_key)])
+def external_put_archive_cron(body: dict) -> dict:
+    """Update archive cron from client. Server runs the archive job at this schedule."""
+    c = load_config()
+    c.archive_cron = (body.get("archive_cron") or "").strip()
+    c.save()
+    return {"archive_cron": c.archive_cron}
+
+
+@app.post("/api/external/settings/archive-cron/run", dependencies=[Depends(_require_api_key)])
+def external_run_archive_now() -> dict:
+    """Run the archive job now (move completed tasks to archived table). Sends Telegram digest if configured."""
+    from archive_cron import run_archive_completed_tasks, _send_archive_digest_to_telegram
+    from config import load as load_config
+    count, archived_tasks = run_archive_completed_tasks()
+    config = load_config()
+    tz_name = (getattr(config, "user_timezone", "") or "UTC").strip() or "UTC"
+    _send_archive_digest_to_telegram(config, tz_name, count, archived_tasks or [])
+    return {"archived": count}
+
+
 # External: Chat (same flow as Telegram — orchestrator + Ollama + tools)
 class ChatRequest(BaseModel):
     message: str
@@ -1057,6 +1089,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <label>API key</label>
       <input type="password" id="api_key" placeholder="Leave empty to disable" autocomplete="off" />
     </div>
+    <input type="hidden" id="archive_cron" aria-hidden="true" />
   </div>
 
   <div class="card">
@@ -1097,6 +1130,7 @@ HTML_PAGE = """<!DOCTYPE html>
       }
       tzSel.value = tz;
       $('api_key').value = c.api_key || '';
+      $('archive_cron').value = c.archive_cron || '';
       $('webhook_url_row').style.display = usePolling() ? 'none' : 'block';
     }
 
@@ -1145,7 +1179,8 @@ HTML_PAGE = """<!DOCTYPE html>
         use_polling: usePolling(),
         database_path: $('database_path').value.trim(),
         user_timezone: $('user_timezone').value.trim() || 'UTC',
-        api_key: $('api_key').value.trim()
+        api_key: $('api_key').value.trim(),
+        archive_cron: $('archive_cron').value.trim()
       };
       try {
         await fetch('/api/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });

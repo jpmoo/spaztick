@@ -428,6 +428,17 @@
           </div>
         </section>
         <section class="settings-section">
+          <h3>Archiving</h3>
+          <p class="setting-hint">The server moves completed tasks into the archive table at this schedule. Uses 5-field cron (minute hour day month weekday). E.g. <code>0 2 * * *</code> = 2am daily. Empty = disabled.</p>
+          <div class="setting-row setting-row-cron-archive">
+            <label for="settings-archive-cron">Archive completed tasks (cron)</label>
+            <div class="setting-cron-row">
+              <input type="text" id="settings-archive-cron" placeholder="e.g. 0 2 * * *" />
+              <button type="button" id="settings-archive-now" class="btn-secondary">Archive now</button>
+            </div>
+          </div>
+        </section>
+        <section class="settings-section">
           <h3>Archived projects</h3>
           <div class="setting-row">
             <button type="button" id="settings-view-archived-projects" class="btn-secondary">View archived projects</button>

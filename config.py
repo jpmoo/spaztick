@@ -34,6 +34,7 @@ class AppConfig(BaseModel):
     database_path: str = Field(default="", description="Path to SQLite database file; empty = project dir / spaztick.db")
     user_timezone: str = Field(default="UTC", description="IANA timezone for relative dates (e.g. America/New_York). Used for 'today'/'tomorrow'.")
     api_key: str = Field(default="", description="API key for external app access. If set, /api/external/* requires X-API-Key header. Empty = external API disabled.")
+    archive_cron: str = Field(default="", description="Cron expression (5-field: min hour day month weekday) to archive completed tasks into the archived table. E.g. 0 2 * * * = 2am daily. Empty = disabled.")
 
     @property
     def ollama_base_url(self) -> str:

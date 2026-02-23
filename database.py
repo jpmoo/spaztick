@@ -43,6 +43,28 @@ CREATE INDEX IF NOT EXISTS idx_tasks_recurrence_parent ON tasks(recurrence_paren
 CREATE INDEX IF NOT EXISTS idx_tasks_available_date ON tasks(available_date);
 CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
 
+-- Archived: copy of completed tasks (same columns as tasks + archived_at). Populated by cron.
+CREATE TABLE IF NOT EXISTS archived (
+    id TEXT PRIMARY KEY,
+    number INTEGER,
+    title TEXT NOT NULL,
+    description TEXT,
+    notes TEXT,
+    status TEXT NOT NULL,
+    priority INTEGER,
+    available_date TEXT,
+    due_date TEXT,
+    recurrence TEXT,
+    recurrence_parent_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    completed_at TEXT,
+    flagged INTEGER NOT NULL DEFAULT 0,
+    archived_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_archived_archived_at ON archived(archived_at);
+CREATE INDEX IF NOT EXISTS idx_archived_completed_at ON archived(completed_at);
+
 -- Projects (id = primary key; short_id = user-friendly 1–4 alphanumeric, unique)
 CREATE TABLE IF NOT EXISTS projects (
     id TEXT PRIMARY KEY,
