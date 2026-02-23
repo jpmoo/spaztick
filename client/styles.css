@@ -2859,6 +2859,85 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
 .board-regions-layer > * {
   pointer-events: auto;
 }
+.board-notes-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+}
+.board-notes-layer > * {
+  pointer-events: auto;
+}
+.board-note {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  min-width: 160px;
+  min-height: 100px;
+  max-width: 420px;
+  max-height: 320px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+  background: var(--surface);
+  overflow: visible;
+  cursor: move;
+}
+.board-note .board-connection-handle {
+  cursor: crosshair;
+}
+.board-note .board-note-resize-handle {
+  cursor: nwse-resize;
+}
+.board-note .board-note-title {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-note .board-note-body {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--text);
+  overflow: auto;
+  line-height: 1.45;
+}
+.board-note .board-note-body :first-child {
+  margin-top: 0;
+}
+.board-note .board-note-body :last-child {
+  margin-bottom: 0;
+}
+.board-note .board-connection-handle {
+  z-index: 2;
+}
+.board-note .board-note-resize-handle {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, rgba(0, 0, 0, 0.12) 50%);
+  border-radius: 0 0 var(--radius-sm) 0;
+  z-index: 2;
+}
+body[data-theme="dark"] .board-note .board-note-resize-handle,
+body[data-theme="blue"] .board-note .board-note-resize-handle,
+body[data-theme="green"] .board-note .board-note-resize-handle,
+body[data-theme="orange"] .board-note .board-note-resize-handle {
+  background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.15) 50%);
+}
 .board-connections-layer {
   position: absolute;
   left: 0;
@@ -3222,6 +3301,14 @@ body[data-theme="cupertino"] .board-region-line:hover {
   display: block;
   color: inherit;
 }
+.board-add-region-btn .board-add-note-icon {
+  width: 26px;
+  height: 26px;
+  display: block;
+  color: inherit;
+  margin-left: 2px;
+  margin-top: 2px;
+}
 .board-region-edit-agenda-section.hidden,
 .board-region-edit-region-only.hidden {
   display: none !important;
@@ -3518,6 +3605,36 @@ body[data-theme="orange"] .board-region-agenda-outside {
 .board-card .board-card-dates .due-overdue {
   color: var(--due-overdue, #dc2626);
 }
+.board-card .board-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 4px 8px 6px;
+  min-height: 0;
+  overflow: hidden;
+  flex-shrink: 1;
+  align-items: center;
+}
+.board-card .board-card-tag-pill {
+  display: inline;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--bg) 85%, var(--accent) 15%);
+  color: var(--accent);
+  white-space: nowrap;
+}
+.board-card .board-card-title .title-tag-pill {
+  display: inline;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--bg) 85%, var(--accent) 15%);
+  color: var(--accent);
+  white-space: nowrap;
+}
 .board-card .board-card-footer {
   display: flex;
   justify-content: space-between;
@@ -3568,22 +3685,18 @@ body[data-theme="orange"] .board-region-agenda-outside {
   position: absolute;
   right: 0;
   bottom: 0;
-  width: 16px;
-  height: 16px;
+  width: 14px;
+  height: 14px;
   cursor: nwse-resize;
-  background: linear-gradient(135deg, transparent 50%, var(--border) 50%);
+  background: linear-gradient(135deg, transparent 50%, rgba(0, 0, 0, 0.15) 50%);
   border-radius: 0 0 4px 0;
+  z-index: 2;
 }
-.board-card .board-card-resize-handle::after {
-  content: '';
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid var(--text-muted);
-  border-bottom: 2px solid var(--text-muted);
-  border-radius: 0 0 2px 0;
+body[data-theme="dark"] .board-card .board-card-resize-handle,
+body[data-theme="blue"] .board-card .board-card-resize-handle,
+body[data-theme="green"] .board-card .board-card-resize-handle,
+body[data-theme="orange"] .board-card .board-card-resize-handle {
+  background: linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.15) 50%);
 }
 .priority-0 { background: var(--accent); }
 .priority-1 { background: #ef4444; }
@@ -4283,6 +4396,22 @@ body[data-theme="orange"] .board-region-agenda-outside {
   display: flex;
   flex-direction: column;
   max-height: 85vh;
+}
+.modal.modal-note {
+  max-width: 560px;
+  width: 90vw;
+  display: flex;
+  flex-direction: column;
+  max-height: 85vh;
+}
+.board-note-modal-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.board-note-modal-body #board-note-editor {
+  flex: 1;
+  min-height: 200px;
 }
 .description-modal-body {
   display: flex;

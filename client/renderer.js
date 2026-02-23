@@ -2211,7 +2211,7 @@
     document.removeEventListener('click', taskTagsDropdownOutside);
   }
   function taskTagsDropdownOutside(ev) {
-    if (taskTagsDropdownEl && !taskTagsDropdownEl.contains(ev.target) && !ev.target.closest('.tags-cell') && !ev.target.closest('.inspector-tags-btn') && !ev.target.closest('.new-task-tags-btn') && !ev.target.closest('#board-region-edit-overlay')) closeTaskTagsDropdown();
+    if (taskTagsDropdownEl && !taskTagsDropdownEl.contains(ev.target) && !ev.target.closest('.tags-cell') && !ev.target.closest('.inspector-tags-btn') && !ev.target.closest('.new-task-tags-btn') && !ev.target.closest('#board-region-edit-overlay') && !ev.target.closest('#board-task-inspector-overlay')) closeTaskTagsDropdown();
   }
   async function openTaskTagsDropdown(ev, anchorEl, options) {
     ev.stopPropagation();
@@ -2403,14 +2403,44 @@
       lines[idx] = m[1] + ' [' + (m[2].toLowerCase() === 'x' ? ' ' : 'x') + '] ' + m[3];
       descriptionEditTextarea.value = lines.join('\n');
       updateDescriptionPreview();
+      saveDescriptionModalContentAsync();
     }
   }
 
-  function openDescriptionModal(ev, cell) {
+  /** Persist description/notes from modal to task or newTaskState (no close). */
+  async function saveDescriptionModalContentAsync() {
+    const text = descriptionEditTextarea ? descriptionEditTextarea.value : '';
+    if (descriptionModalForNewTask) {
+      newTaskState.description = text;
+      const notesBtn = newTaskModalContent && newTaskModalContent.querySelector('.new-task-notes-btn');
+      if (notesBtn) notesBtn.classList.toggle('muted', !text.trim());
+      return;
+    }
+    if (!descriptionModalTaskId) return;
+    try {
+      const updated = await updateTask(descriptionModalTaskId, { notes: text });
+      updateTaskInLists(updated);
+      const row = document.querySelector(`.task-row[data-id="${descriptionModalTaskId}"]`);
+      const inspectorDiv = document.getElementById('inspector-content');
+      if ((row && row.classList.contains('selected')) || (inspectorDiv && inspectorDiv.dataset.taskId === descriptionModalTaskId)) loadTaskDetails(descriptionModalTaskId);
+    } catch (e) {
+      console.error('Failed to save description:', e);
+    }
+  }
+
+  async function openDescriptionModal(ev, cell) {
     if (ev && ev.stopPropagation) ev.stopPropagation();
     const taskId = cell && cell.dataset.descriptionTaskId;
     if (!taskId) return;
-    const task = getTaskById(taskId);
+    let task = getTaskById(taskId);
+    if (!task) {
+      try {
+        task = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+        updateTaskInLists(task, { scheduleRefresh: false });
+      } catch (_) {
+        task = null;
+      }
+    }
     const notesOrDesc = (task && (task.notes != null && task.notes !== '' ? task.notes : task.description));
     const desc = notesOrDesc != null ? String(notesOrDesc) : '';
     descriptionModalForNewTask = false;
@@ -3537,6 +3567,8 @@
   const INSPECTOR_STATUS_OPEN_SVG = '<svg class="inspector-status-img" viewBox="0 0 32 32" fill="currentColor" width="15" height="15" xmlns="http://www.w3.org/2000/svg"><path d="M0 16q0 3.264 1.28 6.208t3.392 5.12 5.12 3.424 6.208 1.248 6.208-1.248 5.12-3.424 3.392-5.12 1.28-6.208-1.28-6.208-3.392-5.12-5.088-3.392-6.24-1.28q-3.264 0-6.208 1.28t-5.12 3.392-3.392 5.12-1.28 6.208zM4 16q0-3.264 1.6-6.016t4.384-4.352 6.016-1.632 6.016 1.632 4.384 4.352 1.6 6.016-1.6 6.048-4.384 4.352-6.016 1.6-6.016-1.6-4.384-4.352-1.6-6.048z"/></svg>';
   const INSPECTOR_DOCUMENT_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M9.29289 1.29289C9.48043 1.10536 9.73478 1 10 1H18C19.6569 1 21 2.34315 21 4V20C21 21.6569 19.6569 23 18 23H6C4.34315 23 3 21.6569 3 20V8C3 7.73478 3.10536 7.48043 3.29289 7.29289L9.29289 1.29289ZM18 3H11V8C11 8.55228 10.5523 9 10 9H5V20C5 20.5523 5.44772 21 6 21H18C18.5523 21 19 20.5523 19 20V4C19 3.44772 18.5523 3 18 3ZM6.41421 7H9V4.41421L6.41421 7ZM7 13C7 12.4477 7.44772 12 8 12H16C16.5523 12 17 12.4477 17 13C17 13.5523 16.5523 14 16 14H8C7.44772 14 7 13.5523 7 13ZM7 17C7 16.4477 7.44772 16 8 16H16C16.5523 16 17 16.4477 17 17C17 17.5523 16.5523 18 16 18H8C7.44772 18 7 17.5523 7 17Z"/></svg>';
   /* Tag icon: from assets/tag-svgrepo-com.svg, currentColor for theme */
+  /* Todo-add icon: from assets/todo-add-svgrepo-com.svg, currentColor for theme */
+  const TODO_ADD_SVG = '<svg class="todo-add-icon" viewBox="0 0 16 16" fill="currentColor" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path d="M7,2 C7.55228,2 8,2.44772 8,3 C8,3.55228 7.55228,4 7,4 L4,4 L4,12 L12,12 L12,9 C12,8.44771 12.4477,8 13,8 C13.5523,8 14,8.44771 14,9 L14,12 C14,13.1046 13.1046,14 12,14 L4,14 C2.89543,14 2,13.1046 2,12 L2,4 C2,2.89543 2.89543,2 4,2 L7,2 Z M13,0 C13.5523,0 14,0.447715 14,1 L14,2 L15,2 C15.5523,2 16,2.44772 16,3 C16,3.55228 15.5523,4 15,4 L14,4 L14,5 C14,5.55228 13.5523,6 13,6 C12.4477,6 12,5.55228 12,5 L12,4 L11,4 C10.4477,4 10,3.55228 10,3 C10,2.44772 10.4477,2 11,2 L12,2 L12,1 C12,0.447715 12.4477,0 13,0 Z"/></svg>';
   const INSPECTOR_TAG_SVG = '<svg class="inspector-tag-icon" viewBox="0 0 24 24" fill="currentColor" width="18" height="18" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M4 5C4 4.44772 4.44772 4 5 4H11.1716C11.4368 4 11.6911 4.10536 11.8787 4.29289L19.8787 12.2929C20.2692 12.6834 20.2692 13.3166 19.8787 13.7071L13.7071 19.8787C13.3166 20.2692 12.6834 20.2692 12.2929 19.8787L4.29289 11.8787C4.10536 11.6911 4 11.4368 4 11.1716V5ZM5 2C3.34315 2 2 3.34315 2 5L2 11.1716C2 11.9672 2.31607 12.7303 2.87868 13.2929L10.8787 21.2929C12.0503 22.4645 13.9497 22.4645 15.1213 21.2929L21.2929 15.1213C22.4645 13.9497 22.4645 12.0503 21.2929 10.8787L13.2929 2.87868C12.7303 2.31607 11.9672 2 11.1716 2H5ZM8 10C9.10457 10 10 9.10457 10 8C10 6.89543 9.10457 6 8 6C6.89543 6 6 6.89543 6 8C6 9.10457 6.89543 10 8 10Z"/></svg>';
   /* Projects icon: inline SVG with currentColor for theme (from folder-open asset) */
   const INSPECTOR_PROJECTS_ICON_SVG = '<svg class="inspector-projects-icon" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path fill-rule="evenodd" clip-rule="evenodd" d="M2 6C2 4.34315 3.34315 3 5 3H7.75093C8.82997 3 9.86325 3.43595 10.6162 4.20888L9.94852 4.85927L10.6162 4.20888L11.7227 5.34484C11.911 5.53807 12.1693 5.64706 12.4391 5.64706H16.4386C18.5513 5.64706 20.281 7.28495 20.4284 9.35939C21.7878 9.88545 22.5642 11.4588 21.977 12.927L20.1542 17.4853C19.5468 19.0041 18.0759 20 16.4402 20H6C4.88522 20 3.87543 19.5427 3.15116 18.8079C2.44035 18.0867 2 17.0938 2 16V6ZM18.3829 9.17647C18.1713 8.29912 17.3812 7.64706 16.4386 7.64706H12.4391C11.6298 7.64706 10.8548 7.3201 10.2901 6.7404L9.18356 5.60444L9.89987 4.90666L9.18356 5.60444C8.80709 5.21798 8.29045 5 7.75093 5H5C4.44772 5 4 5.44772 4 6V14.4471L5.03813 11.25C5.43958 10.0136 6.59158 9.17647 7.89147 9.17647H18.3829ZM5.03034 17.7499L6.94036 11.8676C7.07417 11.4555 7.45817 11.1765 7.89147 11.1765H19.4376C19.9575 11.1765 20.3131 11.7016 20.12 12.1844L18.2972 16.7426C17.9935 17.502 17.258 18 16.4402 18H6C5.64785 18 5.31756 17.9095 5.03034 17.7499Z"/></svg>';
@@ -3717,11 +3749,13 @@
   const boardViewCanvasEl = document.getElementById('board-view-canvas');
   const boardCanvasInnerEl = document.getElementById('board-canvas-inner');
   const boardRegionsLayerEl = document.getElementById('board-regions-layer');
+  const boardNotesLayerEl = document.getElementById('board-notes-layer');
   const boardConnectionsLayerEl = document.getElementById('board-connections-layer');
   const boardCardsLayerEl = document.getElementById('board-cards-layer');
   const boardAddTaskBtn = document.getElementById('board-add-task-btn');
   const boardAddRegionBtn = document.getElementById('board-add-region-btn');
   const boardAddAgendaBtn = document.getElementById('board-add-agenda-btn');
+  const boardAddNoteBtn = document.getElementById('board-add-note-btn');
   const boardAddTaskPopover = document.getElementById('board-add-task-popover');
   const boardAddTaskListEl = document.getElementById('board-add-task-list');
   const boardZoomOutBtn = document.getElementById('board-zoom-out');
@@ -3771,6 +3805,97 @@
     if (!board) return;
     board.regions = regions;
     saveBoards(boards);
+  }
+
+  const BOARD_NOTE_DEFAULT_WIDTH = 240;
+  const BOARD_NOTE_DEFAULT_HEIGHT = 180;
+  const BOARD_NOTE_COLORS = ['#e5e7eb', '#fef3c7', '#d1fae5', '#dbeafe', '#e9d5ff', '#fce7f3', '#fed7aa', '#d6d3d1'];
+  function getBoardNotes(boardId) {
+    const board = getBoards().find((b) => String(b.id) === String(boardId));
+    if (!board) return [];
+    if (!Array.isArray(board.notes)) board.notes = [];
+    return board.notes;
+  }
+  function setBoardNotes(boardId, notes) {
+    const boards = getBoards();
+    const board = boards.find((b) => String(b.id) === String(boardId));
+    if (!board) return;
+    board.notes = notes;
+    saveBoards(boards);
+  }
+  function getBoardNoteLinks(boardId) {
+    const board = getBoards().find((b) => String(b.id) === String(boardId));
+    if (!board) return [];
+    if (!Array.isArray(board.noteLinks)) board.noteLinks = [];
+    return board.noteLinks;
+  }
+  function setBoardNoteLinks(boardId, links) {
+    const boards = getBoards();
+    const board = boards.find((b) => String(b.id) === String(boardId));
+    if (!board) return;
+    board.noteLinks = links;
+    saveBoards(boards);
+  }
+
+  /** If target is a connection endpoint (circle or path), resolve to the underlying card/note handle so multiple connections can share a handle. */
+  function resolveConnectionDropTarget(boardId, target) {
+    if (!target) return null;
+    const handle = target.closest('.board-connection-handle');
+    if (handle) {
+      const toCard = handle.closest('.board-card');
+      const toNote = handle.closest('.board-note');
+      return {
+        toHandle: handle,
+        toCard: toCard || null,
+        toNote: toNote || null,
+        toTaskId: toCard ? toCard.dataset.taskId : null,
+        toNoteId: toNote ? toNote.dataset.noteId : null,
+        toSide: (handle.dataset.side || 'right')
+      };
+    }
+    const circle = target.closest('.board-connection-endpoint');
+    if (!circle) return null;
+    const cardsLayer = document.getElementById('board-cards-layer');
+    const notesLayer = document.getElementById('board-notes-layer');
+    const connId = circle.getAttribute('data-connection-id');
+    const linkId = circle.getAttribute('data-note-link-id');
+    const endpoint = circle.getAttribute('data-endpoint');
+    if (connId && endpoint) {
+      const connections = getBoardConnections(boardId);
+      const conn = connections.find((c) => c.id === connId);
+      if (!conn) return null;
+      const isFrom = endpoint === 'from';
+      const taskId = isFrom ? conn.fromTaskId : conn.toTaskId;
+      const side = (isFrom ? conn.fromSide : conn.toSide) || 'right';
+      const cardEl = cardsLayer && cardsLayer.querySelector(`.board-card[data-task-id="${String(taskId).replace(/"/g, '\\"')}"]`);
+      if (cardEl) {
+        const toHandle = cardEl.querySelector(`.board-connection-handle[data-side="${side}"]`);
+        if (toHandle) return { toHandle, toCard: cardEl, toNote: null, toTaskId: String(taskId), toNoteId: null, toSide: side };
+      }
+    }
+    if (linkId && endpoint) {
+      const noteLinks = getBoardNoteLinks(boardId);
+      const link = noteLinks.find((l) => l.id === linkId);
+      if (!link) return null;
+      const isFrom = endpoint === 'from';
+      const id = isFrom ? link.fromId : link.toId;
+      const type = isFrom ? link.fromType : link.toType;
+      const side = (isFrom ? link.fromSide : link.toSide) || 'right';
+      const el = type === 'note' && notesLayer
+        ? notesLayer.querySelector(`.board-note[data-note-id="${String(id).replace(/"/g, '\\"')}"]`)
+        : type !== 'note' && cardsLayer
+          ? cardsLayer.querySelector(`.board-card[data-task-id="${String(id).replace(/"/g, '\\"')}"]`)
+          : null;
+      if (el) {
+        const toHandle = el.querySelector(`.board-connection-handle[data-side="${side}"]`);
+        if (toHandle) {
+          const toCard = el.closest ? el.closest('.board-card') : null;
+          const toNote = el.closest ? el.closest('.board-note') : null;
+          return { toHandle, toCard, toNote, toTaskId: toCard ? toCard.dataset.taskId : null, toNoteId: toNote ? toNote.dataset.noteId : null, toSide: side };
+        }
+      }
+    }
+    return null;
   }
 
   /** Agenda: date range as YYYY-MM-DD array (local dates). direction: before | after | before_and_after. days: 1-4. */
@@ -4016,6 +4141,7 @@
     return refreshBoardTasks(boardId).then(() => {
       syncBoardCardsToQualifyingTasks(boardId);
       renderBoardRegions(boardId);
+      renderBoardNotes(boardId);
       renderBoardCards(boardId);
       renderBoardConnections(boardId);
       updateBoardAddTaskBadge(boardId);
@@ -4204,6 +4330,7 @@
     refreshBoardTasks(boardId).then(() => {
       syncBoardCardsToQualifyingTasks(boardId);
       renderBoardRegions(boardId);
+      renderBoardNotes(boardId);
       renderBoardCards(boardId);
       updateBoardAddTaskBadge(boardId);
     });
@@ -4215,6 +4342,7 @@
     setupBoardTitleEdit(boardId);
     setupBoardAddTask(boardId);
     setupBoardRegions(boardId);
+    setupBoardNotes(boardId);
   }
   function setupBoardTitleEdit(boardId) {
     if (!boardViewTitleEl) return;
@@ -4322,6 +4450,7 @@
     boardViewCanvasEl.addEventListener('mousedown', (e) => {
       if (e.button !== 0) return;
       if (e.target.closest('.board-card')) return;
+      if (e.target.closest('.board-note')) return;
       if (e.target.closest('.board-connections-svg-hit path') || e.target.closest('.board-connections-svg-hit circle')) return;
       if (e.target.closest('.board-connections-layer')) {
         const targetEl = findElementUnderRegions(e.clientX, e.clientY);
@@ -4332,7 +4461,7 @@
           return;
         }
       }
-      if (e.target.closest('.board-zoom-btn') || e.target.closest('.board-grid-btn') || e.target.closest('.board-zoom-select') || e.target.closest('.board-add-task-btn') || e.target.closest('.board-add-region-btn') || e.target.closest('.board-add-agenda-btn') || e.target.closest('.board-add-task-popover')) return;
+      if (e.target.closest('.board-zoom-btn') || e.target.closest('.board-grid-btn') || e.target.closest('.board-zoom-select') || e.target.closest('.board-add-task-btn') || e.target.closest('.board-add-region-btn') || e.target.closest('.board-add-agenda-btn') || e.target.closest('.board-add-note-btn') || e.target.closest('.board-add-task-popover')) return;
       panStart = { x: e.clientX - boardPanZoom.x, y: e.clientY - boardPanZoom.y };
       boardViewCanvasEl.classList.add('panning');
     });
@@ -4704,6 +4833,252 @@
     window.closeBoardRegionEdit = closeRegionEdit;
   }
 
+  function setupBoardNotes(boardId) {
+    if (!boardId) return;
+    const board = getBoards().find((b) => String(b.id) === String(boardId));
+    const noteModalOverlay = document.getElementById('board-note-modal-overlay');
+    const noteModalClose = document.getElementById('board-note-modal-close');
+    const noteModalTitleInput = document.getElementById('board-note-modal-title-input');
+    const noteModalColorsEl = document.getElementById('board-note-modal-colors');
+    const noteEditTextarea = document.getElementById('board-note-edit-textarea');
+    const notePreviewContent = document.getElementById('board-note-preview-content');
+    const noteTabEdit = document.getElementById('board-note-tab-edit');
+    const noteTabPreview = document.getElementById('board-note-tab-preview');
+    const noteEditPanel = document.getElementById('board-note-edit-panel');
+    const notePreviewPanel = document.getElementById('board-note-preview-panel');
+    const noteModalSave = document.getElementById('board-note-modal-save');
+    const noteModalDelete = document.getElementById('board-note-modal-delete');
+    const noteModalConvert = document.getElementById('board-note-modal-convert-to-task');
+    let editingNoteId = null;
+    if (noteModalDelete) noteModalDelete.innerHTML = INSPECTOR_TRASH_SVG;
+    if (noteModalSave) noteModalSave.innerHTML = INSPECTOR_SAVE_SVG;
+    if (noteModalConvert) noteModalConvert.innerHTML = TODO_ADD_SVG;
+
+    function closeNoteModal() {
+      editingNoteId = null;
+      if (noteModalOverlay) { noteModalOverlay.classList.add('hidden'); noteModalOverlay.setAttribute('aria-hidden', 'true'); }
+    }
+    function openNoteModal(note) {
+      editingNoteId = note ? note.id : null;
+      if (noteModalTitleInput) noteModalTitleInput.value = note ? (note.title || '') : '';
+      if (noteEditTextarea) noteEditTextarea.value = note ? (note.contents || '') : '';
+      if (noteModalColorsEl) {
+        noteModalColorsEl.innerHTML = BOARD_NOTE_COLORS.map((c) => `<button type="button" class="board-region-color-swatch ${(note && (note.color || BOARD_NOTE_COLORS[0]) === c) || (!note && c === BOARD_NOTE_COLORS[0]) ? 'selected' : ''}" data-color="${c}" style="background:${c}" aria-label="Color ${c}"></button>`).join('');
+        noteModalColorsEl.querySelectorAll('.board-region-color-swatch').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            noteModalColorsEl.querySelectorAll('.board-region-color-swatch').forEach((b) => b.classList.remove('selected'));
+            btn.classList.add('selected');
+          });
+        });
+      }
+      if (noteTabEdit && noteTabPreview) { noteTabEdit.classList.add('active'); noteTabPreview.classList.remove('active'); }
+      if (noteEditPanel && notePreviewPanel) { noteEditPanel.classList.remove('hidden'); notePreviewPanel.classList.add('hidden'); }
+      if (noteModalDelete) noteModalDelete.style.display = editingNoteId ? '' : 'none';
+      const showConvert = board && board.baseType === 'project' && board.baseId && editingNoteId;
+      if (noteModalConvert) {
+        noteModalConvert.classList.toggle('hidden', !showConvert);
+        noteModalConvert.style.display = showConvert ? '' : 'none';
+      }
+      if (noteModalOverlay) { noteModalOverlay.classList.remove('hidden'); noteModalOverlay.setAttribute('aria-hidden', 'false'); }
+      setTimeout(() => noteModalTitleInput && noteModalTitleInput.focus(), 50);
+    }
+    function switchNoteModalToPreview() {
+      if (!notePreviewContent || !noteEditTextarea) return;
+      notePreviewContent.innerHTML = (noteEditTextarea.value || '').trim() ? renderMarkdown(noteEditTextarea.value) : '<p class="description-preview-empty">No content.</p>';
+      if (noteTabEdit) noteTabEdit.classList.remove('active');
+      if (noteTabPreview) noteTabPreview.classList.add('active');
+      if (noteEditPanel) noteEditPanel.classList.add('hidden');
+      if (notePreviewPanel) notePreviewPanel.classList.remove('hidden');
+    }
+    function onNoteModalPreviewCheckboxChange(ev) {
+      const cb = ev.target;
+      if (!cb.matches || !cb.matches('input[type="checkbox"][data-line-index]')) return;
+      if (!noteEditTextarea) return;
+      const idx = parseInt(cb.getAttribute('data-line-index'), 10);
+      if (Number.isNaN(idx)) return;
+      const lines = noteEditTextarea.value.split('\n');
+      const line = lines[idx] || '';
+      const m = line.match(/^(\s*[-*])\s+\[([ xX])\]\s+(.*)$/);
+      if (m) {
+        lines[idx] = m[1] + ' [' + (m[2].toLowerCase() === 'x' ? ' ' : 'x') + '] ' + m[3];
+        noteEditTextarea.value = lines.join('\n');
+        notePreviewContent.innerHTML = (noteEditTextarea.value || '').trim() ? renderMarkdown(noteEditTextarea.value) : '<p class="description-preview-empty">No content.</p>';
+        const bid = currentBoardId || boardId;
+        if (bid && editingNoteId) {
+          const notes = getBoardNotes(bid);
+          const n = notes.find((nn) => String(nn.id) === String(editingNoteId));
+          if (n) {
+            n.contents = noteEditTextarea.value;
+            setBoardNotes(bid, notes);
+            renderBoardNotes(bid);
+            renderBoardConnections(bid);
+          }
+        }
+      }
+    }
+    function switchNoteModalToEdit() {
+      if (noteTabEdit) noteTabEdit.classList.add('active');
+      if (noteTabPreview) noteTabPreview.classList.remove('active');
+      if (noteEditPanel) noteEditPanel.classList.remove('hidden');
+      if (notePreviewPanel) notePreviewPanel.classList.add('hidden');
+      if (noteEditTextarea) noteEditTextarea.focus();
+    }
+
+    if (boardAddNoteBtn) {
+      boardAddNoteBtn.onclick = () => {
+        const center = getBoardViewportCenter();
+        const id = 'note-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+        const notes = getBoardNotes(boardId);
+        const newNote = {
+          id,
+          title: '',
+          color: BOARD_NOTE_COLORS[0],
+          contents: '',
+          x: Math.round(center.x - BOARD_NOTE_DEFAULT_WIDTH / 2),
+          y: Math.round(center.y - BOARD_NOTE_DEFAULT_HEIGHT / 2),
+          w: BOARD_NOTE_DEFAULT_WIDTH,
+          h: BOARD_NOTE_DEFAULT_HEIGHT
+        };
+        notes.push(newNote);
+        setBoardNotes(boardId, notes);
+        renderBoardNotes(boardId);
+        openNoteModal(newNote);
+      };
+    }
+    if (noteTabEdit) noteTabEdit.addEventListener('click', switchNoteModalToEdit);
+    if (noteTabPreview) noteTabPreview.addEventListener('click', switchNoteModalToPreview);
+    if (notePreviewContent) notePreviewContent.addEventListener('change', onNoteModalPreviewCheckboxChange);
+    if (noteModalClose) noteModalClose.addEventListener('click', closeNoteModal);
+    if (noteModalOverlay) noteModalOverlay.addEventListener('click', (e) => { if (e.target === noteModalOverlay) closeNoteModal(); });
+    if (noteModalSave) {
+      noteModalSave.onclick = () => {
+        const bid = currentBoardId || boardId;
+        if (!bid) return;
+        const title = (noteModalTitleInput && noteModalTitleInput.value || '').trim() || 'Note';
+        const contents = noteEditTextarea ? noteEditTextarea.value : '';
+        const sel = noteModalColorsEl && noteModalColorsEl.querySelector('.board-region-color-swatch.selected');
+        const color = sel && sel.dataset.color ? sel.dataset.color : BOARD_NOTE_COLORS[0];
+        const notes = getBoardNotes(bid);
+        if (editingNoteId) {
+          const n = notes.find((nn) => String(nn.id) === String(editingNoteId));
+          if (n) { n.title = title; n.contents = contents; n.color = color; }
+        } else {
+          const n = notes[notes.length - 1];
+          if (n) { n.title = title; n.contents = contents; n.color = color; }
+        }
+        setBoardNotes(bid, notes);
+        renderBoardNotes(bid);
+        renderBoardConnections(bid);
+        closeNoteModal();
+      };
+    }
+    if (noteModalDelete) {
+      noteModalDelete.onclick = () => {
+        if (!editingNoteId) return;
+        const bid = currentBoardId || boardId;
+        if (!bid) return;
+        if (!confirm('Delete this note? Links to tasks will be removed.')) return;
+        const notes = getBoardNotes(bid).filter((n) => String(n.id) !== String(editingNoteId));
+        setBoardNotes(bid, notes);
+        const links = getBoardNoteLinks(bid).filter((l) => String(l.fromId) !== String(editingNoteId) && String(l.toId) !== String(editingNoteId));
+        setBoardNoteLinks(bid, links);
+        renderBoardNotes(bid);
+        renderBoardConnections(bid);
+        closeNoteModal();
+      };
+    }
+    if (noteModalConvert && board && board.baseType === 'project' && board.baseId) {
+      noteModalConvert.onclick = () => {
+        if (!editingNoteId) return;
+        const bid = currentBoardId || boardId;
+        if (!bid) return;
+        const noteToConvert = getBoardNotes(bid).find((n) => String(n.id) === String(editingNoteId));
+        if (!noteToConvert) return;
+        if (!confirm('Convert this note to a task? The note will be replaced by the task. Any connections to other tasks will become blocking relationships.')) return;
+        const title = (noteModalTitleInput && noteModalTitleInput.value || '').trim() || 'Task';
+        const description = noteEditTextarea ? noteEditTextarea.value : '';
+        const note = noteToConvert;
+        const tagsFromText = extractTagsFromTitleAndDescription(title, description);
+        closeNoteModal();
+        openNewTaskModal({
+          prefill: { title, description, projects: [board.baseId], tags: tagsFromText },
+          onSaveAfterCreate: async (createdTask) => {
+            const newTaskId = createdTask.id;
+            const noteLinks = getBoardNoteLinks(bid);
+            const linkedTaskIds = new Set();
+            noteLinks.forEach((link) => {
+              if (String(link.fromId) === String(note.id) && (link.toType || 'task') === 'task') linkedTaskIds.add(String(link.toId));
+              if (String(link.toId) === String(note.id) && (link.fromType || 'task') === 'task') linkedTaskIds.add(String(link.fromId));
+            });
+            for (const depId of linkedTaskIds) {
+              try {
+                await api(`/api/external/tasks/${encodeURIComponent(newTaskId)}/dependencies`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ depends_on_task_id: depId }),
+                });
+              } catch (e) {
+                console.error('Failed to add dependency from note link:', e);
+              }
+            }
+            const connections = getBoardConnections(bid);
+            linkedTaskIds.forEach((depId) => {
+              const id = 'conn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+              const link = noteLinks.find((l) =>
+                (String(l.fromId) === String(note.id) && String(l.toId) === String(depId)) ||
+                (String(l.fromId) === String(depId) && String(l.toId) === String(note.id))
+              );
+              const fromSide = link && (String(link.fromId) === String(depId) ? link.fromSide : link.toSide);
+              const toSide = link && (String(link.fromId) === String(note.id) ? link.fromSide : link.toSide);
+              connections.push({
+                id,
+                fromTaskId: depId,
+                toTaskId: newTaskId,
+                controlX: link && link.controlX != null ? link.controlX : undefined,
+                controlY: link && link.controlY != null ? link.controlY : undefined,
+                fromSide: fromSide || 'right',
+                toSide: toSide || 'left',
+              });
+            });
+            setBoardConnections(bid, connections);
+            const notes = getBoardNotes(bid).filter((n) => n.id !== note.id);
+            setBoardNotes(bid, notes);
+            const links = getBoardNoteLinks(bid).map((l) => {
+              if (String(l.fromId) === String(note.id) && (l.toType || 'task') === 'note') {
+                return { ...l, fromId: newTaskId, fromType: 'task' };
+              }
+              if (String(l.toId) === String(note.id) && (l.fromType || 'task') === 'note') {
+                return { ...l, toId: newTaskId, toType: 'task' };
+              }
+              if (String(l.fromId) !== String(note.id) && String(l.toId) !== String(note.id)) {
+                return l;
+              }
+              return null;
+            }).filter(Boolean);
+            setBoardNoteLinks(bid, links);
+            const cards = getBoardCards(bid);
+            cards.push({
+              taskId: newTaskId,
+              x: note.x || 0,
+              y: note.y || 0,
+              width: note.w || BOARD_DEFAULT_CARD_WIDTH,
+              height: note.h || BOARD_DEFAULT_CARD_HEIGHT,
+            });
+            setBoardCards(bid, cards);
+            if (boardTasksCache[bid]) boardTasksCache[bid].push(createdTask);
+            renderBoardNotes(bid);
+            renderBoardCards(bid);
+            renderBoardConnections(bid);
+            await refreshBoardAfterTaskUpdate(bid).catch(() => {});
+          },
+        });
+      };
+    }
+    window.openBoardNoteEdit = (note) => {
+      if (note && note.id) openNoteModal(note);
+    };
+  }
+
   function buildBoardRegionLineDiv(taskId, t, region, showPriority, showFlag, boardId) {
     const bid = boardId != null ? boardId : currentBoardId;
     const lineDiv = document.createElement('div');
@@ -5025,6 +5400,227 @@
     });
   }
 
+  function renderBoardNotes(boardId) {
+    if (!boardNotesLayerEl) return;
+    boardNotesLayerEl.innerHTML = '';
+    const notes = getBoardNotes(boardId);
+    const scale = boardPanZoom && boardPanZoom.scale != null ? boardPanZoom.scale : 1;
+    notes.forEach((note, idx) => {
+      const el = document.createElement('div');
+      el.className = 'board-note';
+      el.dataset.noteId = note.id;
+      el.style.left = (note.x != null ? note.x : 0) + 'px';
+      el.style.top = (note.y != null ? note.y : 0) + 'px';
+      el.style.width = (note.w != null ? note.w : BOARD_NOTE_DEFAULT_WIDTH) + 'px';
+      el.style.height = (note.h != null ? note.h : BOARD_NOTE_DEFAULT_HEIGHT) + 'px';
+      const bg = note.color || BOARD_NOTE_COLORS[0];
+      el.style.backgroundColor = bg;
+      const title = (note.title || 'Note').replace(/</g, '&lt;');
+      const bodyHtml = (note.contents || '').trim() ? renderMarkdown(note.contents) : '<p class="description-preview-empty">No content.</p>';
+      el.innerHTML = `
+        <div class="board-note-title">${title}</div>
+        <div class="board-note-body">${bodyHtml}</div>
+        <span class="board-connection-handle board-connection-handle-left" data-side="left" title="Drag to connect to task or note" aria-label="Connect left"></span>
+        <span class="board-connection-handle board-connection-handle-right" data-side="right" aria-label="Connect right"></span>
+        <span class="board-connection-handle board-connection-handle-top" data-side="top" aria-label="Connect top"></span>
+        <span class="board-connection-handle board-connection-handle-bottom" data-side="bottom" aria-label="Connect bottom"></span>
+        <span class="board-note-resize-handle" aria-label="Resize"></span>
+      `;
+      const titleEl = el.querySelector('.board-note-title');
+      const bodyEl = el.querySelector('.board-note-body');
+      el.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.board-connection-handle') || e.target.closest('.board-note-resize-handle')) return;
+        if (window.openBoardNoteEdit) window.openBoardNoteEdit(note);
+      });
+      function onNoteDragStart(e) {
+        if (e.button !== 0) return;
+        if (e.target.closest('.board-connection-handle') || e.target.closest('.board-note-resize-handle')) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const notes = getBoardNotes(boardId);
+        const n = notes[idx];
+        if (!n) return;
+        const startNoteX = n.x != null ? n.x : 0;
+        const startNoteY = n.y != null ? n.y : 0;
+        const startMouseX = e.clientX;
+        const startMouseY = e.clientY;
+        const scale = boardPanZoom.scale;
+        const prevCursor = document.body.style.cursor;
+        const prevUserSelect = document.body.style.userSelect;
+        document.body.style.cursor = 'grabbing';
+        document.body.style.userSelect = 'none';
+        function onMove(ev) {
+          const dx = (ev.clientX - startMouseX) / scale;
+          const dy = (ev.clientY - startMouseY) / scale;
+          n.x = Math.round(startNoteX + dx);
+          n.y = Math.round(startNoteY + dy);
+          el.style.left = n.x + 'px';
+          el.style.top = n.y + 'px';
+          setBoardNotes(boardId, notes);
+          renderBoardConnections(boardId);
+        }
+        function onUp() {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          document.body.style.cursor = prevCursor;
+          document.body.style.userSelect = prevUserSelect;
+          renderBoardConnections(boardId);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp, { once: true });
+      }
+      el.addEventListener('mousedown', onNoteDragStart);
+      const resizeHandle = el.querySelector('.board-note-resize-handle');
+      if (resizeHandle) {
+        resizeHandle.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const startX = e.clientX;
+          const startY = e.clientY;
+          const startW = parseFloat(el.style.width) || BOARD_NOTE_DEFAULT_WIDTH;
+          const startH = parseFloat(el.style.height) || BOARD_NOTE_DEFAULT_HEIGHT;
+          function onMove(ev) {
+            const dw = (ev.clientX - startX) / scale;
+            const dh = (ev.clientY - startY) / scale;
+            const newW = Math.max(120, Math.min(500, startW + dw));
+            const newH = Math.max(80, Math.min(400, startH + dh));
+            el.style.width = newW + 'px';
+            el.style.height = newH + 'px';
+          }
+          function onUp(ev) {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            const notes = getBoardNotes(boardId);
+            const n = notes[idx];
+            if (n) {
+              n.w = parseFloat(el.style.width);
+              n.h = parseFloat(el.style.height);
+              setBoardNotes(boardId, notes);
+            }
+            renderBoardConnections(boardId);
+          }
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp, { once: true });
+        });
+      }
+      el.querySelectorAll('.board-connection-handle').forEach((handle) => {
+        handle.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const connectionsLayer = document.getElementById('board-connections-layer');
+          const savedPointerEvents = connectionsLayer && connectionsLayer.style.pointerEvents;
+          if (connectionsLayer) connectionsLayer.style.pointerEvents = 'none';
+          const side = handle.dataset.side || 'right';
+          const l = el.offsetLeft;
+          const t = el.offsetTop;
+          const w = el.offsetWidth;
+          const h = el.offsetHeight;
+          const startX = side === 'left' ? l : side === 'right' ? l + w : l + w / 2;
+          const startY = side === 'top' ? t : side === 'bottom' ? t + h : t + h / 2;
+          let previewPath = null;
+          const canvasRect = boardViewCanvasEl.getBoundingClientRect();
+          function clientToCanvas(cx, cy) {
+            return { x: (cx - canvasRect.left - boardPanZoom.x) / scale, y: (cy - canvasRect.top - boardPanZoom.y) / scale };
+          }
+          function onMove(ev) {
+            const end = clientToCanvas(ev.clientX, ev.clientY);
+            if (!previewPath && boardConnectionsLayerEl) {
+              const svg = boardConnectionsLayerEl.querySelector('svg');
+              if (!svg) return;
+              previewPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              previewPath.setAttribute('class', 'board-connection-preview');
+              previewPath.setAttribute('stroke', 'var(--accent)');
+              previewPath.setAttribute('stroke-width', '2');
+              previewPath.setAttribute('fill', 'none');
+              svg.appendChild(previewPath);
+            }
+            if (previewPath) {
+              const mx = (startX + end.x) / 2;
+              const my = (startY + end.y) / 2;
+              previewPath.setAttribute('d', `M ${startX} ${startY} Q ${mx} ${my} ${end.x} ${end.y}`);
+            }
+          }
+          function onUp(ev) {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            if (previewPath && previewPath.parentNode) previewPath.parentNode.removeChild(previewPath);
+            const target = document.elementFromPoint(ev.clientX, ev.clientY);
+            let toHandle = target && target.closest('.board-connection-handle');
+            let toCard = toHandle && toHandle.closest('.board-card');
+            let toNote = toHandle && toHandle.closest('.board-note');
+            let toTaskId = toCard && toCard.dataset.taskId;
+            let toNoteId = toNote && toNote.dataset.noteId;
+            let toSide = (toHandle && toHandle.dataset.side) || 'left';
+            if (!toHandle && target) {
+              const resolved = resolveConnectionDropTarget(boardId, target);
+              if (resolved) {
+                toHandle = resolved.toHandle;
+                toCard = resolved.toCard;
+                toNote = resolved.toNote;
+                toTaskId = resolved.toTaskId;
+                toNoteId = resolved.toNoteId;
+                toSide = resolved.toSide;
+              }
+            }
+            const droppedOnSelf = toNote && toNote === el;
+            if (connectionsLayer) connectionsLayer.style.pointerEvents = savedPointerEvents || '';
+            if (toHandle && (toTaskId || toNoteId) && !droppedOnSelf) {
+              const links = getBoardNoteLinks(boardId);
+              const id = 'notelink-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+              links.push({
+                id,
+                fromId: note.id,
+                toId: toTaskId || toNoteId,
+                fromType: 'note',
+                toType: toTaskId ? 'task' : 'note',
+                fromSide: side,
+                toSide,
+                controlX: null,
+                controlY: null
+              });
+              setBoardNoteLinks(boardId, links);
+              renderBoardConnections(boardId);
+            }
+          }
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+      });
+      boardNotesLayerEl.appendChild(el);
+    });
+
+    // One-time: delegate checkbox toggles in board note body to auto-save
+    if (boardNotesLayerEl && !boardNotesLayerEl.hasAttribute('data-note-checkbox-delegate')) {
+      boardNotesLayerEl.setAttribute('data-note-checkbox-delegate', '1');
+      boardNotesLayerEl.addEventListener('change', function onBoardNoteBodyCheckbox(ev) {
+        const cb = ev.target;
+        if (!cb.matches || !cb.matches('input[type="checkbox"][data-line-index]')) return;
+        const noteEl = cb.closest('.board-note');
+        if (!noteEl) return;
+        const noteId = noteEl.dataset.noteId;
+        if (!noteId) return;
+        const bid = currentBoardId;
+        if (!bid) return;
+        const idx = parseInt(cb.getAttribute('data-line-index'), 10);
+        if (Number.isNaN(idx)) return;
+        const notes = getBoardNotes(bid);
+        const note = notes.find((n) => String(n.id) === String(noteId));
+        if (!note) return;
+        const lines = (note.contents || '').split('\n');
+        const line = lines[idx] || '';
+        const m = line.match(/^(\s*[-*])\s+\[([ xX])\]\s+(.*)$/);
+        if (m) {
+          lines[idx] = m[1] + ' [' + (m[2].toLowerCase() === 'x' ? ' ' : 'x') + '] ' + m[3];
+          note.contents = lines.join('\n');
+          setBoardNotes(bid, notes);
+          const bodyEl = noteEl.querySelector('.board-note-body');
+          if (bodyEl) bodyEl.innerHTML = (note.contents || '').trim() ? renderMarkdown(note.contents) : '<p class="description-preview-empty">No content.</p>';
+          renderBoardConnections(bid);
+        }
+      });
+    }
+  }
+
   const BOARD_CONNECTIONS_SVG_SIZE = 100000;
   function renderBoardConnections(boardId) {
     if (!boardConnectionsLayerEl || !boardCardsLayerEl) return;
@@ -5056,8 +5652,15 @@
     });
     const allConnections = [...storedFiltered, ...dependencyConnections];
     const connections = allConnections;
+    const noteLinks = getBoardNoteLinks(boardId);
     function getCardEl(taskId) {
-      return boardCardsLayerEl.querySelector(`.board-card[data-task-id="${String(taskId).replace(/"/g, '\\"')}"]`);
+      return boardCardsLayerEl ? boardCardsLayerEl.querySelector(`.board-card[data-task-id="${String(taskId).replace(/"/g, '\\"')}"]`) : null;
+    }
+    function getNoteEl(noteId) {
+      return boardNotesLayerEl ? boardNotesLayerEl.querySelector(`.board-note[data-note-id="${String(noteId).replace(/"/g, '\\"')}"]`) : null;
+    }
+    function getEndpointEl(id, type) {
+      return type === 'note' ? getNoteEl(id) : getCardEl(id);
     }
     function anchor(cardEl, side) {
       if (!cardEl) return null;
@@ -5113,6 +5716,12 @@
         }
       }
       return { fromSide: bestFrom, toSide: bestTo };
+    }
+    function clientToCanvas(cx, cy) {
+      const rect = boardViewCanvasEl && boardViewCanvasEl.getBoundingClientRect();
+      if (!rect) return { x: 0, y: 0 };
+      const s = boardPanZoom.scale;
+      return { x: (cx - rect.left - boardPanZoom.x) / s, y: (cy - rect.top - boardPanZoom.y) / s };
     }
     boardConnectionsLayerEl.innerHTML = '';
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -5271,16 +5880,13 @@
       });
       group.appendChild(controlCircle);
 
-      function clientToCanvas(cx, cy) {
-        const rect = boardViewCanvasEl && boardViewCanvasEl.getBoundingClientRect();
-        if (!rect) return { x: 0, y: 0 };
-        const s = boardPanZoom.scale;
-        return { x: (cx - rect.left - boardPanZoom.x) / s, y: (cy - rect.top - boardPanZoom.y) / s };
-      }
       function attachEndpointDrag(circleEl, endpoint) {
         circleEl.addEventListener('mousedown', (e) => {
           e.preventDefault();
           e.stopPropagation();
+          const layer = document.getElementById('board-connections-layer');
+          const savedPointer = layer && layer.style.pointerEvents;
+          if (layer) layer.style.pointerEvents = 'none';
           const isFrom = endpoint === 'from';
           const fixedPoint = isFrom ? p2 : p1;
           let previewPath = null;
@@ -5305,13 +5911,17 @@
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
             if (previewPath && previewPath.parentNode) previewPath.parentNode.removeChild(previewPath);
-            const layer = document.getElementById('board-connections-layer');
-            const prevPointer = layer && layer.style.pointerEvents;
-            if (layer) layer.style.pointerEvents = 'none';
             const target = document.elementFromPoint(ev.clientX, ev.clientY);
-            if (layer) layer.style.pointerEvents = prevPointer || '';
-            const toHandle = target && target.closest('.board-connection-handle');
-            const toCard = (toHandle && toHandle.closest('.board-card')) || (target && target.closest('.board-card'));
+            if (layer) layer.style.pointerEvents = savedPointer || '';
+            let toHandle = target && target.closest('.board-connection-handle');
+            let toCard = (toHandle && toHandle.closest('.board-card')) || (target && target.closest('.board-card'));
+            if (!toHandle && target) {
+              const resolved = resolveConnectionDropTarget(boardId, target);
+              if (resolved && resolved.toCard) {
+                toHandle = resolved.toHandle;
+                toCard = resolved.toCard;
+              }
+            }
             if (toCard) {
               const toTaskId = toCard.dataset.taskId;
               let toSide = (toHandle && toHandle.dataset.side) || null;
@@ -5406,6 +6016,221 @@
 
       svgHit.appendChild(group);
     });
+    const noteLinkElements = new Map();
+    let noteLinksDirty = false;
+    noteLinks.forEach((link) => {
+      const fromType = link.fromType || 'task';
+      const toType = link.toType || 'task';
+      const fromEl = getEndpointEl(link.fromId, fromType);
+      const toEl = getEndpointEl(link.toId, toType);
+      if (!fromEl || !toEl) return;
+      let cx = link.controlX != null ? link.controlX : 0;
+      let cy = link.controlY != null ? link.controlY : 0;
+      const defaultP1 = anchor(fromEl, link.fromSide || 'right');
+      const defaultP2 = anchor(toEl, link.toSide || 'left');
+      if (!defaultP1 || !defaultP2) return;
+      if (link.controlX == null || link.controlY == null) {
+        cx = (defaultP1.x + defaultP2.x) / 2;
+        cy = (defaultP1.y + defaultP2.y) / 2;
+        link.controlX = cx;
+        link.controlY = cy;
+        noteLinksDirty = true;
+      }
+      const best = pickHandlesForShortestLine(fromEl, toEl, cx, cy, link.fromSide, link.toSide);
+      if (best) {
+        link.fromSide = best.fromSide;
+        link.toSide = best.toSide;
+      }
+      const p1 = anchor(fromEl, link.fromSide || 'right');
+      const p2 = anchor(toEl, link.toSide || 'left');
+      if (!p1 || !p2) return;
+      const d = `M ${p1.x} ${p1.y} Q ${cx} ${cy} ${p2.x} ${p2.y}`;
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', 'var(--text-muted)');
+      path.setAttribute('stroke-width', '2');
+      path.setAttribute('marker-end', 'url(#board-arrow)');
+      svg.appendChild(path);
+      const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      group.setAttribute('class', 'board-connection-group board-note-link');
+      group.setAttribute('data-note-link-id', link.id);
+      const hitPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      hitPath.setAttribute('d', d);
+      hitPath.setAttribute('fill', 'none');
+      hitPath.setAttribute('stroke', 'transparent');
+      hitPath.setAttribute('stroke-width', '16');
+      hitPath.setAttribute('data-note-link-id', link.id);
+      hitPath.style.cursor = 'pointer';
+      hitPath.style.pointerEvents = 'stroke';
+      hitPath.style.display = 'block';
+      hitPath.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (!confirm('Delete this connection?')) return;
+        const newLinks = noteLinks.filter((l) => l.id !== link.id);
+        setBoardNoteLinks(boardId, newLinks);
+        renderBoardConnections(boardId);
+      });
+      group.appendChild(hitPath);
+      const controlCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      controlCircle.setAttribute('cx', cx);
+      controlCircle.setAttribute('cy', cy);
+      controlCircle.setAttribute('r', '14');
+      controlCircle.setAttribute('fill', 'rgba(37, 99, 235, 0.2)');
+      controlCircle.setAttribute('stroke', 'rgba(37, 99, 235, 0.6)');
+      controlCircle.setAttribute('stroke-width', '1.5');
+      controlCircle.setAttribute('data-note-link-id', link.id);
+      controlCircle.setAttribute('class', 'board-connection-control');
+      controlCircle.style.cursor = 'move';
+      controlCircle.style.pointerEvents = 'all';
+      noteLinkElements.set(link.id, { path, hitPath, controlCircle, p1, p2 });
+      controlCircle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startCX = link.controlX != null ? link.controlX : (p1.x + p2.x) / 2;
+        const startCY = link.controlY != null ? link.controlY : (p1.y + p2.y) / 2;
+        const scale = boardPanZoom.scale;
+        const el = noteLinkElements.get(link.id);
+        function onMove(ev) {
+          link.controlX = startCX + (ev.clientX - startX) / scale;
+          link.controlY = startCY + (ev.clientY - startY) / scale;
+          const ncx = link.controlX;
+          const ncy = link.controlY;
+          const fromEl2 = getEndpointEl(link.fromId, link.fromType || 'task');
+          const toEl2 = getEndpointEl(link.toId, link.toType || 'task');
+          const best2 = pickHandlesForShortestLine(fromEl2, toEl2, ncx, ncy, link.fromSide, link.toSide);
+          if (best2) {
+            link.fromSide = best2.fromSide;
+            link.toSide = best2.toSide;
+          }
+          const curP1 = anchor(getEndpointEl(link.fromId, link.fromType || 'task'), link.fromSide || 'right');
+          const curP2 = anchor(getEndpointEl(link.toId, link.toType || 'task'), link.toSide || 'left');
+          const ax = curP1 ? curP1.x : p1.x;
+          const ay = curP1 ? curP1.y : p1.y;
+          const bx = curP2 ? curP2.x : p2.x;
+          const by = curP2 ? curP2.y : p2.y;
+          const nd = `M ${ax} ${ay} Q ${ncx} ${ncy} ${bx} ${by}`;
+          if (el) {
+            el.path.setAttribute('d', nd);
+            el.hitPath.setAttribute('d', nd);
+            el.controlCircle.setAttribute('cx', ncx);
+            el.controlCircle.setAttribute('cy', ncy);
+          }
+        }
+        function onUp() {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          setBoardNoteLinks(boardId, noteLinks);
+          renderBoardConnections(boardId);
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      });
+      group.appendChild(controlCircle);
+      const startCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      startCircle.setAttribute('cx', p1.x);
+      startCircle.setAttribute('cy', p1.y);
+      startCircle.setAttribute('r', '10');
+      startCircle.setAttribute('fill', 'rgba(37, 99, 235, 0.25)');
+      startCircle.setAttribute('stroke', 'rgba(37, 99, 235, 0.7)');
+      startCircle.setAttribute('stroke-width', '1.5');
+      startCircle.setAttribute('class', 'board-connection-endpoint');
+      startCircle.setAttribute('data-note-link-id', link.id);
+      startCircle.setAttribute('data-endpoint', 'from');
+      startCircle.style.cursor = 'grab';
+      startCircle.style.pointerEvents = 'all';
+      const endCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      endCircle.setAttribute('cx', p2.x);
+      endCircle.setAttribute('cy', p2.y);
+      endCircle.setAttribute('r', '10');
+      endCircle.setAttribute('fill', 'rgba(37, 99, 235, 0.25)');
+      endCircle.setAttribute('stroke', 'rgba(37, 99, 235, 0.7)');
+      endCircle.setAttribute('stroke-width', '1.5');
+      endCircle.setAttribute('class', 'board-connection-endpoint');
+      endCircle.setAttribute('data-note-link-id', link.id);
+      endCircle.setAttribute('data-endpoint', 'to');
+      endCircle.style.cursor = 'grab';
+      endCircle.style.pointerEvents = 'all';
+      function attachNoteLinkEndpointDrag(circleEl, endpoint) {
+        circleEl.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const noteLinkLayer = document.getElementById('board-connections-layer');
+          const savedNoteLinkPointer = noteLinkLayer && noteLinkLayer.style.pointerEvents;
+          if (noteLinkLayer) noteLinkLayer.style.pointerEvents = 'none';
+          const isFrom = endpoint === 'from';
+          const fixedPoint = isFrom ? p2 : p1;
+          let previewPath = null;
+          function onMove(ev) {
+            const pt = clientToCanvas(ev.clientX, ev.clientY);
+            if (!previewPath && boardConnectionsLayerEl) {
+              const svgEl = boardConnectionsLayerEl.querySelector('.board-connections-svg');
+              if (!svgEl) return;
+              previewPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+              previewPath.setAttribute('class', 'board-connection-preview');
+              previewPath.setAttribute('stroke', 'var(--accent)');
+              previewPath.setAttribute('stroke-width', '2');
+              previewPath.setAttribute('fill', 'none');
+              svgEl.appendChild(previewPath);
+            }
+            if (previewPath) {
+              if (isFrom) previewPath.setAttribute('d', `M ${pt.x} ${pt.y} Q ${(pt.x + fixedPoint.x) / 2} ${(pt.y + fixedPoint.y) / 2} ${fixedPoint.x} ${fixedPoint.y}`);
+              else previewPath.setAttribute('d', `M ${fixedPoint.x} ${fixedPoint.y} Q ${(fixedPoint.x + pt.x) / 2} ${(fixedPoint.y + pt.y) / 2} ${pt.x} ${pt.y}`);
+            }
+          }
+          function onUp(ev) {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            if (previewPath && previewPath.parentNode) previewPath.parentNode.removeChild(previewPath);
+            const target = document.elementFromPoint(ev.clientX, ev.clientY);
+            if (noteLinkLayer) noteLinkLayer.style.pointerEvents = savedNoteLinkPointer || '';
+            let toHandle = target && target.closest('.board-connection-handle');
+            let toCard = toHandle && toHandle.closest('.board-card');
+            let toNote = toHandle && toHandle.closest('.board-note');
+            let toTaskId = toCard && toCard.dataset.taskId;
+            let toNoteId = toNote && toNote.dataset.noteId;
+            let toSide = (toHandle && toHandle.dataset.side) || 'left';
+            if (!toHandle && target) {
+              const resolved = resolveConnectionDropTarget(boardId, target);
+              if (resolved) {
+                toHandle = resolved.toHandle;
+                toCard = resolved.toCard;
+                toNote = resolved.toNote;
+                toTaskId = resolved.toTaskId;
+                toNoteId = resolved.toNoteId;
+                toSide = resolved.toSide;
+              }
+            }
+            const droppedOnSelf = (isFrom && String(link.fromId) === String(toNoteId || toTaskId)) || (!isFrom && String(link.toId) === String(toNoteId || toTaskId));
+            if (toHandle && (toTaskId || toNoteId) && !droppedOnSelf) {
+              const newId = toTaskId || toNoteId;
+              const newType = toTaskId ? 'task' : 'note';
+              if (isFrom) {
+                link.fromId = newId;
+                link.fromType = newType;
+                link.fromSide = toSide;
+              } else {
+                link.toId = newId;
+                link.toType = newType;
+                link.toSide = toSide;
+              }
+              setBoardNoteLinks(boardId, noteLinks);
+              renderBoardConnections(boardId);
+            }
+          }
+          document.addEventListener('mousemove', onMove);
+          document.addEventListener('mouseup', onUp);
+        });
+      }
+      attachNoteLinkEndpointDrag(startCircle, 'from');
+      attachNoteLinkEndpointDrag(endCircle, 'to');
+      group.appendChild(startCircle);
+      group.appendChild(endCircle);
+      svgHit.appendChild(group);
+    });
+    if (noteLinksDirty) setBoardNoteLinks(boardId, noteLinks);
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
     const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
     marker.setAttribute('id', 'board-arrow');
@@ -5487,7 +6312,7 @@
     renderBoardConnections(boardId);
   }
   function buildBoardCardHtml(t, taskId, expandSvg) {
-    const title = (t.title || '(no title)').replace(/</g, '&lt;');
+    const title = formatTitleWithTagPills(t.title || '(no title)');
     const statusComplete = isTaskCompleted(t);
     const flagged = t.flagged === true || t.flagged === 1;
     const priorityCls = priorityClass(t.priority);
@@ -5637,6 +6462,9 @@
       handle.addEventListener('mousedown', (e) => {
         e.preventDefault();
         e.stopPropagation();
+        const connectionsLayer = document.getElementById('board-connections-layer');
+        const savedPointerEvents = connectionsLayer && connectionsLayer.style.pointerEvents;
+        if (connectionsLayer) connectionsLayer.style.pointerEvents = 'none';
         const side = handle.dataset.side || 'right';
         const l = el.offsetLeft;
         const t = el.offsetTop;
@@ -5673,13 +6501,43 @@
           document.removeEventListener('mouseup', onUp);
           if (previewPath && previewPath.parentNode) previewPath.parentNode.removeChild(previewPath);
           const target = document.elementFromPoint(ev.clientX, ev.clientY);
-          const toHandle = target && target.closest('.board-connection-handle');
-          const toCard = toHandle && toHandle.closest('.board-card');
-          const toTaskId = toCard && toCard.dataset.taskId;
-          const toSide = (toHandle && toHandle.dataset.side) || 'right';
+          let toHandle = target && target.closest('.board-connection-handle');
+          let toCard = toHandle && toHandle.closest('.board-card');
+          let toNote = toHandle && toHandle.closest('.board-note');
+          let toTaskId = toCard && toCard.dataset.taskId;
+          let toNoteId = toNote && toNote.dataset.noteId;
+          let toSide = (toHandle && toHandle.dataset.side) || 'right';
+          if (!toHandle && target) {
+            const resolved = resolveConnectionDropTarget(boardId, target);
+            if (resolved) {
+              toHandle = resolved.toHandle;
+              toCard = resolved.toCard;
+              toNote = resolved.toNote;
+              toTaskId = resolved.toTaskId;
+              toNoteId = resolved.toNoteId;
+              toSide = resolved.toSide;
+            }
+          }
           const sameHandle = toCard === el && toSide === side;
           const selfConnection = toTaskId && String(toTaskId) === String(taskId);
-          if (toCard && toHandle && !sameHandle && toTaskId && !selfConnection) {
+          if (connectionsLayer) connectionsLayer.style.pointerEvents = savedPointerEvents || '';
+          if (toNote && toHandle && toNoteId) {
+            const links = getBoardNoteLinks(boardId);
+            const id = 'notelink-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+            links.push({
+              id,
+              fromId: taskId,
+              toId: toNoteId,
+              fromType: 'task',
+              toType: 'note',
+              fromSide: side,
+              toSide,
+              controlX: null,
+              controlY: null
+            });
+            setBoardNoteLinks(boardId, links);
+            renderBoardConnections(boardId);
+          } else if (toCard && toHandle && !sameHandle && toTaskId && !selfConnection) {
             const connections = getBoardConnections(boardId);
             const id = 'conn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
             connections.push({ id, fromTaskId: taskId, toTaskId, fromSide: side, toSide, label: '' });
@@ -6009,7 +6867,7 @@
 
     el.addEventListener('input', () => {
       if (hashtagAutocompleteInputTimeout) clearTimeout(hashtagAutocompleteInputTimeout);
-      const debounceMs = el.closest('#new-task-modal-overlay') || el.closest('#description-modal-overlay') ? 150 : 80;
+      const debounceMs = el.closest('#new-task-modal-overlay') || el.closest('#description-modal-overlay') || el.closest('#board-task-inspector-overlay') ? 150 : 80;
       hashtagAutocompleteInputTimeout = setTimeout(() => {
         hashtagAutocompleteInputTimeout = null;
         updateHashtagInlineSuggestion(el, wrapper, cachedTagNames.length ? cachedTagNames : []);
@@ -7903,6 +8761,7 @@
   const newTaskModalClose = document.getElementById('new-task-modal-close');
   const newTaskModalSave = document.getElementById('new-task-modal-save');
   const newTaskModalContent = document.getElementById('new-task-modal-content');
+  if (newTaskModalSave) newTaskModalSave.innerHTML = INSPECTOR_SAVE_SVG;
   let newTaskState = {
     title: '',
     available_date: '',
@@ -7914,20 +8773,45 @@
     projects: [],
     tags: [],
   };
+  /** When set, called with the created task after new-task save succeeds (e.g. convert note to task). */
+  let newTaskModalOnSaveAfterCreate = null;
 
   function closeNewTaskModal() {
+    newTaskModalOnSaveAfterCreate = null;
     if (newTaskModalOverlay) {
       newTaskModalOverlay.classList.add('hidden');
       newTaskModalOverlay.setAttribute('aria-hidden', 'true');
     }
   }
 
-  function openNewTaskModal() {
-    // Auto-assign project when a project is active in the view; same for tag.
+  /** Extract #tag names from title and description (same pattern as backend: not inside URLs). Case-insensitive dedupe. */
+  function extractTagsFromTitleAndDescription(title, description) {
+    const re = /(?:^|[^.:/A-Za-z0-9-])(#([a-zA-Z0-9_-]+))/g;
+    const seen = new Set();
+    const out = [];
+    for (const text of [title || '', description || '']) {
+      if (!text) continue;
+      let m;
+      re.lastIndex = 0;
+      while ((m = re.exec(text)) !== null) {
+        const tag = m[2].toLowerCase();
+        if (!seen.has(tag)) {
+          seen.add(tag);
+          out.push(tag);
+        }
+      }
+    }
+    return out;
+  }
+
+  function openNewTaskModal(options) {
+    const prefill = options && options.prefill;
+    newTaskModalOnSaveAfterCreate = (options && typeof options.onSaveAfterCreate === 'function') ? options.onSaveAfterCreate : null;
+    // Auto-assign project when a project is active in the view; same for tag (unless prefill provides projects).
     const fromProject = lastTaskSource && lastTaskSource !== 'inbox' && lastTaskSource !== 'search' && !lastTaskSource.startsWith('list:') && !lastTaskSource.startsWith('tag:');
     const fromTag = lastTaskSource && lastTaskSource.startsWith('tag:');
-    let initialProjects = fromProject ? [lastTaskSource] : [];
-    let initialTags = fromTag ? [lastTaskSource.slice(4)] : [];
+    let initialProjects = Array.isArray(prefill && prefill.projects) && prefill.projects.length ? prefill.projects : (fromProject ? [lastTaskSource] : []);
+    let initialTags = Array.isArray(prefill && prefill.tags) && prefill.tags.length ? prefill.tags : (fromTag ? [lastTaskSource.slice(4)] : []);
     if (!initialProjects.length && projectsList) {
       const sel = projectsList.querySelector('.nav-item.selected');
       if (sel && sel.dataset.type === 'project' && sel.dataset.id) initialProjects = [sel.dataset.id];
@@ -7937,13 +8821,13 @@
       if (sel && sel.dataset.type === 'tag' && sel.dataset.tag) initialTags = [sel.dataset.tag];
     }
     newTaskState = {
-      title: '',
-      available_date: '',
-      due_date: '',
+      title: (prefill && prefill.title != null) ? String(prefill.title) : '',
+      available_date: (prefill && prefill.available_date != null) ? String(prefill.available_date) : '',
+      due_date: (prefill && prefill.due_date != null) ? String(prefill.due_date) : '',
       status: 'incomplete',
       flagged: false,
-      description: '',
-      recurrence: null,
+      description: (prefill && prefill.description != null) ? String(prefill.description) : '',
+      recurrence: (prefill && prefill.recurrence) || null,
       projects: initialProjects,
       tags: initialTags,
     };
@@ -8085,13 +8969,22 @@
         tags: newTaskState.tags && newTaskState.tags.length ? newTaskState.tags : null,
       };
       try {
-        await api('/api/external/tasks', {
+        const createdTask = await api('/api/external/tasks', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
+        const onAfter = newTaskModalOnSaveAfterCreate;
         closeNewTaskModal();
         scheduleRefreshAfterTaskChange();
+        if (onAfter && createdTask) {
+          try {
+            await onAfter(createdTask);
+          } catch (e) {
+            console.error('Post-create callback failed:', e);
+            alert(e.message || 'Task created but follow-up failed.');
+          }
+        }
       } catch (e) {
         alert(e.message || 'Failed to create task.');
       }

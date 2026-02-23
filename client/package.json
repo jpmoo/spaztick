@@ -4,6 +4,7 @@
   "description": "Spaztick desktop client — tasks and projects with an AI assistant",
   "author": "J. P. Moore, with Cursor AI",
   "main": "main.js",
+  "overrides": { "yallist": "^4.0.0" },
   "scripts": {
     "start": "electron .",
     "build": "CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --dir",

@@ -245,6 +245,7 @@
         <div id="board-canvas-inner" class="board-canvas-inner">
           <div id="board-grid-layer" class="board-grid-layer" aria-hidden="true"></div>
           <div id="board-regions-layer" class="board-regions-layer"></div>
+          <div id="board-notes-layer" class="board-notes-layer"></div>
           <div id="board-connections-layer" class="board-connections-layer"></div>
           <div id="board-cards-layer" class="board-cards-layer"></div>
         </div>
@@ -259,6 +260,9 @@
         </button>
         <button type="button" id="board-add-agenda-btn" class="board-add-region-btn" title="Add agenda" aria-label="Add agenda">
           <svg class="board-add-agenda-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M3 9H21M7 3V5M17 3V5M7 13H17V17H7V13ZM6.2 21H17.8C18.9201 21 19.4802 21 19.908 20.782C20.2843 20.5903 20.5903 20.2843 20.782 19.908C21 19.4802 21 18.9201 21 17.8V8.2C21 7.07989 21 6.51984 20.782 6.09202C20.5903 5.71569 20.2843 5.40973 19.908 5.21799C19.4802 5 18.9201 5 17.8 5H6.2C5.0799 5 4.51984 5 4.09202 5.21799C3.71569 5.40973 3.40973 5.71569 3.21799 6.09202C3 6.51984 3 7.07989 3 8.2V17.8C3 18.9201 3 19.4802 3.21799 19.908C3.40973 20.2843 3.71569 20.5903 4.09202 20.782C4.51984 21 5.07989 21 6.2 21Z"/></svg>
+        </button>
+        <button type="button" id="board-add-note-btn" class="board-add-region-btn board-add-note-btn" title="Add note" aria-label="Add note">
+          <svg class="board-add-note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg" width="24" height="24"><path d="M20 14V7C20 5.34315 18.6569 4 17 4H7C5.34315 4 4 5.34315 4 7V17C4 18.6569 5.34315 20 7 20H13.5M20 14L13.5 20M20 14H15.5C14.3954 14 13.5 14.8954 13.5 16V20"/><path d="M8 8H16"/><path d="M8 12H12"/></svg>
         </button>
       </div>
       <div id="board-add-task-popover" class="board-add-task-popover hidden" role="listbox" aria-hidden="true">
@@ -466,8 +470,8 @@
       <div class="modal-body modal-body-scroll">
         <div id="new-task-modal-content"></div>
       </div>
-      <div class="modal-footer">
-        <button type="button" id="new-task-modal-save" class="btn-primary">Save</button>
+      <div class="modal-footer board-region-edit-footer">
+        <button type="button" id="new-task-modal-save" class="board-region-edit-save" title="Save" aria-label="Save"></button>
       </div>
     </div>
   </div>
@@ -494,6 +498,42 @@
       </div>
       <div class="modal-footer">
         <button type="button" id="description-modal-save" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="board-note-modal-overlay" class="modal-overlay hidden" aria-hidden="true">
+    <div class="modal modal-note" role="dialog" aria-labelledby="board-note-modal-title">
+      <div class="modal-header">
+        <h2 id="board-note-modal-title">Note</h2>
+        <button type="button" id="board-note-modal-close" class="modal-close" aria-label="Close">&times;</button>
+      </div>
+      <div class="modal-body board-note-modal-body">
+        <div class="setting-row">
+          <label for="board-note-modal-title-input">Title</label>
+          <input type="text" id="board-note-modal-title-input" class="inspector-edit-input" placeholder="Note title" aria-label="Note title" />
+        </div>
+        <div class="setting-row">
+          <label>Color</label>
+          <div id="board-note-modal-colors" class="board-region-color-palette" role="group" aria-label="Note color"></div>
+        </div>
+        <div id="board-note-editor" class="description-notes-editor">
+          <div class="description-notes-tabs" role="tablist">
+            <button type="button" id="board-note-tab-edit" class="description-notes-tab active" role="tab" aria-selected="true" aria-controls="board-note-edit-panel">Edit</button>
+            <button type="button" id="board-note-tab-preview" class="description-notes-tab" role="tab" aria-selected="false" aria-controls="board-note-preview-panel">Preview</button>
+          </div>
+          <div id="board-note-edit-panel" class="description-notes-panel description-edit-panel" role="tabpanel" aria-labelledby="board-note-tab-edit">
+            <textarea id="board-note-edit-textarea" class="description-edit-textarea" placeholder="Contents (Markdown supported)…" aria-label="Note contents"></textarea>
+          </div>
+          <div id="board-note-preview-panel" class="description-notes-panel description-preview-panel hidden" role="tabpanel" aria-labelledby="board-note-tab-preview">
+            <div id="board-note-preview-content" class="description-notes-preview description-notes-lines" aria-live="polite">Switch to Preview to render.</div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer board-region-edit-footer">
+        <button type="button" id="board-note-modal-convert-to-task" class="board-region-edit-duplicate hidden" title="Convert to task" aria-label="Convert to task"></button>
+        <button type="button" id="board-note-modal-delete" class="board-region-edit-delete" title="Delete note" aria-label="Delete note"></button>
+        <button type="button" id="board-note-modal-save" class="board-region-edit-save" title="Save" aria-label="Save"></button>
       </div>
     </div>
   </div>
