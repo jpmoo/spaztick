@@ -1005,16 +1005,24 @@ def _escape_telegram_markdown(s: str) -> str:
 
 
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
-    """Format task list for Telegram (native UI): bold header, emoji per line, monospace for dates. No fenced code block."""
+    """Format task list for Telegram: bold header + task count on next line, emoji per line, plain dates (no monospace). Overdue/due-today highlighted with emoji."""
     if not tasks:
         return "No tasks yet."
     total = len(tasks)
     show = tasks[:max_show]
     try:
+        from date_utils import resolve_relative_date
+        today_iso = resolve_relative_date("today", tz_name)
+    except Exception:
+        from datetime import date
+        today_iso = date.today().isoformat()
+    if not today_iso:
+        from datetime import date
+        today_iso = date.today().isoformat()
+    try:
         from project_service import get_project
     except ImportError:
         get_project = None
-    # Bold header (PDF: **List: Focused (9)**)
     lines = [f"*Tasks ({total})*"]
     for t in show:
         priority = t.get("priority")
@@ -1040,9 +1048,16 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
         date_parts = []
         if t.get("available_date"):
             date_parts.append("a:" + _friendly_date(t["available_date"], tz_name))
-        if t.get("due_date"):
-            date_parts.append("d:" + _friendly_date(t["due_date"], tz_name))
-        date_block = f" `{' '.join(date_parts)}`" if date_parts else ""
+        due = t.get("due_date")
+        if due:
+            due_friendly = _friendly_date(due, tz_name)
+            if due < today_iso:
+                date_parts.append("d:" + due_friendly + " 🔴")
+            elif due == today_iso:
+                date_parts.append("d:" + due_friendly + " ⚠")
+            else:
+                date_parts.append("d:" + due_friendly)
+        date_block = " " + " ".join(date_parts) if date_parts else ""
         line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_block}"
         lines.append(line_content)
     if total > max_show:
@@ -1607,7 +1622,12 @@ def run_orchestrator(
                     return (f"Error running list: {e}", False, None, used_fallback)
                 list_label = (lst.get("name") or "").strip() or list_id
                 short_id = (lst.get("short_id") or "").strip()
-                header = f"List: {list_label} ({short_id})\n" if short_id else f"List: {list_label}\n"
+                if response_format == "telegram":
+                    safe_label = _escape_telegram_markdown(list_label)
+                    safe_short = _escape_telegram_markdown(short_id) if short_id else ""
+                    header = f"*List: {safe_label} ({safe_short})*\n" if short_id else f"*List: {safe_label}*\n"
+                else:
+                    header = f"List: {list_label} ({short_id})\n" if short_id else f"List: {list_label}\n"
                 fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
                 return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
             # No list found: try as project short_id (e.g. "tasks in 1off" where 1off is a project)
