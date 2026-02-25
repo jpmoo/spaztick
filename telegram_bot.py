@@ -18,6 +18,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from telegram import Update
+from telegram.error import TimedOut
 from telegram.ext import Application, ContextTypes, CommandHandler, MessageHandler, filters
 
 from config import load as load_config
@@ -272,15 +273,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             _set_pending_confirm(chat_id, None)
         if not response:
             response = "(No response)"
-        await update.message.reply_text(
-            response,
-            parse_mode="Markdown" if ("```" in (response or "") or "*Tasks (" in (response or "")) else None,
-        )
+        try:
+            await update.message.reply_text(
+                response,
+                parse_mode="Markdown" if ("```" in (response or "") or "*Tasks (" in (response or "")) else None,
+            )
+        except TimedOut:
+            logger.warning("Reply to user timed out (message may have been delivered)")
         if USE_HISTORY:
             if tool_used:
                 _chat_histories[chat_id] = []
             else:
                 _chat_histories[chat_id] = history + [{"role": "assistant", "content": response}]
+    except TimedOut as e:
+        logger.warning("Reply to user timed out: %s", e)
+        try:
+            await update.message.reply_text(
+                "The reply timed out, but your request may have completed. Check your tasks or list."
+            )
+        except Exception:
+            pass
     except Exception as e:
         logger.exception("Orchestrator request failed")
         err = str(e)
@@ -288,6 +300,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(
                 f"Database needs migrating. Run from the server: python -m database\n(Then restart the bot.)\nError: {e}"
             )
+        elif "timed out" in err.lower():
+            try:
+                await update.message.reply_text(
+                    "The request took too long. It may have completed—check your tasks or list."
+                )
+            except Exception:
+                pass
         else:
             await update.message.reply_text(f"Error: {e}")
         if USE_HISTORY:
