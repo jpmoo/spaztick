@@ -803,6 +803,21 @@ body {
   font-weight: 600;
   color: var(--text-muted);
   gap: 0;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface);
+}
+/* Extend background above header to cover gap (e.g. panel padding) so tasks don’t show through */
+.task-list-header-row::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 24px;
+  background: var(--surface);
+  pointer-events: none;
 }
 .task-list-header-cell {
   display: flex;
@@ -2910,6 +2925,7 @@ body[data-theme="cupertino"] .resize-handle.resize-handle-vertical::after {
   font-size: 13px;
   color: var(--text);
   overflow: auto;
+  -webkit-overflow-scrolling: touch;
   line-height: 1.45;
 }
 .board-note .board-note-body :first-child {
@@ -3067,6 +3083,7 @@ body[data-theme="orange"] .board-note .board-note-resize-handle {
   flex: 1;
   padding: 4px 6px 8px;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -3157,6 +3174,16 @@ body[data-theme="cupertino"] .board-region-line:hover {
 }
 .board-region-line .board-region-line-title {
   color: var(--text);
+}
+.board-region-line .board-region-line-title .title-tag-pill {
+  display: inline;
+  padding: 1px 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: color-mix(in srgb, var(--bg) 85%, var(--accent) 15%);
+  color: var(--accent);
+  white-space: nowrap;
 }
 .board-region-line .board-region-line-dates {
   font-size: 11px;
@@ -3379,6 +3406,7 @@ body[data-theme="orange"] .board-region-agenda-day-header {
 }
 .board-region-agenda-lines {
   min-height: 0;
+  -webkit-overflow-scrolling: touch;
 }
 .board-region-agenda-lines .board-region-line {
   min-width: 0;
@@ -3386,6 +3414,7 @@ body[data-theme="orange"] .board-region-agenda-day-header {
 .board-region-agenda-column-lines {
   flex: 1;
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
   padding: 4px 6px 8px;
   display: flex;
   flex-direction: column;
@@ -3846,6 +3875,56 @@ body[data-theme="orange"] .board-card .board-card-resize-handle {
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
+}
+.modal.modal-blocking .blocking-task-picker-wrap {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+.modal.modal-blocking .blocking-task-picker-search {
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+.modal.modal-blocking .blocking-task-picker-search::placeholder {
+  color: var(--text-muted);
+}
+.modal.modal-blocking .blocking-task-picker-results {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 2px;
+  max-height: 200px;
+  overflow-y: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  z-index: 10;
+  display: none;
+  flex-direction: column;
+}
+.modal.modal-blocking .blocking-task-picker-results.visible {
+  display: flex;
+}
+.modal.modal-blocking .blocking-picker-result-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.modal.modal-blocking .blocking-picker-result-item:hover {
+  background: var(--bg);
 }
 .inspector-action-icon.inspector-blocking-btn .blocking-icon {
   width: 18px;

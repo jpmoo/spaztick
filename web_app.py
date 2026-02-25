@@ -481,9 +481,10 @@ def external_list_tasks(
     priority: int | None = None,
     limit: int = 500,
 ):
-    """List tasks. Use project_id for a project's short_id or id. Use inbox=true (or project_id=inbox) for tasks with no project."""
+    """List tasks. Use project_id for a project's short_id or id. Use inbox=true or project_id=inbox|inbo|no project(s) for tasks with no project."""
     from task_service import list_tasks
-    use_inbox = inbox or (project_id and str(project_id).strip().lower() == "inbox")
+    _pid = (project_id and str(project_id).strip().lower()) or ""
+    use_inbox = inbox or (_pid in ("inbox", "inbo", "no project", "no projects"))
     pid = None if use_inbox else project_id
     # When searching, default to incomplete so we only return matching incomplete tasks
     effective_status = status

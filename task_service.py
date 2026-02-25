@@ -144,6 +144,7 @@ def create_task(
                     (tid, project_id),
                 )
         for tag in tags or []:
+            tag = (tag or "").strip().lstrip("#").strip().lower()
             if tag:
                 conn.execute(
                     "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)",
@@ -587,8 +588,8 @@ def remove_task_project(task_id: str, project_id: str) -> None:
 
 
 def add_task_tag(task_id: str, tag: str) -> None:
-    """Add a tag to a task. Stored in lowercase so #Meghan and #meghan are the same."""
-    tag = (tag or "").strip().lower()
+    """Add a tag to a task. Stored in lowercase without leading # so #Meghan and meghan are the same."""
+    tag = (tag or "").strip().lstrip("#").strip().lower()
     if not tag:
         return
     conn = get_connection()

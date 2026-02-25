@@ -808,10 +808,11 @@
           <p class="blocking-section-desc">These tasks must be complete before this task.</p>
           <ul id="blocking-modal-blocked-by-list" class="blocking-task-list"></ul>
           <div class="blocking-add-row">
-            <label for="blocking-add-blocked-by">Add task</label>
-            <select id="blocking-add-blocked-by" class="blocking-task-picker" aria-label="Choose a task that blocks this one">
-              <option value="">— Choose task —</option>
-            </select>
+            <label for="blocking-blocked-by-search">Add task</label>
+            <div class="blocking-task-picker-wrap">
+              <input type="text" id="blocking-blocked-by-search" class="blocking-task-picker-search" placeholder="Type to search…" aria-label="Choose a task that blocks this one" autocomplete="off" />
+              <div id="blocking-blocked-by-results" class="blocking-task-picker-results"></div>
+            </div>
           </div>
         </section>
         <section class="blocking-section">
@@ -819,10 +820,11 @@
           <p class="blocking-section-desc">These tasks are blocked until this task is complete.</p>
           <ul id="blocking-modal-blocks-list" class="blocking-task-list"></ul>
           <div class="blocking-add-row">
-            <label for="blocking-add-blocks">Add task</label>
-            <select id="blocking-add-blocks" class="blocking-task-picker" aria-label="Choose a task that this task blocks">
-              <option value="">— Choose task —</option>
-            </select>
+            <label for="blocking-blocks-search">Add task</label>
+            <div class="blocking-task-picker-wrap">
+              <input type="text" id="blocking-blocks-search" class="blocking-task-picker-search" placeholder="Type to search…" aria-label="Choose a task that this task blocks" autocomplete="off" />
+              <div id="blocking-blocks-results" class="blocking-task-picker-results"></div>
+            </div>
           </div>
         </section>
       </div>

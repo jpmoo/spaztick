@@ -144,7 +144,7 @@ Parameters (all optional; include only what the user asked for):
 - term (string): Search in title, description, and tags. Use for "find tasks about X", "search for dogs", "tasks about meetings". Can be combined with when, tag, short_id, etc.
 - status: "incomplete" (default), "complete", or "all". Omit completed unless the user asks for completed/done tasks or "all".
 - tag / tags (array) / tag_mode ("any" or "all"): Filter by tag(s). Strip # from tag names (e.g. "#do" -> tag "do").
-- short_id or project (single), short_ids or projects (array), project_mode ("any" or "all"): Filter by project. Use short_id "inbox" for tasks with no project.
+- short_id or project (single), short_ids or projects (array), project_mode ("any" or "all"): Filter by project. Use short_id "inbox" (or "inbo") for tasks with no project. "no project(s)" means the same as inbox.
 - list_id (string): Saved list short_id. Use for "view list X", "tasks on list X", "tasks in list X", "give me tasks from list X". Returns tasks from that list's query (same as in the app). Example: "Tasks on list focu" -> {"name": "task_find", "parameters": {"list_id": "focu"}}.
 - flagged (true/false), priority (0-3 or "high"/"medium high"/"medium low"/"low" or "red"/"orange"/"yellow"/"green"), title_contains (substring), sort_by ("due_date", "available_date", "created_at", "title"), completed_by, completed_after.
 - blocked_by_task (number): Tasks that are blocked by this task (tasks that have this task as a dependency). "Show me tasks blocked by task 3" -> {"name": "task_find", "parameters": {"blocked_by_task": 3, "status": "incomplete"}}.
@@ -155,6 +155,7 @@ Output: {"name": "task_find", "parameters": { ... }} with every relevant paramet
 - "Show me tasks available tomorrow" -> {"name": "task_find", "parameters": {"when": "available tomorrow", "status": "incomplete"}}
 - "Overdue tasks" -> {"name": "task_find", "parameters": {"when": "overdue", "status": "incomplete"}}
 - "Tasks in 1off" -> {"name": "task_find", "parameters": {"short_id": "1off", "status": "incomplete"}}
+- "Tasks in inbox" / "inbox tasks" / "tasks with no projects" / "show inbox" / "inbo" -> {"name": "task_find", "parameters": {"short_id": "inbox", "status": "incomplete"}} (all mean tasks with no project).
 - "Tasks on list focu" / "view list test" / "tasks in list work" -> {"name": "task_find", "parameters": {"list_id": "focu"}} (use the list's short_id).
 - "Give me tasks in focu" / "tasks in 1off" -> Use list_id when X is a list short_id, short_id when X is a project short_id. If unsure, use list_id (system will fall back to project if no list).
 - "Tasks tagged #do" / "show me #do tasks" -> {"name": "task_find", "parameters": {"tag": "do", "status": "incomplete"}}
@@ -275,6 +276,14 @@ def _parse_priority(value: Any) -> int | None:
     return None
 
 
+def _is_inbox_ref(raw: str) -> bool:
+    """True if this project/short_id means 'tasks with no project' (inbox)."""
+    if not raw or not isinstance(raw, str):
+        return False
+    r = str(raw).strip().lower()
+    return r in ("inbox", "inbo", "no project", "no projects")
+
+
 def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> dict[str, Any]:
     """Normalize task_find/task retrieval parameters: default status incomplete, resolve dates and project short_id. Overdue = due_by (reference date - 1 day)."""
     from datetime import date, timedelta
@@ -314,7 +323,7 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
             raw = str(raw).strip()
             if not raw:
                 continue
-            if raw.lower() == "inbox":
+            if _is_inbox_ref(raw):
                 out["inbox"] = True
                 resolved_ids = []
                 break
@@ -331,7 +340,7 @@ def _validate_task_list_params(params: dict[str, Any], tz_name: str = "UTC") -> 
             out["project_mode"] = "all" if project_mode == "all" else "any"
     elif project and str(project).strip():
         raw = str(project).strip()
-        if raw.lower() == "inbox":
+        if _is_inbox_ref(raw):
             out["inbox"] = True
         else:
             try:
@@ -482,12 +491,12 @@ def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
         out["projects"] = [str(x) for x in params["projects"] if str(x).strip()]
     if "project" in params and params["project"] is not None and str(params["project"]).strip():
         ref = str(params["project"]).strip()
-        if ref.lower() != "inbox":
+        if not _is_inbox_ref(ref):
             out["projects"] = out.get("projects") or []
             out["projects"].append(ref)
     if "short_id" in params and params["short_id"] is not None and str(params["short_id"]).strip():
         ref = str(params["short_id"]).strip()
-        if ref.lower() != "inbox":
+        if not _is_inbox_ref(ref):
             out["projects"] = out.get("projects") or []
             if ref not in out["projects"]:
                 out["projects"].append(ref)
@@ -768,7 +777,9 @@ def _extract_tasks_in_identifier(user_message: str) -> str | None:
 
 
 def _resolve_identifier_to_task_find_params(identifier: str) -> dict[str, Any]:
-    """Resolve 'focu' or '1off' to task_find params: list_id if it's a list, short_id if it's a project. Prefer list when both exist."""
+    """Resolve 'focu' or '1off' to task_find params: list_id if it's a list, short_id if it's a project. inbox/inbo -> tasks with no project. Prefer list when both exist."""
+    if _is_inbox_ref(identifier):
+        return {"short_id": "inbox", "status": "incomplete"}
     try:
         from list_service import get_list
         if get_list(identifier):
@@ -795,11 +806,18 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
     inferred = _infer_add_task_from_message(user_message)
     if inferred:
         return inferred
+    # Inbox / no projects: same as task_find with short_id "inbox" (tasks with no project). Must come before list_id so "show inbox" is not treated as a list.
+    if re.search(r"\btasks?\s+with\s+no\s+projects?\b", msg, re.I) or re.search(r"\bno\s+projects?\s+tasks?\b", msg, re.I):
+        return ("task_find", {"short_id": "inbox", "status": "incomplete"})
+    if re.search(r"\b(?:list|show|get|give me|gimme|display)\s+(?:my\s+)?(?:inbox|inbo)\s*[.?]?\s*$", msg, re.I):
+        return ("task_find", {"short_id": "inbox", "status": "incomplete"})
+    if re.search(r"\b(?:inbox|inbo)\s+tasks?\s*[.?]?\s*$", msg, re.I):
+        return ("task_find", {"short_id": "inbox", "status": "incomplete"})
     # View/show a specific list by name or short_id (must come before generic "show lists")
     list_id = _extract_list_identifier_from_message(user_message)
-    if list_id:
+    if list_id and not _is_inbox_ref(list_id):
         return ("task_find", {"list_id": list_id})
-    # "give me tasks in focu" / "tasks in 1off" — X can be list short_id or project short_id
+    # "give me tasks in focu" / "tasks in 1off" / "tasks in inbox" — X can be list short_id or project short_id or inbox
     in_id = _extract_tasks_in_identifier(user_message)
     if in_id:
         return ("task_find", _resolve_identifier_to_task_find_params(in_id))
@@ -1918,7 +1936,7 @@ def run_orchestrator(
             project_ids = []
             for ref in validated["projects"]:
                 ref = str(ref).strip()
-                if not ref or ref.lower() == "inbox":
+                if not ref or _is_inbox_ref(ref):
                     continue
                 p = get_project_by_short_id(ref)
                 if p:

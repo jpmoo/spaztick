@@ -1029,28 +1029,65 @@
     return num ? `${num} ${title}` : title;
   }
 
+  /** Open blocking modal for a new task (no taskId yet). Mutates dependsOn/blocks in place; onUpdate called when lists change. */
+  async function openBlockingModalForNewTask(newTaskStateRef) {
+    try {
+      const allTasks = await api('/api/external/tasks?limit=500');
+      const taskList = Array.isArray(allTasks) ? allTasks : [];
+      openBlockingModalWithState(null, {
+        forNewTask: true,
+        dependsOn: newTaskStateRef.depends_on,
+        blocks: newTaskStateRef.blocks,
+        taskList,
+        onUpdate: () => {
+          const btn = document.querySelector('.new-task-blocking-btn');
+          if (btn) {
+            const has = (newTaskStateRef.depends_on && newTaskStateRef.depends_on.length) || (newTaskStateRef.blocks && newTaskStateRef.blocks.length);
+            btn.classList.toggle('muted', !has);
+          }
+        },
+      });
+    } catch (e) {
+      console.error('Failed to open blocking modal for new task:', e);
+      alert(e.message || 'Failed to load tasks.');
+    }
+  }
+
   async function openBlockingModal(taskId) {
     if (!taskId) return;
-    blockingModalTaskId = taskId;
     try {
       const [task, allTasks] = await Promise.all([
         api(`/api/external/tasks/${encodeURIComponent(taskId)}`),
         api('/api/external/tasks?limit=500'),
       ]);
       const taskList = Array.isArray(allTasks) ? allTasks : [];
-      blockingModalTaskLabelMap = {};
-      taskList.forEach((t) => {
-        if (t && t.id) blockingModalTaskLabelMap[t.id] = { number: t.number, title: t.title };
-      });
-      if (task && task.id) blockingModalTaskLabelMap[task.id] = { number: task.number, title: task.title };
-
       const dependsOn = Array.isArray(task.depends_on) ? task.depends_on : [];
       const blocks = Array.isArray(task.blocks) ? task.blocks : [];
+      openBlockingModalWithState(taskId, { taskList, dependsOn, blocks, task });
+    } catch (e) {
+      console.error('Failed to open blocking modal:', e);
+      alert(e.message || 'Failed to load task.');
+    }
+  }
+
+  function openBlockingModalWithState(taskId, options) {
+    const { forNewTask = false, taskList = [], dependsOn: dependsOnIn, blocks: blocksIn, task, onUpdate } = options || {};
+    blockingModalTaskId = taskId;
+    blockingModalTaskLabelMap = {};
+    taskList.forEach((t) => {
+      if (t && t.id) blockingModalTaskLabelMap[t.id] = { number: t.number, title: t.title };
+    });
+    if (task && task.id) blockingModalTaskLabelMap[task.id] = { number: task.number, title: task.title };
+
+    const dependsOn = forNewTask ? dependsOnIn : (Array.isArray(dependsOnIn) ? dependsOnIn : []);
+    const blocks = forNewTask ? blocksIn : (Array.isArray(blocksIn) ? blocksIn : []);
 
       const blockedByList = document.getElementById('blocking-modal-blocked-by-list');
       const blocksList = document.getElementById('blocking-modal-blocks-list');
-      const addBlockedBySelect = document.getElementById('blocking-add-blocked-by');
-      const addBlocksSelect = document.getElementById('blocking-add-blocks');
+      const blockedBySearchInput = document.getElementById('blocking-blocked-by-search');
+      const blockedByResultsDiv = document.getElementById('blocking-blocked-by-results');
+      const blocksSearchInput = document.getElementById('blocking-blocks-search');
+      const blocksResultsDiv = document.getElementById('blocking-blocks-results');
 
       function renderBlockedBy() {
         blockedByList.innerHTML = dependsOn.map((id) => {
@@ -1065,10 +1102,16 @@
           btn.addEventListener('click', async () => {
             const depId = btn.dataset.taskId;
             if (!depId) return;
+            const idx = dependsOn.indexOf(depId);
+            if (idx !== -1) dependsOn.splice(idx, 1);
+            if (forNewTask) {
+              renderBlockedBy();
+              renderPickers();
+              if (onUpdate) onUpdate();
+              return;
+            }
             try {
               await api(`/api/external/tasks/${encodeURIComponent(taskId)}/dependencies/${encodeURIComponent(depId)}`, { method: 'DELETE' });
-              const idx = dependsOn.indexOf(depId);
-              if (idx !== -1) dependsOn.splice(idx, 1);
               removeBoardConnectionsBetweenTasks(taskId, depId);
               if (currentBoardId) refreshBoardAfterTaskUpdate(currentBoardId).catch(() => {});
               renderBlockedBy();
@@ -1097,10 +1140,16 @@
           btn.addEventListener('click', async () => {
             const otherId = btn.dataset.taskId;
             if (!otherId) return;
+            const idx = blocks.indexOf(otherId);
+            if (idx !== -1) blocks.splice(idx, 1);
+            if (forNewTask) {
+              renderBlocks();
+              renderPickers();
+              if (onUpdate) onUpdate();
+              return;
+            }
             try {
               await api(`/api/external/tasks/${encodeURIComponent(otherId)}/dependencies/${encodeURIComponent(taskId)}`, { method: 'DELETE' });
-              const idx = blocks.indexOf(otherId);
-              if (idx !== -1) blocks.splice(idx, 1);
               removeBoardConnectionsBetweenTasks(taskId, otherId);
               if (currentBoardId) refreshBoardAfterTaskUpdate(currentBoardId).catch(() => {});
               renderBlocks();
@@ -1116,74 +1165,152 @@
         });
       }
 
+      let lastBlockedByOptions = [];
+      let lastBlocksOptions = [];
+
+      function filterTaskOptions(options, q) {
+        if (!(q = (q || '').trim().toLowerCase())) return options;
+        return options.filter((t) => {
+          const label = taskToLabel(t).toLowerCase();
+          const num = String(t.number || '').toLowerCase();
+          const id = (t.id || '').toLowerCase();
+          return label.includes(q) || num.includes(q) || id.includes(q);
+        });
+      }
+
+      function renderBlockedByResults() {
+        const q = blockedBySearchInput ? (blockedBySearchInput.value || '').trim() : '';
+        const matches = filterTaskOptions(lastBlockedByOptions, q);
+        if (!blockedByResultsDiv) return;
+        blockedByResultsDiv.innerHTML = '';
+        blockedByResultsDiv.classList.toggle('visible', matches.length > 0 || q.length > 0);
+        matches.slice(0, 100).forEach((t) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'blocking-picker-result-item';
+          btn.textContent = taskToLabel(t);
+          btn.dataset.taskId = t.id;
+          btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            addBlockedBy(t.id);
+            if (blockedBySearchInput) blockedBySearchInput.value = '';
+            renderBlockedByResults();
+          });
+          blockedByResultsDiv.appendChild(btn);
+        });
+      }
+
+      function renderBlocksResults() {
+        const q = blocksSearchInput ? (blocksSearchInput.value || '').trim() : '';
+        const matches = filterTaskOptions(lastBlocksOptions, q);
+        if (!blocksResultsDiv) return;
+        blocksResultsDiv.innerHTML = '';
+        blocksResultsDiv.classList.toggle('visible', matches.length > 0 || q.length > 0);
+        matches.slice(0, 100).forEach((t) => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'blocking-picker-result-item';
+          btn.textContent = taskToLabel(t);
+          btn.dataset.taskId = t.id;
+          btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            addBlocks(t.id);
+            if (blocksSearchInput) blocksSearchInput.value = '';
+            renderBlocksResults();
+          });
+          blocksResultsDiv.appendChild(btn);
+        });
+      }
+
       function renderPickers() {
-        const others = taskList.filter((t) => t && t.id && t.id !== taskId);
-        const blockedByOptions = others.filter((t) => !dependsOn.includes(t.id));
-        const blocksOptions = others.filter((t) => !blocks.includes(t.id));
-        const option = (t) => `<option value="${(t.id || '').replace(/"/g, '&quot;')}">${taskToLabel(t).replace(/</g, '&lt;')}</option>`;
-        addBlockedBySelect.innerHTML = '<option value="">— Choose task —</option>' + blockedByOptions.map(option).join('');
-        addBlocksSelect.innerHTML = '<option value="">— Choose task —</option>' + blocksOptions.map(option).join('');
+        const others = taskList.filter((t) => t && t.id && (taskId == null || t.id !== taskId));
+        lastBlockedByOptions = others.filter((t) => !dependsOn.includes(t.id));
+        lastBlocksOptions = others.filter((t) => !blocks.includes(t.id));
+        renderBlockedByResults();
+        renderBlocksResults();
       }
 
       renderBlockedBy();
       renderBlocks();
       renderPickers();
+      if (blockedBySearchInput) blockedBySearchInput.value = '';
+      if (blocksSearchInput) blocksSearchInput.value = '';
+      if (blockedByResultsDiv) blockedByResultsDiv.classList.remove('visible');
+      if (blocksResultsDiv) blocksResultsDiv.classList.remove('visible');
 
-      addBlockedBySelect.onchange = async function () {
-        const depId = this.value;
-        if (!depId) return;
-        try {
-          await api(`/api/external/tasks/${encodeURIComponent(taskId)}/dependencies`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ depends_on_task_id: depId }),
-          });
-          if (!dependsOn.includes(depId)) dependsOn.push(depId);
-          const t = taskList.find((x) => x.id === depId);
-          if (t) blockingModalTaskLabelMap[depId] = { number: t.number, title: t.title };
-          renderBlockedBy();
-          renderPickers();
-          this.value = '';
+      async function addBlockedBy(depId) {
+        if (!depId || dependsOn.includes(depId)) return;
+        if (!forNewTask) {
+          try {
+            await api(`/api/external/tasks/${encodeURIComponent(taskId)}/dependencies`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ depends_on_task_id: depId }),
+            });
+          } catch (e) {
+            alert(e.message || 'Failed to add dependency.');
+            return;
+          }
+        }
+        dependsOn.push(depId);
+        const t = taskList.find((x) => x.id === depId);
+        if (t) blockingModalTaskLabelMap[depId] = { number: t.number, title: t.title };
+        renderBlockedBy();
+        renderPickers();
+        if (onUpdate) onUpdate();
+        if (!forNewTask) {
           const updated = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
           updateTaskInLists(updated);
           const inspectorDiv = document.getElementById('inspector-content');
           if (inspectorDiv && inspectorDiv.dataset.taskId === taskId) loadTaskDetails(taskId);
-        } catch (e) {
-          alert(e.message || 'Failed to add dependency.');
         }
-      };
-      addBlocksSelect.onchange = async function () {
-        const otherId = this.value;
-        if (!otherId) return;
-        try {
-          await api(`/api/external/tasks/${encodeURIComponent(otherId)}/dependencies`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ depends_on_task_id: taskId }),
-          });
-          if (!blocks.includes(otherId)) blocks.push(otherId);
-          const t = taskList.find((x) => x.id === otherId);
-          if (t) blockingModalTaskLabelMap[otherId] = { number: t.number, title: t.title };
-          renderBlocks();
-          renderPickers();
-          this.value = '';
+      }
+      async function addBlocks(otherId) {
+        if (!otherId || blocks.includes(otherId)) return;
+        if (!forNewTask) {
+          try {
+            await api(`/api/external/tasks/${encodeURIComponent(otherId)}/dependencies`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ depends_on_task_id: taskId }),
+            });
+          } catch (e) {
+            alert(e.message || 'Failed to add dependency.');
+            return;
+          }
+        }
+        blocks.push(otherId);
+        const t = taskList.find((x) => x.id === otherId);
+        if (t) blockingModalTaskLabelMap[otherId] = { number: t.number, title: t.title };
+        renderBlocks();
+        renderPickers();
+        if (onUpdate) onUpdate();
+        if (!forNewTask) {
           const updated = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
           updateTaskInLists(updated);
           const inspectorDiv = document.getElementById('inspector-content');
           if (inspectorDiv && inspectorDiv.dataset.taskId === taskId) loadTaskDetails(taskId);
-        } catch (e) {
-          alert(e.message || 'Failed to add dependency.');
         }
-      };
+      }
+      if (blockedBySearchInput) {
+        blockedBySearchInput.addEventListener('input', renderBlockedByResults);
+        blockedBySearchInput.addEventListener('focus', renderBlockedByResults);
+        blockedBySearchInput.addEventListener('blur', () => {
+          setTimeout(() => { if (blockedByResultsDiv) blockedByResultsDiv.classList.remove('visible'); }, 150);
+        });
+      }
+      if (blocksSearchInput) {
+        blocksSearchInput.addEventListener('input', renderBlocksResults);
+        blocksSearchInput.addEventListener('focus', renderBlocksResults);
+        blocksSearchInput.addEventListener('blur', () => {
+          setTimeout(() => { if (blocksResultsDiv) blocksResultsDiv.classList.remove('visible'); }, 150);
+        });
+      }
 
       if (blockingModalOverlay) {
         blockingModalOverlay.classList.remove('hidden');
         blockingModalOverlay.setAttribute('aria-hidden', 'false');
       }
-    } catch (e) {
-      console.error('Failed to open blocking modal:', e);
-      alert(e.message || 'Failed to load task.');
-    }
   }
 
   function closeBlockingModal() {
@@ -4524,39 +4651,174 @@
       panStart = null;
       if (boardViewCanvasEl) boardViewCanvasEl.classList.remove('panning');
     });
+    let wheelPanCursorTimeout = null;
+    function setBoardPanCursor(grabbing) {
+      const c = grabbing ? 'grabbing' : '';
+      document.body.style.cursor = c;
+      document.documentElement.style.cursor = c;
+      if (boardViewCanvasEl) boardViewCanvasEl.style.cursor = c;
+    }
+    /** True if this element is inside a board area that should scroll (region lines, agenda, note body). Don't use wheel/touch for pan there. */
+    function isOverBoardScrollable(el) {
+      if (!el || !el.closest) return false;
+      return !!(el.closest('.board-region-lines') || el.closest('.board-region-agenda-lines') || el.closest('.board-region-agenda-column-lines') || el.closest('.board-region-agenda-outside-lines') || el.closest('.board-note-body'));
+    }
     boardViewCanvasEl.addEventListener('wheel', (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      if (e.target.closest('.board-card')) return;
-      if (e.target.closest('.board-view-zoom') || e.target.closest('.board-grid-btn')) return;
-      e.preventDefault();
-      const pct = boardPanZoom.scale * 100;
-      const newPct = Math.max(BOARD_ZOOM_MIN, Math.min(BOARD_ZOOM_MAX, pct - e.deltaY));
-      setBoardZoomTowardPoint(e.clientX, e.clientY, newPct / 100);
+      if (isOverBoardScrollable(e.target)) return;
+      const onBoard = !e.target.closest('.board-card') && !e.target.closest('.board-view-zoom') && !e.target.closest('.board-grid-btn');
+      if (!onBoard) return;
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        const pct = boardPanZoom.scale * 100;
+        const newPct = Math.max(BOARD_ZOOM_MIN, Math.min(BOARD_ZOOM_MAX, pct - e.deltaY));
+        setBoardZoomTowardPoint(e.clientX, e.clientY, newPct / 100);
+      } else {
+        e.preventDefault();
+        setBoardPanCursor(true);
+        if (wheelPanCursorTimeout) clearTimeout(wheelPanCursorTimeout);
+        wheelPanCursorTimeout = setTimeout(() => {
+          wheelPanCursorTimeout = null;
+          if (!pinchStart && !touchPanStart) setBoardPanCursor(false);
+        }, 120);
+        boardPanZoom.x -= e.deltaX;
+        boardPanZoom.y -= e.deltaY;
+        applyBoardTransform();
+      }
     }, { passive: false });
 
     let pinchStart = null;
-    boardViewCanvasEl.addEventListener('touchstart', (e) => {
-      if (e.touches.length === 2) {
+    let touchPanStart = null;
+    function isBoardVisibleAndBothTouchesInBoard(e) {
+      if (!boardViewEl || !boardViewCanvasEl || e.touches.length < 2) return false;
+      if (boardViewEl.classList.contains('hidden')) return false;
+      const rect = boardViewEl.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const inRect = (t) => t.clientX >= rect.left && t.clientX <= rect.right && t.clientY >= rect.top && t.clientY <= rect.bottom;
+      return inRect(e.touches[0]) && inRect(e.touches[1]);
+    }
+    document.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2 && isBoardVisibleAndBothTouchesInBoard(e)) {
+        const el0 = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
+        const el1 = document.elementFromPoint(e.touches[1].clientX, e.touches[1].clientY);
+        if (isOverBoardScrollable(el0) || isOverBoardScrollable(el1)) return;
+        e.preventDefault();
+        touchPanStart = null;
         const rect = boardViewCanvasEl.getBoundingClientRect();
         const dist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
         const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
         const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        pinchStart = { dist, scale: boardPanZoom.scale, x: boardPanZoom.x, y: boardPanZoom.y, centerX, centerY, rectLeft: rect.left, rectTop: rect.top };
+        pinchStart = { dist, scale: boardPanZoom.scale, x: boardPanZoom.x, y: boardPanZoom.y, centerX, centerY, rectLeft: rect.left, rectTop: rect.top, source: 'touch' };
+        if (boardViewCanvasEl) boardViewCanvasEl.classList.add('panning');
+        setBoardPanCursor(true);
       }
-    }, { passive: true });
-    boardViewCanvasEl.addEventListener('touchmove', (e) => {
-      if (e.touches.length === 2 && pinchStart) {
+    }, { passive: false, capture: true });
+    boardViewCanvasEl.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1 && !touchPanStart && !pinchStart && !e.target.closest('.board-card') && !e.target.closest('.board-note') &&
+          !e.target.closest('.board-zoom-btn') && !e.target.closest('.board-grid-btn') && !e.target.closest('.board-zoom-select') &&
+          !e.target.closest('.board-add-task-btn') && !e.target.closest('.board-add-region-btn') && !e.target.closest('.board-add-agenda-btn') &&
+          !e.target.closest('.board-add-note-btn') && !e.target.closest('.board-add-task-popover') &&
+          !isOverBoardScrollable(e.target)) {
+        touchPanStart = { x: e.touches[0].clientX - boardPanZoom.x, y: e.touches[0].clientY - boardPanZoom.y };
+        boardViewCanvasEl.classList.add('panning');
+      }
+    }, { passive: true, capture: true });
+    document.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && pinchStart && pinchStart.source === 'touch') {
         e.preventDefault();
         const dist = Math.hypot(e.touches[1].clientX - e.touches[0].clientX, e.touches[1].clientY - e.touches[0].clientY);
         const ratio = dist / pinchStart.dist;
         const newScale = Math.max(BOARD_ZOOM_MIN / 100, Math.min(BOARD_ZOOM_MAX / 100, pinchStart.scale * ratio));
         const centerX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
         const centerY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-        const cx = (centerX - pinchStart.rectLeft - pinchStart.x) / pinchStart.scale;
-        const cy = (centerY - pinchStart.rectTop - pinchStart.y) / pinchStart.scale;
+        const centerXFlip = 2 * pinchStart.centerX - centerX;
+        const centerYFlip = 2 * pinchStart.centerY - centerY;
+        const cx = (pinchStart.centerX - pinchStart.rectLeft - pinchStart.x) / pinchStart.scale;
+        const cy = (pinchStart.centerY - pinchStart.rectTop - pinchStart.y) / pinchStart.scale;
         boardPanZoom.scale = newScale;
-        boardPanZoom.x = centerX - pinchStart.rectLeft - cx * newScale;
-        boardPanZoom.y = centerY - pinchStart.rectTop - cy * newScale;
+        boardPanZoom.x = centerXFlip - pinchStart.rectLeft - cx * newScale;
+        boardPanZoom.y = centerYFlip - pinchStart.rectTop - cy * newScale;
+        applyBoardTransform();
+        const pct = Math.round(boardPanZoom.scale * 100);
+        if (boardZoomSelect) {
+          boardZoomSelect.value = String(pct);
+          const opt = Array.from(boardZoomSelect.options).find((o) => o.value === String(pct));
+          if (!opt) {
+            const o = document.createElement('option');
+            o.value = String(pct);
+            o.textContent = pct + '%';
+            boardZoomSelect.appendChild(o);
+            boardZoomSelect.value = String(pct);
+          }
+        }
+      } else if (e.touches.length === 1 && touchPanStart) {
+        e.preventDefault();
+        boardPanZoom.x = e.touches[0].clientX - touchPanStart.x;
+        boardPanZoom.y = e.touches[0].clientY - touchPanStart.y;
+        applyBoardTransform();
+      }
+    }, { passive: false, capture: true });
+    document.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) {
+        pinchStart = null;
+        touchPanStart = null;
+        setBoardPanCursor(false);
+      }
+      if (e.touches.length === 0 && boardViewCanvasEl) boardViewCanvasEl.classList.remove('panning');
+    }, { passive: true, capture: true });
+
+    const activeTouchPointers = new Map();
+    function getTwoTouchPoints() {
+      if (activeTouchPointers.size !== 2) return null;
+      const pts = Array.from(activeTouchPointers.values());
+      return { x1: pts[0].clientX, y1: pts[0].clientY, x2: pts[1].clientX, y2: pts[1].clientY };
+    }
+    function bothTouchPointersInBoard() {
+      if (!boardViewEl || boardViewEl.classList.contains('hidden')) return false;
+      const rect = boardViewEl.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const inRect = (p) => p.clientX >= rect.left && p.clientX <= rect.right && p.clientY >= rect.top && p.clientY <= rect.bottom;
+      for (const p of activeTouchPointers.values()) if (!inRect(p)) return false;
+      return true;
+    }
+    boardViewCanvasEl.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch') return;
+      activeTouchPointers.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+      if (activeTouchPointers.size === 2 && bothTouchPointersInBoard()) {
+        const pts = getTwoTouchPoints();
+        if (pts) {
+          const el0 = document.elementFromPoint(pts.x1, pts.y1);
+          const el1 = document.elementFromPoint(pts.x2, pts.y2);
+          if (isOverBoardScrollable(el0) || isOverBoardScrollable(el1)) return;
+        }
+        touchPanStart = null;
+        const rect = boardViewCanvasEl.getBoundingClientRect();
+        const dist = Math.hypot(pts.x2 - pts.x1, pts.y2 - pts.y1);
+        const centerX = (pts.x1 + pts.x2) / 2;
+        const centerY = (pts.y1 + pts.y2) / 2;
+        pinchStart = { dist, scale: boardPanZoom.scale, x: boardPanZoom.x, y: boardPanZoom.y, centerX, centerY, rectLeft: rect.left, rectTop: rect.top, source: 'pointer' };
+        boardViewCanvasEl.classList.add('panning');
+        setBoardPanCursor(true);
+      }
+    }, { capture: true });
+    document.addEventListener('pointermove', (e) => {
+      if (e.pointerType !== 'touch' || !activeTouchPointers.has(e.pointerId)) return;
+      activeTouchPointers.set(e.pointerId, { clientX: e.clientX, clientY: e.clientY });
+      if (pinchStart && pinchStart.source === 'pointer' && activeTouchPointers.size === 2) {
+        e.preventDefault();
+        const pts = getTwoTouchPoints();
+        if (!pts) return;
+        const dist = Math.hypot(pts.x2 - pts.x1, pts.y2 - pts.y1);
+        const ratio = dist / pinchStart.dist;
+        const newScale = Math.max(BOARD_ZOOM_MIN / 100, Math.min(BOARD_ZOOM_MAX / 100, pinchStart.scale * ratio));
+        const centerX = (pts.x1 + pts.x2) / 2;
+        const centerY = (pts.y1 + pts.y2) / 2;
+        const centerXFlip = 2 * pinchStart.centerX - centerX;
+        const centerYFlip = 2 * pinchStart.centerY - centerY;
+        const cx = (pinchStart.centerX - pinchStart.rectLeft - pinchStart.x) / pinchStart.scale;
+        const cy = (pinchStart.centerY - pinchStart.rectTop - pinchStart.y) / pinchStart.scale;
+        boardPanZoom.scale = newScale;
+        boardPanZoom.x = centerXFlip - pinchStart.rectLeft - cx * newScale;
+        boardPanZoom.y = centerYFlip - pinchStart.rectTop - cy * newScale;
         applyBoardTransform();
         const pct = Math.round(boardPanZoom.scale * 100);
         if (boardZoomSelect) {
@@ -4571,10 +4833,25 @@
           }
         }
       }
-    }, { passive: false });
-    boardViewCanvasEl.addEventListener('touchend', (e) => {
-      if (e.touches.length < 2) pinchStart = null;
-    }, { passive: true });
+    }, { capture: true });
+    document.addEventListener('pointerup', (e) => {
+      if (e.pointerType !== 'touch') return;
+      activeTouchPointers.delete(e.pointerId);
+      if (activeTouchPointers.size < 2) {
+        pinchStart = null;
+        if (boardViewCanvasEl) boardViewCanvasEl.classList.remove('panning');
+        setBoardPanCursor(false);
+      }
+    }, { capture: true });
+    document.addEventListener('pointercancel', (e) => {
+      if (e.pointerType !== 'touch') return;
+      activeTouchPointers.delete(e.pointerId);
+      if (activeTouchPointers.size < 2) {
+        pinchStart = null;
+        if (boardViewCanvasEl) boardViewCanvasEl.classList.remove('panning');
+        setBoardPanCursor(false);
+      }
+    }, { capture: true });
   }
   function setupBoardZoomControls() {
     if (boardThemeBtn) boardThemeBtn.addEventListener('click', cycleTheme);
@@ -5119,7 +5396,7 @@
     lineDiv.dataset.taskId = taskId;
     lineDiv.dataset.regionId = region.id;
     const statusSvg = t && isTaskCompleted(t) ? INSPECTOR_STATUS_TICK_SVG : INSPECTOR_STATUS_OPEN_SVG;
-    const titleText = (t && t.title) ? String(t.title).replace(/</g, '&lt;') : 'Task ' + taskId;
+    const titleText = (t && t.title) ? formatTitleWithTagPills(String(t.title)) : ('Task ' + String(taskId).replace(/</g, '&lt;'));
     const priorityCls = t ? priorityClass(t.priority) : 'priority-empty';
     const flagged = t && (t.flagged === true || t.flagged === 1);
     const flagHtml = showFlag ? ('<span class="board-region-line-flagged' + (flagged ? '' : ' empty') + '">★</span>') : '';
@@ -6876,14 +7153,24 @@
   function attachHashtagAutocompleteLazy(el) {
     if (!el || el.dataset.hashtagAutocompleteLazy === 'true') return;
     el.dataset.hashtagAutocompleteLazy = 'true';
-    function attach() {
+    function attach(ev) {
       el.removeEventListener('keydown', onKeydown);
       el.removeEventListener('input', onInput);
       el.dataset.hashtagAutocompleteLazy = 'false';
+      if (ev && ev.key === '#') {
+        ev.preventDefault();
+        const start = el.selectionStart != null ? el.selectionStart : (el.value || '').length;
+        const end = el.selectionEnd != null ? el.selectionEnd : (el.value || '').length;
+        const v = el.value || '';
+        el.value = v.substring(0, start) + '#' + v.substring(end);
+        el.selectionStart = el.selectionEnd = start + 1;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
       attachHashtagAutocomplete(el);
+      el.focus();
     }
     function onKeydown(ev) {
-      if (ev.key === '#') attach();
+      if (ev.key === '#') attach(ev);
     }
     function onInput() {
       if ((el.value || '').includes('#')) attach();
@@ -8805,6 +9092,8 @@
     recurrence: null,
     projects: [],
     tags: [],
+    depends_on: [],
+    blocks: [],
   };
   /** When set, called with the created task after new-task save succeeds (e.g. convert note to task). */
   let newTaskModalOnSaveAfterCreate = null;
@@ -8863,6 +9152,8 @@
       recurrence: (prefill && prefill.recurrence) || null,
       projects: initialProjects,
       tags: initialTags,
+      depends_on: Array.isArray(prefill && prefill.depends_on) ? [...prefill.depends_on] : [],
+      blocks: Array.isArray(prefill && prefill.blocks) ? [...prefill.blocks] : [],
     };
     if (!newTaskModalContent) return;
     const hasRecurrence = !!(newTaskState.recurrence && typeof newTaskState.recurrence === 'object' && (newTaskState.recurrence.freq || newTaskState.recurrence.interval));
@@ -8888,6 +9179,8 @@
     html += '<button type="button" class="inspector-action-icon inspector-flag-btn muted new-task-flag-btn" data-flagged="0" title="Flag" aria-label="Toggle flag"><span class="inspector-flag-star flagged-icon empty">★</span></button>';
     html += '<button type="button" class="inspector-action-icon inspector-notes-btn' + (newTaskState.description ? '' : ' muted') + ' new-task-notes-btn" title="Notes / description" aria-label="Edit notes">' + INSPECTOR_DOCUMENT_SVG + '</button>';
     html += '<button type="button" class="inspector-action-icon inspector-recurrence-btn muted new-task-recurrence-btn" title="Set recurrence" aria-label="Recurrence">' + RECURRENCE_ICON_SVG + '</button>';
+    const hasBlockingRel = (newTaskState.depends_on && newTaskState.depends_on.length) || (newTaskState.blocks && newTaskState.blocks.length);
+    html += '<button type="button" class="inspector-action-icon inspector-blocking-btn new-task-blocking-btn' + (hasBlockingRel ? '' : ' muted') + '" title="Blocking" aria-label="Blocking">' + BLOCKING_ICON_SVG + '</button>';
     html += '<span class="inspector-actions-projects inspector-projects-wrap new-task-projects-wrap" data-projects-json="' + escapeAttr(JSON.stringify(newTaskState.projects)) + '">';
     html += '<button type="button" class="inspector-action-icon inspector-projects-btn' + (newTaskState.projects.length ? '' : ' muted') + ' new-task-projects-btn" title="Add or remove projects" aria-haspopup="true" aria-label="Projects">' + INSPECTOR_PROJECTS_ICON_SVG + '</button>';
     html += '</span>';
@@ -8929,6 +9222,12 @@
         },
       });
     });
+    const newTaskBlockingBtn = newTaskModalContent.querySelector('.new-task-blocking-btn');
+    if (newTaskBlockingBtn) {
+      newTaskBlockingBtn.addEventListener('click', () => {
+        openBlockingModalForNewTask(newTaskState);
+      });
+    }
     const projectsWrap = newTaskModalContent.querySelector('.new-task-projects-wrap');
     const projectsBtn = newTaskModalContent.querySelector('.new-task-projects-btn');
     if (projectsWrap && projectsBtn) {
@@ -9007,6 +9306,35 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
+        const newId = createdTask && createdTask.id;
+        if (newId) {
+          const depIds = newTaskState.depends_on || [];
+          const blockIds = newTaskState.blocks || [];
+          for (const depId of depIds) {
+            if (!depId) continue;
+            try {
+              await api(`/api/external/tasks/${encodeURIComponent(newId)}/dependencies`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ depends_on_task_id: depId }),
+              });
+            } catch (e) {
+              console.error('Failed to add dependency:', e);
+            }
+          }
+          for (const otherId of blockIds) {
+            if (!otherId) continue;
+            try {
+              await api(`/api/external/tasks/${encodeURIComponent(otherId)}/dependencies`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ depends_on_task_id: newId }),
+              });
+            } catch (e) {
+              console.error('Failed to add blocking dependency:', e);
+            }
+          }
+        }
         const onAfter = newTaskModalOnSaveAfterCreate;
         closeNewTaskModal();
         scheduleRefreshAfterTaskChange();
