@@ -327,7 +327,9 @@ def resolve_task_dates(
     params: dict[str, Any],
     tz_name: str = "UTC",
 ) -> dict[str, Any]:
-    """Resolve available_date and due_date in task params; return a copy with resolved ISO dates where possible."""
+    """Resolve available_date and due_date in task params; return a copy with resolved ISO dates where possible.
+    If both resolve to dates and available > due (e.g. model swapped 'today' and 'tomorrow'), swap them so
+    available_date <= due_date."""
     out = dict(params)
     for key in ("available_date", "due_date"):
         val = out.get(key)
@@ -336,6 +338,10 @@ def resolve_task_dates(
         resolved = resolve_relative_date(str(val).strip(), tz_name)
         if resolved is not None:
             out[key] = resolved
+    av = out.get("available_date")
+    due = out.get("due_date")
+    if av and due and _ISO_DATE.match(str(av)) and _ISO_DATE.match(str(due)) and av > due:
+        out["available_date"], out["due_date"] = due, av
     return out
 
 

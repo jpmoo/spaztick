@@ -136,7 +136,7 @@ Dates: If you receive a date without a year (e.g. "2/17", "March 15"), assume th
 AVAILABLE_TOOLS_SECTION = """
 Available tools: task_create, task_find, task_info, task_update, delete_task, project_create, project_list, project_info, project_archived, project_archive, project_unarchive, delete_project, list_lists, tag_list, tag_rename, tag_delete.
 
-task_create: Use when the user says "add task", "create task", "new task" with a title. Required: title. Optional: due_date, available_date, project or short_id (single project by short_id, e.g. hous, 1off), projects (array of short_ids), tags (array), priority, description, notes, flagged. You MAY include as many optional parameters as the user provides. Parse the full phrase: "add task roast coffee due today in hous" -> title "roast coffee", due_date "today", project "hous". "create task buy milk in 1off" -> title "buy milk", short_id "1off". Use natural language for dates (today, tomorrow, next week). Output: {"name": "task_create", "parameters": {"title": "...", "due_date": "today", "short_id": "hous"}} with every option the user mentioned.
+task_create: Use when the user says "add task", "create task", "new task" with a title. Required: title. Optional: available_date, due_date, project or short_id (single project by short_id, e.g. hous, 1off), projects (array of short_ids), tags (array), priority, description, notes, flagged. You MAY include as many optional parameters as the user provides. The title must be the full task title exactly as the user stated it—do NOT remove "with #X" or "#X" from the title. If the user includes #tags in the title (e.g. "Explore AP Science with #Robert"), set title to the full phrase including the tag and also add the tag name(s) to the tags array (e.g. tags ["Robert"]). Map dates by meaning: "available X" -> available_date, "due Y" -> due_date (do not assign by word order). "available today and due tomorrow" -> available_date "today", due_date "tomorrow". "add task roast coffee due today in hous" -> title "roast coffee", due_date "today", project "hous". "create task Explore AP Science with #Robert available 2/26 due 2/27 in 1off" -> title "Explore AP Science with #Robert", tags ["Robert"], available_date "2/26", due_date "2/27", short_id "1off". Use natural language for dates (today, tomorrow, next week). Output: {"name": "task_create", "parameters": {"title": "...", "due_date": "today", "short_id": "hous"}} with every option the user mentioned.
 
 task_find: THE single tool for listing or searching tasks. Use task_find for ANY request to show, list, or find tasks—with or without dates, tags, projects, or a search term. Never use tag_list for task lists; tag_list only returns tag names and counts (use tag_list only when the user explicitly asks "list tags", "show tags", "tag counts").
 Parameters (all optional; include only what the user asked for):
@@ -145,7 +145,7 @@ Parameters (all optional; include only what the user asked for):
 - status: "incomplete" (default), "complete", or "all". Omit completed unless the user asks for completed/done tasks or "all".
 - tag / tags (array) / tag_mode ("any" or "all"): Filter by tag(s). Strip # from tag names (e.g. "#do" -> tag "do").
 - short_id or project (single), short_ids or projects (array), project_mode ("any" or "all"): Filter by project. Use short_id "inbox" (or "inbo") for tasks with no project. "no project(s)" means the same as inbox.
-- list_id (string): Saved list short_id. Use for "view list X", "tasks on list X", "tasks in list X", "give me tasks from list X". Returns tasks from that list's query (same as in the app). Example: "Tasks on list focu" -> {"name": "task_find", "parameters": {"list_id": "focu"}}.
+- list_id (string): Saved list short_id. Use for "view list X", "tasks on list X", "tasks in list X", "give me tasks from list X". Also use when the user says "X tasks" or "give me X tasks" and X could be a list or project name (e.g. "give me focused tasks" -> list_id "focu"; "work tasks" -> short_id if project). Do NOT return all tasks unless the user explicitly said "all tasks" or "every task" with no qualifier (e.g. no "in X", "on list Y"). Words like "focused", "work", "personal" are often list or project names—prefer list_id or short_id over returning unfiltered tasks.
 - flagged (true/false), priority (0-3 or "high"/"medium high"/"medium low"/"low" or "red"/"orange"/"yellow"/"green"), title_contains (substring), sort_by ("due_date", "available_date", "created_at", "title"), completed_by, completed_after.
 - blocked_by_task (number): Tasks that are blocked by this task (tasks that have this task as a dependency). "Show me tasks blocked by task 3" -> {"name": "task_find", "parameters": {"blocked_by_task": 3, "status": "incomplete"}}.
 - blocking_task (number): Tasks that block this task (this task's dependencies). "Show me tasks that block task 3" -> {"name": "task_find", "parameters": {"blocking_task": 3, "status": "incomplete"}}.
@@ -157,7 +157,9 @@ Output: {"name": "task_find", "parameters": { ... }} with every relevant paramet
 - "Tasks in 1off" -> {"name": "task_find", "parameters": {"short_id": "1off", "status": "incomplete"}}
 - "Tasks in inbox" / "inbox tasks" / "tasks with no projects" / "show inbox" / "inbo" -> {"name": "task_find", "parameters": {"short_id": "inbox", "status": "incomplete"}} (all mean tasks with no project).
 - "Tasks on list focu" / "view list test" / "tasks in list work" -> {"name": "task_find", "parameters": {"list_id": "focu"}} (use the list's short_id).
+- "Give me focused tasks" / "focused tasks" -> {"name": "task_find", "parameters": {"list_id": "focu"}} (X may be a list name; use list_id to avoid returning all tasks).
 - "Give me tasks in focu" / "tasks in 1off" -> Use list_id when X is a list short_id, short_id when X is a project short_id. If unsure, use list_id (system will fall back to project if no list).
+- Only use task_find with no list_id/short_id/tag/when when the user explicitly says "all tasks", "every task", "list my tasks" (no list/project name). Otherwise prefer a list_id or short_id if the message contains a word that could be a list or project name.
 - "Tasks tagged #do" / "show me #do tasks" -> {"name": "task_find", "parameters": {"tag": "do", "status": "incomplete"}}
 - "Find tasks about meetings" -> {"name": "task_find", "parameters": {"term": "meetings", "status": "incomplete"}}
 - "Tasks in 1off available tomorrow" -> {"name": "task_find", "parameters": {"when": "available tomorrow", "short_id": "1off", "status": "incomplete"}}
@@ -211,7 +213,7 @@ Output format: {"name": "tag_delete", "parameters": {"tag": "work"}} or with "co
 
 In this chat we refer to: tasks by number only (e.g. 1, 2); projects by short_id only (e.g. 1off, work); lists by short_id only (e.g. test, inbox). Never use full display names for projects or lists. When the user asks about a task or project by number/short_id (e.g. "about 1", "about project 1off", "view list test"), output the corresponding tool JSON—do not answer with general knowledge.
 
-Important for task_create: Do NOT use generic phrases as the task title. If the user only says "new task", "create a task", "add a task", or similar without giving an actual title, respond in plain language asking once for the task title (conversational reply, no JSON). Only call task_create when they have given a real title (e.g. "Buy milk").
+Important for task_create: Do NOT use generic phrases as the task title. If the user only says "new task", "create a task", "add a task", or similar without giving an actual title, respond in plain language asking once for the task title (conversational reply, no JSON). Only call task_create when they have given a real title (e.g. "Buy milk"). Keep the full title as stated—including "with #Tag" or "#Tag"—and also add those tag names to the tags array; do not strip #mentions from the title.
 Same for project_create: only call when they have given a real project name. Otherwise reply conversationally.
 """
 
@@ -795,6 +797,49 @@ def _resolve_identifier_to_task_find_params(identifier: str) -> dict[str, Any]:
     return {"list_id": identifier}
 
 
+def _resolve_list_or_project_from_word(word: str) -> dict[str, Any] | None:
+    """Resolve a word (e.g. 'focused', 'focu') to task_find params by matching list name/short_id or project short_id. Returns None if no match."""
+    if not word or not str(word).strip():
+        return None
+    w = str(word).strip().lower()
+    if w in ("my", "all", "every", "the", "me"):
+        return None
+    try:
+        from list_service import get_list, list_lists
+        if get_list(w):
+            return {"list_id": w}
+        lists = list_lists()
+        for lst in lists:
+            short_id_raw = (lst.get("short_id") or "").strip()
+            short_id = short_id_raw.lower()
+            name = (lst.get("name") or "").strip().lower()
+            if short_id == w or name == w or (name and w in name) or (name and name.startswith(w)) or (short_id and w.startswith(short_id)):
+                return {"list_id": short_id_raw or lst.get("id"), "status": "incomplete"}
+    except Exception:
+        pass
+    try:
+        from project_service import get_project_by_short_id
+        if get_project_by_short_id(w):
+            return {"short_id": w, "status": "incomplete"}
+    except Exception:
+        pass
+    return None
+
+
+def _extract_list_or_project_word_before_tasks(user_message: str) -> str | None:
+    """Extract a word that might be a list/project name from 'give me X tasks' or 'X tasks'. Returns X or None. Skips 'my', 'all', 'every'."""
+    if not user_message or not isinstance(user_message, str):
+        return None
+    msg = user_message.strip()
+    m = re.search(r"\b(?:give me|get|show me|list|gimme|display)\s+([a-z0-9_-]+)\s+tasks?\b", msg, re.I)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"\b([a-z0-9_-]+)\s+tasks?\s*[.?]?\s*$", msg, re.I)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
 def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any]] | None:
     """If the user message is clearly a list/show tasks or list/show projects command, return (tool_name, params) so we can run the tool even when the model replied conversationally. Conservative: only list/show tasks/projects (bare or with trailing filter words)."""
     if not user_message or not isinstance(user_message, str):
@@ -821,6 +866,12 @@ def _infer_tool_from_user_message(user_message: str) -> tuple[str, dict[str, Any
     in_id = _extract_tasks_in_identifier(user_message)
     if in_id:
         return ("task_find", _resolve_identifier_to_task_find_params(in_id))
+    # "give me focused tasks" / "focused tasks" — X may be a list or project name/short_id (e.g. focused -> list focu)
+    word_before_tasks = _extract_list_or_project_word_before_tasks(user_message)
+    if word_before_tasks:
+        resolved = _resolve_list_or_project_from_word(word_before_tasks)
+        if resolved:
+            return ("task_find", resolved)
     # Tag-only: "tasks tagged #do", "show me #do tasks", "tasks with tag work" -> task_find (no date)
     m = re.search(r"\btasks?\s+tagged\s+#?(\w+)(?:\s*[.?]?\s*)$", msg, re.I | re.S)
     if m:
@@ -1025,7 +1076,7 @@ def _escape_telegram_markdown(s: str) -> str:
 def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
     """Format task list for Telegram: bold header + task count on next line, emoji per line, plain dates (no monospace). Overdue/due-today highlighted with emoji."""
     if not tasks:
-        return "No tasks yet."
+        return "I can't find any tasks matching your criteria."
     total = len(tasks)
     show = tasks[:max_show]
     try:
@@ -1086,7 +1137,7 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
 def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
     """Format task list for API per PDF (native UI): bold header, emoji per line, monospace for dates. Output as HTML for client chat."""
     if not tasks:
-        return "<p>No tasks yet.</p>"
+        return "<p>I can't find any tasks matching your criteria.</p>"
     try:
         from date_utils import resolve_relative_date
         today = resolve_relative_date("today", tz_name)
@@ -1716,6 +1767,44 @@ def run_orchestrator(
             )
         except Exception as e:
             return (f"Error listing tasks: {e}", False, None, used_fallback)
+        # Treat large unfiltered result as suspicious unless user explicitly asked for "all" or "every" tasks
+        SUSPICIOUS_TASK_COUNT = 20
+        unfiltered = not validated.get("project_id") and not validated.get("project_ids") and not validated.get("tag") and not validated.get("tags") and not when_for_date
+        user_asked_all = bool(re.search(r"\b(all|every)\s+tasks?\b", user_message.strip(), re.I))
+        if unfiltered and len(tasks) >= SUSPICIOUS_TASK_COUNT and not user_asked_all:
+            word_before = _extract_list_or_project_word_before_tasks(user_message)
+            if word_before:
+                narrowed = _resolve_list_or_project_from_word(word_before)
+                if narrowed and narrowed.get("list_id"):
+                    try:
+                        from list_service import get_list, run_list
+                        lst = get_list(narrowed["list_id"])
+                        if lst:
+                            tasks = run_list(narrowed["list_id"], limit=500, tz_name=tz_name)
+                            list_label = (lst.get("name") or "").strip() or narrowed["list_id"]
+                            short_id = (lst.get("short_id") or "").strip()
+                            if response_format == "telegram":
+                                safe_label = _escape_telegram_markdown(list_label)
+                                safe_short = _escape_telegram_markdown(short_id) if short_id else ""
+                                header = f"*List: {safe_label} ({safe_short})*\n" if short_id else f"*List: {safe_label}*\n"
+                            else:
+                                header = f"List: {list_label} ({short_id})\n" if short_id else f"List: {list_label}\n"
+                            fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
+                            return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
+                    except Exception:
+                        pass
+                if narrowed and narrowed.get("short_id"):
+                    try:
+                        from project_service import get_project_by_short_id
+                        project = get_project_by_short_id(narrowed["short_id"])
+                        if project:
+                            tasks = svc_list_tasks(project_id=project["id"], limit=500)
+                            proj_label = (project.get("name") or "").strip() or narrowed["short_id"]
+                            header = f"Project {narrowed['short_id']}: {proj_label}\n"
+                            fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
+                            return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
+                    except Exception:
+                        pass
         header = (f"Tasks matching \"{term}\":\n" if term else "")
         fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
         return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
