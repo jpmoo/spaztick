@@ -516,7 +516,109 @@ def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
             out["flagged"] = True
         else:
             out["flagged"] = False
+    # When task is assigned to a project (or list) by short_id, strip trailing " in X" from title if X matches that project/list.
+    _strip_trailing_in_project_from_title(out)
     return out
+
+
+def _strip_trailing_in_project_from_title(out: dict[str, Any]) -> None:
+    """If title ends with ' in X' and X matches a project or list we're adding (or we find X as list/project by name), remove that suffix. Mutates out['title'] and may add to out['projects']."""
+    title = (out.get("title") or "").strip()
+    if not title:
+        return
+    project_refs = list(out.get("projects") or [])
+    if not project_refs:
+        single = (out.get("project") or out.get("short_id") or "").strip()
+        if single and not _is_inbox_ref(single):
+            project_refs = [single]
+    for ref in project_refs:
+        ref = str(ref).strip()
+        if not ref or _is_inbox_ref(ref):
+            continue
+        project = None
+        list_obj = None
+        try:
+            from project_service import get_project_by_short_id
+            project = get_project_by_short_id(ref)
+        except Exception:
+            pass
+        if not project:
+            try:
+                from list_service import get_list
+                list_obj = get_list(ref)
+                if list_obj:
+                    short_id = (list_obj.get("short_id") or ref or "").strip()
+                    name = (list_obj.get("name") or "").strip()
+                    for candidate in (c for c in (short_id, name) if c):
+                        suffix = " in " + candidate
+                        if title.lower().endswith(suffix.lower()):
+                            out["title"] = title[: -len(suffix)].strip()
+                            return
+            except Exception:
+                pass
+            continue
+        short_id = (project.get("short_id") or "").strip()
+        name = (project.get("name") or "").strip()
+        for candidate in (c for c in (short_id, name) if c):
+            suffix = " in " + candidate
+            if title.lower().endswith(suffix.lower()):
+                out["title"] = title[: -len(suffix)].strip()
+                return
+    # No ref in params: look for trailing " in X" in title and resolve X as list or project by name/short_id
+    idx = title.lower().rfind(" in ")
+    if idx < 0:
+        return
+    x = title[idx + 4 :].strip()
+    if not x:
+        return
+    suffix = title[idx:]
+    try:
+        from list_service import get_list, list_lists
+        lst = get_list(x)
+        if lst:
+            short_id = (lst.get("short_id") or "").strip()
+            name = (lst.get("name") or "").strip()
+            for candidate in (c for c in (short_id, name) if c):
+                if x.lower() == candidate.lower():
+                    out["title"] = title[:idx].strip()
+                    return
+        for lst in list_lists():
+            name = (lst.get("name") or "").strip()
+            short_id = (lst.get("short_id") or "").strip()
+            if name and x.lower() == name.lower():
+                out["title"] = title[:idx].strip()
+                return
+            if short_id and x.lower() == short_id.lower():
+                out["title"] = title[:idx].strip()
+                return
+    except Exception:
+        pass
+    try:
+        from project_service import get_project_by_short_id, list_projects
+        proj = get_project_by_short_id(x)
+        if proj:
+            out["projects"] = out.get("projects") or []
+            if proj.get("short_id") and proj["short_id"] not in out["projects"]:
+                out["projects"].append(proj["short_id"])
+            out["title"] = title[:idx].strip()
+            return
+        for proj in list_projects():
+            name = (proj.get("name") or "").strip()
+            short_id = (proj.get("short_id") or "").strip()
+            if name and x.lower() == name.lower():
+                out["projects"] = out.get("projects") or []
+                if short_id and short_id not in out["projects"]:
+                    out["projects"].append(short_id)
+                out["title"] = title[:idx].strip()
+                return
+            if short_id and x.lower() == short_id.lower():
+                out["projects"] = out.get("projects") or []
+                if short_id not in out["projects"]:
+                    out["projects"].append(short_id)
+                out["title"] = title[:idx].strip()
+                return
+    except Exception:
+        pass
 
 
 def _validate_project_create(params: dict[str, Any]) -> dict[str, Any]:

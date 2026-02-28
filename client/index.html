@@ -315,16 +315,36 @@
         </div>
         <div id="board-region-edit-agenda-section" class="board-region-edit-agenda-section hidden">
           <div class="setting-row">
-            <label>Show today and</label>
-            <div class="board-region-edit-agenda-days-row">
-              <input type="number" id="board-region-edit-agenda-days" class="board-region-edit-agenda-days-input" min="1" max="4" value="1" aria-label="Number of days" />
-              <span>day(s)</span>
-              <select id="board-region-edit-agenda-direction" class="board-region-edit-agenda-direction-select" aria-label="Before or after">
-                <option value="before">before</option>
-                <option value="after">after</option>
-                <option value="before_and_after">before and after</option>
-              </select>
+            <label>Days before today</label>
+            <input type="number" id="board-region-edit-agenda-days-before" class="board-region-edit-agenda-days-input" min="0" max="10" value="1" aria-label="Days before today" />
+          </div>
+          <div class="setting-row">
+            <label>Days after today</label>
+            <input type="number" id="board-region-edit-agenda-days-after" class="board-region-edit-agenda-days-input" min="0" max="10" value="1" aria-label="Days after today" />
+          </div>
+          <div class="setting-row">
+            <label>Calendar URLs</label>
+            <div class="board-region-edit-calendars-wrap">
+              <p class="setting-hint" style="margin:0 0 6px 0;">Use the <strong>ICS feed URL</strong> (subscription link), not the calendar view page. Outlook: Share calendar → Publish → copy the ICS link. Google: Calendar settings → Secret address in iCal format. The URL often ends in <code>.ics</code> or contains <code>/feed/</code>.</p>
+              <div id="board-region-edit-calendars-list" class="board-region-edit-calendars-list" aria-label="Calendar feeds"></div>
+              <button type="button" id="board-region-edit-calendars-add-btn" class="board-region-edit-calendars-add-btn" title="Add calendar URL" aria-label="Add calendar URL">+ Calendar</button>
             </div>
+          </div>
+          <div class="setting-row">
+            <label for="board-region-edit-agenda-calendars-position">Calendars</label>
+            <select id="board-region-edit-agenda-calendars-position" class="board-region-edit-agenda-position-select" aria-label="Show calendars above or below tasks">
+              <option value="above">Above tasks</option>
+              <option value="below">Below tasks</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <label for="board-region-edit-agenda-calendar-start">Calendar day start</label>
+            <input type="time" id="board-region-edit-agenda-calendar-start" class="board-region-edit-agenda-time-input" value="00:00" aria-label="Start time for calendar grid" />
+          </div>
+          <div class="setting-row">
+            <label for="board-region-edit-agenda-calendar-end">Calendar day end</label>
+            <input type="time" id="board-region-edit-agenda-calendar-end" class="board-region-edit-agenda-time-input" value="18:00" aria-label="End time for calendar grid" />
+            <span class="setting-hint">Hour grid runs from start to end. Events that start before end time are shown (even if they end after).</span>
           </div>
         </div>
         <div id="board-region-edit-region-only-section" class="board-region-edit-region-only">
@@ -355,6 +375,7 @@
       <div class="modal-footer board-region-edit-footer">
         <button type="button" id="board-region-edit-delete" class="board-region-edit-delete" title="Delete region" aria-label="Delete region"></button>
         <button type="button" id="board-region-edit-duplicate" class="board-region-edit-duplicate" title="Duplicate region" aria-label="Duplicate region"></button>
+        <button type="button" id="board-region-edit-add-hopper" class="board-region-edit-add-hopper hidden" title="Add all hopper tasks to this agenda" aria-label="Add hopper to agenda"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" xmlns="http://www.w3.org/2000/svg"><path d="M8 12H12M12 12H16M12 12V16M12 12V8M12 21C7.02944 21 3 16.9706 3 12C3 7.02944 7.02944 3 12 3C16.9706 3 21 7.02944 21 12C21 16.9706 16.9706 21 12 21Z"/></svg><span class="board-region-edit-add-hopper-label">Add hopper</span></button>
         <button type="button" id="board-region-edit-save" class="board-region-edit-save" title="Save" aria-label="Save"></button>
       </div>
     </div>

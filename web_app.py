@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 # Ensure project root on path
@@ -815,6 +815,30 @@ def external_delete_list(list_id: str):
 
 
 # External: Tags (tag-list with counts; tag-rename / tag-delete via execute-pending-confirm)
+@app.get("/api/external/calendar-feed", dependencies=[Depends(_require_api_key)])
+def external_calendar_feed(url: str = ""):
+    """Proxy fetch for public calendar ICS URLs (e.g. Google, Outlook). Returns raw ICS text. Only HTTPS allowed."""
+    import httpx
+    u = (url or "").strip()
+    if not u:
+        raise HTTPException(status_code=400, detail="Missing url parameter")
+    if not u.startswith("https://"):
+        raise HTTPException(status_code=400, detail="Only https URLs allowed")
+    try:
+        with httpx.Client(follow_redirects=True, timeout=15.0) as client:
+            r = client.get(
+                u,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (compatible; Spaztick/1.0; +https://github.com/jpmoo/spaztick)",
+                    "Accept": "text/calendar, application/ics, */*",
+                },
+            )
+            r.raise_for_status()
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Calendar fetch failed: {e!s}")
+    return Response(content=r.text, media_type="text/plain; charset=utf-8")
+
+
 @app.get("/api/external/tags", dependencies=[Depends(_require_api_key)])
 def external_list_tags():
     """Return all tags with the number of tasks that have that tag (in tags, or #tag in title/notes). Each task counted once per tag."""

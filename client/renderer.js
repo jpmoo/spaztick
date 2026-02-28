@@ -3953,6 +3953,7 @@
 
   const BOARD_REGION_DEFAULT_SIZE = 220;
   const BOARD_REGION_COLORS = ['#e5e7eb', '#fef3c7', '#d1fae5', '#dbeafe', '#e9d5ff', '#fce7f3', '#fed7aa', '#d6d3d1'];
+  const AGENDA_CALENDAR_MUTED_COLORS = ['#9ca3af', '#6b8cae', '#7a9b76', '#a08060', '#9876aa', '#c4a484'];
   function getBoardRegions(boardId) {
     const board = getBoards().find((b) => String(b.id) === String(boardId));
     if (!board) return [];
@@ -4058,26 +4059,30 @@
     return null;
   }
 
-  /** Agenda: date range as YYYY-MM-DD array (local dates). direction: before | after | before_and_after. days: 1-4. */
+  /** Agenda: date range as YYYY-MM-DD array (local dates). Uses agendaDaysBefore and agendaDaysAfter (0-10 each). Supports legacy agendaDays + agendaDirection. */
   function getAgendaDateRange(region) {
-    const n = Math.min(4, Math.max(1, parseInt(region.agendaDays, 10) || 1));
-    const dir = region.agendaDirection || 'before_and_after';
+    let before = region.agendaDaysBefore;
+    let after = region.agendaDaysAfter;
+    if (before == null && after == null && (region.agendaDays != null || region.agendaDirection != null)) {
+      const n = Math.min(10, Math.max(1, parseInt(region.agendaDays, 10) || 1));
+      const dir = region.agendaDirection || 'before_and_after';
+      before = (dir === 'before' || dir === 'before_and_after') ? n : 0;
+      after = (dir === 'after' || dir === 'before_and_after') ? n : 0;
+    }
+    before = Math.min(10, Math.max(0, parseInt(before, 10) || 0));
+    after = Math.min(10, Math.max(0, parseInt(after, 10) || 0));
     const now = new Date();
     const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
     const today = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const dates = [];
-    if (dir === 'before' || dir === 'before_and_after') {
-      for (let i = n; i >= 1; i--) {
-        const day = new Date(y, m, d - i);
-        dates.push(`${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`);
-      }
+    for (let i = before; i >= 1; i--) {
+      const day = new Date(y, m, d - i);
+      dates.push(`${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`);
     }
     dates.push(today);
-    if (dir === 'after' || dir === 'before_and_after') {
-      for (let i = 1; i <= n; i++) {
-        const day = new Date(y, m, d + i);
-        dates.push(`${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`);
-      }
+    for (let i = 1; i <= after; i++) {
+      const day = new Date(y, m, d + i);
+      dates.push(`${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`);
     }
     return dates;
   }
@@ -4089,6 +4094,239 @@
     const m = d.getMonth() + 1;
     const day = d.getDate();
     return `${wd} ${m}/${day}`;
+  }
+
+  const agendaCalendarFeedCache = {}; // url -> { text, fetchedAt }; TTL 5 min
+  const AGENDA_CALENDAR_CACHE_TTL_MS = 5 * 60 * 1000;
+
+  /** Normalize ICS value: extract date/datetime from DTSTART/DTEND. Handles VALUE=DATE:20240224, 20240224T140000Z, 2024-02-24. */
+  function parseICSDateValue(raw) {
+    if (!raw || typeof raw !== 'string') return { date: null, allDay: false };
+    let s = raw.trim();
+    if (s.includes(':')) s = s.substring(s.lastIndexOf(':') + 1).trim();
+    const dashDateMatch = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dashDateMatch) {
+      const [, y, m, d] = dashDateMatch.map(Number);
+      return { date: new Date(y, m - 1, d), allDay: true };
+    }
+    const dateOnlyMatch = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+    if (dateOnlyMatch && s.length === 8) {
+      const [, y, m, d] = dateOnlyMatch.map(Number);
+      return { date: new Date(y, m - 1, d), allDay: true };
+    }
+    const dateTimeMatch = s.match(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)/);
+    if (dateTimeMatch) {
+      const [, y, m, d, hh, mm, ss, z] = dateTimeMatch;
+      const iso = `${y}-${m}-${d}T${hh}:${mm}:${ss}${z || ''}`;
+      const date = new Date(iso);
+      return { date: isNaN(date.getTime()) ? null : date, allDay: false };
+    }
+    return { date: null, allDay: false };
+  }
+
+  /** Parse ICS text into events: { summary, start, end, allDay, color }. Handles line folding, VALUE=DATE, iCal/Outlook. */
+  function parseICSEvents(icsText, color) {
+    const events = [];
+    if (!icsText || typeof icsText !== 'string') return events;
+    const normalized = icsText
+      .replace(/^\uFEFF/, '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/\n[ \t]/g, '');
+    const veventBlocks = normalized.split(/\n?BEGIN:VEVENT\n/i);
+    for (let i = 1; i < veventBlocks.length; i++) {
+      const block = (veventBlocks[i] || '').split(/\nEND:VEVENT\n/i)[0] || '';
+      let summary = '';
+      let dtStartRaw = '';
+      let dtEndRaw = '';
+      const lines = block.split(/\n/);
+      for (const line of lines) {
+        const colonIdx = line.indexOf(':');
+        if (colonIdx < 0) continue;
+        const keyPart = line.substring(0, colonIdx).split(';')[0].trim().toUpperCase();
+        const val = line.substring(colonIdx + 1).replace(/\\n/g, '\n').trim();
+        if (keyPart === 'SUMMARY') summary = val;
+        else if (keyPart === 'DTSTART') dtStartRaw = val;
+        else if (keyPart === 'DTEND') dtEndRaw = val;
+      }
+      const startParsed = parseICSDateValue(dtStartRaw);
+      if (!startParsed.date || isNaN(startParsed.date.getTime())) continue;
+      const startDate = startParsed.date;
+      const allDay = startParsed.allDay;
+      let endDate;
+      const endParsed = parseICSDateValue(dtEndRaw);
+      if (endParsed.date && !isNaN(endParsed.date.getTime())) {
+        endDate = endParsed.date;
+      } else {
+        endDate = allDay ? new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + 1) : new Date(startDate.getTime() + 3600000);
+      }
+      events.push({
+        summary: summary || '(No title)',
+        start: startDate,
+        end: endDate,
+        allDay,
+        color: color || AGENDA_CALENDAR_MUTED_COLORS[0]
+      });
+    }
+    return events;
+  }
+
+  function looksLikeICS(text) {
+    if (!text || typeof text !== 'string') return false;
+    const t = text.replace(/^\uFEFF/, '').trim().substring(0, 2000);
+    return /BEGIN:VCALENDAR/i.test(t) || /BEGIN:VEVENT/i.test(t);
+  }
+
+  function isIcsFeedUrl(url) {
+    return /\.ics(\?|$)/i.test(url) || /\/feed\//i.test(url);
+  }
+
+  async function fetchCalendarFeed(url) {
+    const cached = agendaCalendarFeedCache[url];
+    if (cached && Date.now() - cached.fetchedAt < AGENDA_CALENDAR_CACHE_TTL_MS) return cached.text;
+    let text = '';
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { Accept: 'text/calendar, application/ics, */*' },
+        mode: 'cors',
+      });
+      if (res.ok) text = await res.text();
+    } catch (_) {}
+    if (text) text = text.replace(/^\uFEFF/, '');
+    if (looksLikeICS(text)) {
+      agendaCalendarFeedCache[url] = { text: text, fetchedAt: Date.now() };
+      return text;
+    }
+    try {
+      const raw = await api(`/api/external/calendar-feed?url=${encodeURIComponent(url)}`);
+      text = typeof raw === 'string' ? raw : '';
+      text = text.replace(/^\uFEFF/, '');
+      if (looksLikeICS(text)) {
+        agendaCalendarFeedCache[url] = { text: text, fetchedAt: Date.now() };
+        return text;
+      }
+    } catch (_) {}
+    return text || '';
+  }
+
+  /** Returns Promise<{ byDate: Map<dateStr, events[]>, feedErrors: string[], feedErrorsIncludeIcsUrl: boolean }>. */
+  async function getAgendaCalendarEvents(region, dateRange) {
+    const calendars = Array.isArray(region.agendaCalendars) ? region.agendaCalendars : [];
+    const dateSet = new Set(dateRange);
+    const byDate = new Map();
+    const feedErrors = [];
+    let feedErrorsIncludeIcsUrl = false;
+    dateRange.forEach((d) => byDate.set(d, []));
+    for (const cal of calendars) {
+      const url = (cal.url || '').trim();
+      if (!url.startsWith('https://')) continue;
+      const color = cal.color || AGENDA_CALENDAR_MUTED_COLORS[0];
+      let text;
+      try {
+        text = await fetchCalendarFeed(url);
+      } catch (_) {
+        feedErrors.push(url);
+        if (isIcsFeedUrl(url)) feedErrorsIncludeIcsUrl = true;
+        continue;
+      }
+      if (!looksLikeICS(text)) {
+        feedErrors.push(url);
+        if (isIcsFeedUrl(url)) feedErrorsIncludeIcsUrl = true;
+        continue;
+      }
+      const events = parseICSEvents(text, color);
+      for (const ev of events) {
+        const start = ev.start;
+        const end = ev.end;
+        if (ev.allDay) {
+          const endExclusive = new Date(end.getFullYear(), end.getMonth(), end.getDate());
+          let d = new Date(start.getFullYear(), start.getMonth(), start.getDate());
+          while (d.getTime() < endExclusive.getTime()) {
+            const ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+            if (dateSet.has(ds)) {
+              const list = byDate.get(ds) || [];
+              list.push({ ...ev, _dateStr: ds });
+            }
+            d.setDate(d.getDate() + 1);
+          }
+        } else {
+          const startStr = start.getFullYear() + '-' + String(start.getMonth() + 1).padStart(2, '0') + '-' + String(start.getDate()).padStart(2, '0');
+          if (dateSet.has(startStr)) {
+            const list = byDate.get(startStr) || [];
+            list.push({ ...ev, _dateStr: startStr });
+          }
+        }
+      }
+    }
+    const dayStart = (region.agendaCalendarStartTime || '').trim() || '00:00';
+    const dayEnd = (region.agendaCalendarEndTime || '').trim() || '18:00';
+    const [startHour = 0, startMin = 0] = dayStart.split(':').map((x) => parseInt(x, 10) || 0);
+    const [endHour = 18, endMin = 0] = dayEnd.split(':').map((x) => parseInt(x, 10) || 0);
+    const dayStartMinutes = startHour * 60 + startMin;
+    const dayEndMinutes = endHour * 60 + endMin;
+    byDate.forEach((list, dateStr) => {
+      const filtered = list.filter((ev) => {
+        if (ev.allDay) return true;
+        const startM = ev.start.getHours() * 60 + ev.start.getMinutes();
+        const endM = ev.end.getHours() * 60 + ev.end.getMinutes();
+        if (dayStartMinutes > 0 && endM <= dayStartMinutes) return false;
+        if (startM >= dayEndMinutes) return false;
+        return true;
+      });
+      list.length = 0;
+      list.push(...filtered);
+      list.sort((a, b) => {
+        if (a.allDay !== b.allDay) return a.allDay ? -1 : 1;
+        if (!a.allDay && !b.allDay) return a.start.getTime() - b.start.getTime();
+        return 0;
+      });
+    });
+    return { byDate, feedErrors, feedErrorsIncludeIcsUrl };
+  }
+
+  let agendaEventPopoverEl = null;
+  let agendaEventPopoverHideTimer = null;
+  function showAgendaEventPopover(ev, title, timeStr) {
+    if (!agendaEventPopoverEl) {
+      agendaEventPopoverEl = document.createElement('div');
+      agendaEventPopoverEl.className = 'board-region-agenda-event-popover hidden';
+      agendaEventPopoverEl.setAttribute('role', 'tooltip');
+      document.body.appendChild(agendaEventPopoverEl);
+    }
+    if (agendaEventPopoverHideTimer) {
+      clearTimeout(agendaEventPopoverHideTimer);
+      agendaEventPopoverHideTimer = null;
+    }
+    agendaEventPopoverEl.innerHTML = '';
+    const titleEl = document.createElement('div');
+    titleEl.className = 'board-region-agenda-event-popover-title';
+    titleEl.textContent = (title || '').replace(/</g, '&lt;');
+    const timeEl = document.createElement('div');
+    timeEl.className = 'board-region-agenda-event-popover-time';
+    timeEl.textContent = timeStr || '';
+    agendaEventPopoverEl.appendChild(titleEl);
+    agendaEventPopoverEl.appendChild(timeEl);
+    agendaEventPopoverEl.classList.remove('hidden');
+    const rect = ev.currentTarget && ev.currentTarget.getBoundingClientRect();
+    if (rect) {
+      requestAnimationFrame(() => {
+        if (!agendaEventPopoverEl) return;
+        const w = agendaEventPopoverEl.offsetWidth || 200;
+        const h = agendaEventPopoverEl.offsetHeight || 60;
+        const x = rect.left + rect.width / 2;
+        const y = rect.top;
+        agendaEventPopoverEl.style.left = Math.max(8, Math.min(x - w / 2, document.documentElement.clientWidth - w - 8)) + 'px';
+        agendaEventPopoverEl.style.top = Math.max(8, y - h - 4) + 'px';
+      });
+    }
+  }
+  function hideAgendaEventPopover() {
+    if (!agendaEventPopoverEl) return;
+    agendaEventPopoverHideTimer = setTimeout(() => {
+      agendaEventPopoverHideTimer = null;
+      if (agendaEventPopoverEl) agendaEventPopoverEl.classList.add('hidden');
+    }, 100);
   }
 
   /** Which column indices (0-based) does this task touch? null = outside range. */
@@ -4123,6 +4361,27 @@
       if (!da) return 1;
       if (!db) return -1;
       return db.localeCompare(da);
+    }
+    const na = (a && a.title) ? String(a.title) : '';
+    const nb = (b && b.title) ? String(b.title) : '';
+    return na.localeCompare(nb, undefined, { sensitivity: 'base' });
+  }
+
+  /** Sort for "outside of date range": available_date asc, then due_date asc (null last). */
+  function agendaOutsideSortCompare(a, b) {
+    const avA = (a && a.available_date) ? String(a.available_date).trim().substring(0, 10) : '';
+    const avB = (b && b.available_date) ? String(b.available_date).trim().substring(0, 10) : '';
+    if (avA !== avB) {
+      if (!avA) return 1;
+      if (!avB) return -1;
+      return avA.localeCompare(avB);
+    }
+    const da = (a && a.due_date) ? String(a.due_date).trim().substring(0, 10) : '';
+    const db = (b && b.due_date) ? String(b.due_date).trim().substring(0, 10) : '';
+    if (da !== db) {
+      if (!da) return 1;
+      if (!db) return -1;
+      return da.localeCompare(db);
     }
     const na = (a && a.title) ? String(a.title) : '';
     const nb = (b && b.title) ? String(b.title) : '';
@@ -4445,6 +4704,7 @@
     const board = getBoards().find((b) => String(b.id) === String(boardId));
     if (!board) return;
     currentBoardId = boardId;
+    Object.keys(agendaCalendarFeedCache).forEach((k) => delete agendaCalendarFeedCache[k]);
     if (inboxItem) inboxItem.classList.remove('selected');
     if (projectsList) projectsList.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
     if (listsListEl) listsListEl.querySelectorAll('.nav-item').forEach((x) => x.classList.remove('selected'));
@@ -4664,7 +4924,7 @@
       return !!(el.closest('.board-region-lines') || el.closest('.board-region-agenda-lines') || el.closest('.board-region-agenda-column-lines') || el.closest('.board-region-agenda-outside-lines') || el.closest('.board-note-body'));
     }
     boardViewCanvasEl.addEventListener('wheel', (e) => {
-      if (isOverBoardScrollable(e.target)) return;
+      const overScrollable = isOverBoardScrollable(e.target);
       const onBoard = !e.target.closest('.board-card') && !e.target.closest('.board-view-zoom') && !e.target.closest('.board-grid-btn');
       if (!onBoard) return;
       if (e.ctrlKey || e.metaKey) {
@@ -4673,6 +4933,7 @@
         const newPct = Math.max(BOARD_ZOOM_MIN, Math.min(BOARD_ZOOM_MAX, pct - e.deltaY));
         setBoardZoomTowardPoint(e.clientX, e.clientY, newPct / 100);
       } else {
+        if (overScrollable) return;
         e.preventDefault();
         setBoardPanCursor(true);
         if (wheelPanCursorTimeout) clearTimeout(wheelPanCursorTimeout);
@@ -4698,9 +4959,6 @@
     }
     document.addEventListener('touchstart', (e) => {
       if (e.touches.length === 2 && isBoardVisibleAndBothTouchesInBoard(e)) {
-        const el0 = document.elementFromPoint(e.touches[0].clientX, e.touches[0].clientY);
-        const el1 = document.elementFromPoint(e.touches[1].clientX, e.touches[1].clientY);
-        if (isOverBoardScrollable(el0) || isOverBoardScrollable(el1)) return;
         e.preventDefault();
         touchPanStart = null;
         const rect = boardViewCanvasEl.getBoundingClientRect();
@@ -4786,18 +5044,15 @@
       if (activeTouchPointers.size === 2 && bothTouchPointersInBoard()) {
         const pts = getTwoTouchPoints();
         if (pts) {
-          const el0 = document.elementFromPoint(pts.x1, pts.y1);
-          const el1 = document.elementFromPoint(pts.x2, pts.y2);
-          if (isOverBoardScrollable(el0) || isOverBoardScrollable(el1)) return;
+          touchPanStart = null;
+          const rect = boardViewCanvasEl.getBoundingClientRect();
+          const dist = Math.hypot(pts.x2 - pts.x1, pts.y2 - pts.y1);
+          const centerX = (pts.x1 + pts.x2) / 2;
+          const centerY = (pts.y1 + pts.y2) / 2;
+          pinchStart = { dist, scale: boardPanZoom.scale, x: boardPanZoom.x, y: boardPanZoom.y, centerX, centerY, rectLeft: rect.left, rectTop: rect.top, source: 'pointer' };
+          boardViewCanvasEl.classList.add('panning');
+          setBoardPanCursor(true);
         }
-        touchPanStart = null;
-        const rect = boardViewCanvasEl.getBoundingClientRect();
-        const dist = Math.hypot(pts.x2 - pts.x1, pts.y2 - pts.y1);
-        const centerX = (pts.x1 + pts.x2) / 2;
-        const centerY = (pts.y1 + pts.y2) / 2;
-        pinchStart = { dist, scale: boardPanZoom.scale, x: boardPanZoom.x, y: boardPanZoom.y, centerX, centerY, rectLeft: rect.left, rectTop: rect.top, source: 'pointer' };
-        boardViewCanvasEl.classList.add('panning');
-        setBoardPanCursor(true);
       }
     }, { capture: true });
     document.addEventListener('pointermove', (e) => {
@@ -4958,8 +5213,12 @@
           lines: [],
           showPriority: true,
           showFlag: true,
-          agendaDays: 1,
-          agendaDirection: 'before_and_after'
+          agendaDaysBefore: 1,
+          agendaDaysAfter: 1,
+          agendaCalendars: [],
+          agendaCalendarsPosition: 'above',
+          agendaCalendarStartTime: '00:00',
+          agendaCalendarEndTime: '18:00'
         };
         regions.push(newRegion);
         setBoardRegions(boardId, regions);
@@ -4975,8 +5234,13 @@
     const showFlagCb = document.getElementById('board-region-edit-show-flag');
     const agendaSectionEl = document.getElementById('board-region-edit-agenda-section');
     const regionOnlySectionEl = document.getElementById('board-region-edit-region-only-section');
-    const agendaDaysInput = document.getElementById('board-region-edit-agenda-days');
-    const agendaDirectionSelect = document.getElementById('board-region-edit-agenda-direction');
+    const agendaDaysBeforeInput = document.getElementById('board-region-edit-agenda-days-before');
+    const agendaDaysAfterInput = document.getElementById('board-region-edit-agenda-days-after');
+    const agendaCalendarsListEl = document.getElementById('board-region-edit-calendars-list');
+    const agendaCalendarsAddBtn = document.getElementById('board-region-edit-calendars-add-btn');
+    const agendaCalendarsPositionSelect = document.getElementById('board-region-edit-agenda-calendars-position');
+    const agendaCalendarStartInput = document.getElementById('board-region-edit-agenda-calendar-start');
+    const agendaCalendarEndInput = document.getElementById('board-region-edit-agenda-calendar-end');
     const tagsListEl = document.getElementById('board-region-edit-tags-list');
     const tagsAddBtn = document.getElementById('board-region-edit-tags-add-btn');
     const removeTagsOnUnsnapCb = document.getElementById('board-region-edit-remove-tags-on-unsnap');
@@ -4984,14 +5248,59 @@
     const saveBtn = document.getElementById('board-region-edit-save');
     const deleteBtn = document.getElementById('board-region-edit-delete');
     const duplicateBtn = document.getElementById('board-region-edit-duplicate');
+    const addHopperBtn = document.getElementById('board-region-edit-add-hopper');
     const closeBtn = document.getElementById('board-region-edit-close');
     if (saveBtn) saveBtn.innerHTML = INSPECTOR_SAVE_SVG;
     if (deleteBtn) deleteBtn.innerHTML = INSPECTOR_TRASH_SVG;
     if (duplicateBtn) duplicateBtn.innerHTML = INSPECTOR_DUPLICATE_SVG;
     let editingRegionId = null;
     let regionEditAddTags = [];
+    let regionEditAgendaCalendars = []; // [{ url, color }]
     let regionEditRemoveTagsOnUnsnap = false;
     let regionEditSetPriority = undefined; // undefined = no change, null = no priority, 0-3 = value
+    function renderRegionEditCalendarsDisplay() {
+      if (!agendaCalendarsListEl) return;
+      agendaCalendarsListEl.innerHTML = '';
+      regionEditAgendaCalendars.forEach((entry, idx) => {
+        const row = document.createElement('div');
+        row.className = 'board-region-edit-calendar-row';
+        row.dataset.index = String(idx);
+        const urlInput = document.createElement('input');
+        urlInput.type = 'url';
+        urlInput.placeholder = 'https://… (iCal/ICS)';
+        urlInput.className = 'board-region-edit-calendar-url';
+        urlInput.value = entry.url || '';
+        urlInput.setAttribute('aria-label', 'Calendar URL');
+        urlInput.addEventListener('input', () => { regionEditAgendaCalendars[idx].url = urlInput.value.trim(); });
+        const colorWrap = document.createElement('div');
+        colorWrap.style.display = 'flex';
+        colorWrap.style.gap = '4px';
+        AGENDA_CALENDAR_MUTED_COLORS.forEach((c) => {
+          const swatch = document.createElement('button');
+          swatch.type = 'button';
+          swatch.className = 'board-region-edit-calendar-color-swatch' + (c === (entry.color || AGENDA_CALENDAR_MUTED_COLORS[0]) ? ' selected' : '');
+          swatch.style.background = c;
+          swatch.setAttribute('aria-label', 'Color');
+          swatch.addEventListener('click', () => {
+            regionEditAgendaCalendars[idx].color = c;
+            renderRegionEditCalendarsDisplay();
+          });
+          colorWrap.appendChild(swatch);
+        });
+        const removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'board-region-edit-calendar-remove';
+        removeBtn.textContent = 'Remove';
+        removeBtn.addEventListener('click', () => {
+          regionEditAgendaCalendars.splice(idx, 1);
+          renderRegionEditCalendarsDisplay();
+        });
+        row.appendChild(urlInput);
+        row.appendChild(colorWrap);
+        row.appendChild(removeBtn);
+        agendaCalendarsListEl.appendChild(row);
+      });
+    }
     function renderRegionEditTagsDisplay() {
       if (!tagsListEl) return;
       tagsListEl.innerHTML = '';
@@ -5017,8 +5326,32 @@
       if (showFlagCb) showFlagCb.checked = region.showFlag !== false;
       if (agendaSectionEl) agendaSectionEl.classList.toggle('hidden', !isAgenda);
       if (regionOnlySectionEl) regionOnlySectionEl.classList.toggle('hidden', !!isAgenda);
-      if (isAgenda && agendaDaysInput) agendaDaysInput.value = Math.min(4, Math.max(1, parseInt(region.agendaDays, 10) || 1));
-      if (isAgenda && agendaDirectionSelect) agendaDirectionSelect.value = region.agendaDirection || 'before_and_after';
+      if (addHopperBtn) addHopperBtn.classList.toggle('hidden', !isAgenda);
+      if (isAgenda) {
+        let before = region.agendaDaysBefore;
+        let after = region.agendaDaysAfter;
+        if (before == null && after == null && (region.agendaDays != null || region.agendaDirection != null)) {
+          const n = Math.min(10, Math.max(1, parseInt(region.agendaDays, 10) || 1));
+          const dir = region.agendaDirection || 'before_and_after';
+          before = (dir === 'before' || dir === 'before_and_after') ? n : 0;
+          after = (dir === 'after' || dir === 'before_and_after') ? n : 0;
+        }
+        if (agendaDaysBeforeInput) agendaDaysBeforeInput.value = Math.min(10, Math.max(0, parseInt(before, 10) || 0));
+        if (agendaDaysAfterInput) agendaDaysAfterInput.value = Math.min(10, Math.max(0, parseInt(after, 10) || 0));
+        regionEditAgendaCalendars = (Array.isArray(region.agendaCalendars) ? region.agendaCalendars : []).map((c) => ({ url: c.url || '', color: c.color || AGENDA_CALENDAR_MUTED_COLORS[0] }));
+        if (agendaCalendarsPositionSelect) agendaCalendarsPositionSelect.value = region.agendaCalendarsPosition === 'below' ? 'below' : 'above';
+        if (agendaCalendarStartInput) agendaCalendarStartInput.value = (region.agendaCalendarStartTime || '00:00').substring(0, 5);
+        if (agendaCalendarEndInput) agendaCalendarEndInput.value = (region.agendaCalendarEndTime || '18:00').substring(0, 5);
+        renderRegionEditCalendarsDisplay();
+      }
+      if (agendaCalendarsAddBtn) {
+        agendaCalendarsAddBtn.onclick = () => {
+          if (region.type === 'agenda') {
+            regionEditAgendaCalendars.push({ url: '', color: AGENDA_CALENDAR_MUTED_COLORS[0] });
+            renderRegionEditCalendarsDisplay();
+          }
+        };
+      }
       regionEditAddTags = Array.isArray(region.addTags) ? region.addTags.slice() : [];
       regionEditRemoveTagsOnUnsnap = !!region.removeTagsOnUnsnap;
       regionEditSetPriority = region.setPriority;
@@ -5068,8 +5401,14 @@
         r.showPriority = showPriorityCb ? showPriorityCb.checked : true;
         r.showFlag = showFlagCb ? showFlagCb.checked : true;
         if (r.type === 'agenda') {
-          r.agendaDays = Math.min(4, Math.max(1, parseInt(agendaDaysInput && agendaDaysInput.value ? agendaDaysInput.value : 1, 10)));
-          r.agendaDirection = (agendaDirectionSelect && agendaDirectionSelect.value) || 'before_and_after';
+          r.agendaDaysBefore = Math.min(10, Math.max(0, parseInt(agendaDaysBeforeInput && agendaDaysBeforeInput.value !== '' ? agendaDaysBeforeInput.value : 0, 10)));
+          r.agendaDaysAfter = Math.min(10, Math.max(0, parseInt(agendaDaysAfterInput && agendaDaysAfterInput.value !== '' ? agendaDaysAfterInput.value : 0, 10)));
+          r.agendaCalendars = regionEditAgendaCalendars.filter((c) => (c.url || '').trim().startsWith('https://')).map((c) => ({ url: c.url.trim(), color: c.color || AGENDA_CALENDAR_MUTED_COLORS[0] }));
+          r.agendaCalendarsPosition = (agendaCalendarsPositionSelect && agendaCalendarsPositionSelect.value === 'below') ? 'below' : 'above';
+          const startVal = agendaCalendarStartInput && agendaCalendarStartInput.value ? agendaCalendarStartInput.value.trim() : '';
+          r.agendaCalendarStartTime = /^\d{1,2}:\d{2}$/.test(startVal) ? startVal : '00:00';
+          const endVal = agendaCalendarEndInput && agendaCalendarEndInput.value ? agendaCalendarEndInput.value.trim() : '';
+          r.agendaCalendarEndTime = /^\d{1,2}:\d{2}$/.test(endVal) ? endVal : '18:00';
         } else {
           r.addTags = Array.isArray(regionEditAddTags) ? regionEditAddTags.slice() : [];
           r.removeTagsOnUnsnap = !!(removeTagsOnUnsnapCb && removeTagsOnUnsnapCb.checked);
@@ -5123,8 +5462,20 @@
       };
       if (src.type === 'agenda') {
         copy.type = 'agenda';
-        copy.agendaDays = Math.min(4, Math.max(1, parseInt(src.agendaDays, 10) || 1));
-        copy.agendaDirection = src.agendaDirection || 'before_and_after';
+        let before = src.agendaDaysBefore;
+        let after = src.agendaDaysAfter;
+        if (before == null && after == null && (src.agendaDays != null || src.agendaDirection != null)) {
+          const n = Math.min(10, Math.max(1, parseInt(src.agendaDays, 10) || 1));
+          const dir = src.agendaDirection || 'before_and_after';
+          before = (dir === 'before' || dir === 'before_and_after') ? n : 0;
+          after = (dir === 'after' || dir === 'before_and_after') ? n : 0;
+        }
+        copy.agendaDaysBefore = Math.min(10, Math.max(0, parseInt(before, 10) || 0));
+        copy.agendaDaysAfter = Math.min(10, Math.max(0, parseInt(after, 10) || 0));
+        copy.agendaCalendars = Array.isArray(src.agendaCalendars) ? src.agendaCalendars.map((c) => ({ url: c.url || '', color: c.color || AGENDA_CALENDAR_MUTED_COLORS[0] })) : [];
+        copy.agendaCalendarsPosition = src.agendaCalendarsPosition === 'below' ? 'below' : 'above';
+        copy.agendaCalendarStartTime = (src.agendaCalendarStartTime || '00:00').substring(0, 5);
+        copy.agendaCalendarEndTime = (src.agendaCalendarEndTime || '18:00').substring(0, 5);
         copy.w = src.w || BOARD_AGENDA_DEFAULT_WIDTH;
         copy.h = src.h || BOARD_AGENDA_DEFAULT_HEIGHT;
       }
@@ -5133,9 +5484,33 @@
       renderBoardRegions(currentBoardId);
       renderBoardConnections(currentBoardId);
     }
+    function addHopperToAgenda() {
+      if (!editingRegionId || !currentBoardId) return;
+      const regions = getBoardRegions(currentBoardId);
+      const region = regions.find((r) => r.id === editingRegionId);
+      if (!region || region.type !== 'agenda') return;
+      const cards = getBoardCards(currentBoardId);
+      const placedIds = new Set(cards.map((c) => String(c.taskId)));
+      (getBoardRegions(currentBoardId) || []).forEach((r) => (r.lines || []).forEach((line) => placedIds.add(String(line.taskId))));
+      const tasks = boardTasksCache[currentBoardId] || [];
+      const unplaced = tasks.filter((t) => !placedIds.has(String(t.id)));
+      if (unplaced.length === 0) {
+        alert('No tasks in the hopper.');
+        return;
+      }
+      const n = unplaced.length;
+      if (!confirm(`Add all ${n} task${n === 1 ? '' : 's'} from the hopper to this agenda?`)) return;
+      const lines = region.lines || [];
+      unplaced.forEach((t) => lines.push({ taskId: String(t.id) }));
+      region.lines = lines;
+      setBoardRegions(currentBoardId, regions);
+      renderBoardRegions(currentBoardId);
+      updateBoardAddTaskBadge(currentBoardId);
+    }
     if (saveBtn) saveBtn.onclick = saveRegionEdit;
     if (deleteBtn) deleteBtn.onclick = deleteRegionEdit;
     if (duplicateBtn) duplicateBtn.onclick = duplicateRegionEdit;
+    if (addHopperBtn) addHopperBtn.onclick = addHopperToAgenda;
     if (closeBtn) closeBtn.onclick = closeRegionEdit;
     if (overlay) overlay.addEventListener('click', (e) => { if (e.target === overlay) closeRegionEdit(); });
     if (titleInput) titleInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveRegionEdit(); } });
@@ -5422,11 +5797,13 @@
     return lineDiv;
   }
 
-  function renderBoardRegions(boardId) {
+  async function renderBoardRegions(boardId, injectedCalendarResults) {
     if (!boardRegionsLayerEl) return;
     const regions = getBoardRegions(boardId);
     const tasks = boardTasksCache[boardId] || [];
     const taskMap = new Map(tasks.map((t) => [String(t.id), t]));
+    const calendarEventsByRegionId = injectedCalendarResults instanceof Map ? injectedCalendarResults : new Map();
+    const agendaWithCalendars = regions.filter((r) => r.type === 'agenda' && Array.isArray(r.agendaCalendars) && r.agendaCalendars.length > 0);
     boardRegionsLayerEl.innerHTML = '';
     regions.forEach((region, regionIndex) => {
       const el = document.createElement('div');
@@ -5455,30 +5832,299 @@
             outside.push({ taskId, task: t, lineIndex });
           }
         });
-        placements.sort((a, b) => agendaTaskSortCompare(a.task, b.task));
-        outside.sort((a, b) => agendaTaskSortCompare(a.task, b.task));
+        const todayStr = (() => {
+          const now = new Date();
+          return now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+        })();
+        const todayIdx = dateRange.indexOf(todayStr);
+        placements.sort((a, b) => {
+          const distA = todayIdx >= 0 ? Math.min(Math.abs(a.startColIdx - todayIdx), Math.abs(a.endColIdx - todayIdx)) : 0;
+          const distB = todayIdx >= 0 ? Math.min(Math.abs(b.startColIdx - todayIdx), Math.abs(b.endColIdx - todayIdx)) : 0;
+          if (distA !== distB) return distA - distB;
+          return agendaTaskSortCompare(a.task, b.task);
+        });
+        outside.sort((a, b) => agendaOutsideSortCompare(a.task, b.task));
         const showPriority = region.showPriority !== false;
         const showFlag = region.showFlag !== false;
         const dayHeaders = dateRange.map((d) => formatAgendaDayHeader(d));
         const numCols = dateRange.length;
-        el.innerHTML = `<div class="board-region-header"><span class="board-region-title">${title || 'Agenda'}</span></div><div class="board-region-agenda-days"></div><div class="board-region-agenda-outside"><div class="board-region-agenda-outside-title">Outside of date range</div><div class="board-region-agenda-outside-lines"></div></div><div class="board-region-resize-handle"></div>`;
+        const hasCalendars = region.agendaCalendars && region.agendaCalendars.length > 0;
+        const rawCalendarResult = calendarEventsByRegionId.get(region.id);
+        const isCalendarLoading = hasCalendars && rawCalendarResult === undefined;
+        const calendarResult = rawCalendarResult || { byDate: new Map(), feedErrors: [], feedErrorsIncludeIcsUrl: false };
+        const eventsByDate = calendarResult.byDate || new Map();
+        const feedErrors = calendarResult.feedErrors || [];
+        const feedErrorsIncludeIcsUrl = calendarResult.feedErrorsIncludeIcsUrl === true;
+        const numCalendarUrls = (region.agendaCalendars || []).length;
+        const hasActiveCalendar = hasCalendars && feedErrors.length < numCalendarUrls;
+        const calendarsAbove = region.agendaCalendarsPosition !== 'below';
+        el.innerHTML = `<div class="board-region-header"><span class="board-region-title">${title || 'Agenda'}</span></div><div class="board-region-agenda-days"></div><div class="board-region-agenda-outside"><div class="board-region-agenda-outside-title">Tasks outside of date range</div><div class="board-region-agenda-outside-lines"></div></div><div class="board-region-resize-handle"></div>`;
         const daysEl = el.querySelector('.board-region-agenda-days');
         const outsideLinesEl = el.querySelector('.board-region-agenda-outside-lines');
         daysEl.style.display = 'grid';
         daysEl.style.gridTemplateColumns = `repeat(${numCols}, 1fr)`;
-        daysEl.style.gridTemplateRows = 'auto 1fr';
+        const calendarSection = hasCalendars ? (() => {
+          if (isCalendarLoading) {
+            const dayStart = (region.agendaCalendarStartTime || '').trim() || '00:00';
+            const dayEnd = (region.agendaCalendarEndTime || '').trim() || '18:00';
+            const [sh = 0, sm = 0] = dayStart.split(':').map((x) => parseInt(x, 10) || 0);
+            const [eh = 18, em = 0] = dayEnd.split(':').map((x) => parseInt(x, 10) || 0);
+            const dayStartM = sh * 60 + sm;
+            const dayEndM = eh * 60 + em;
+            const numRows = Math.max(1, Math.floor((dayEndM - dayStartM) / 15));
+            const placeholderHeight = numRows * 8 + 48;
+            const sec = document.createElement('div');
+            sec.className = 'board-region-agenda-calendar-section board-region-agenda-calendar-loading';
+            sec.style.display = 'flex';
+            sec.style.flexDirection = 'column';
+            sec.style.alignItems = 'center';
+            sec.style.justifyContent = 'center';
+            sec.style.gap = '6px';
+            sec.style.padding = '4px 6px 4px';
+            sec.style.minHeight = placeholderHeight + 'px';
+            sec.style.overflow = 'hidden';
+            const msg = document.createElement('div');
+            msg.className = 'board-region-agenda-calendar-loading-msg';
+            msg.textContent = 'Loading calendar items…';
+            sec.appendChild(msg);
+            return sec;
+          }
+          const sec = document.createElement('div');
+          sec.className = 'board-region-agenda-calendar-section';
+          sec.style.display = 'flex';
+          sec.style.flexDirection = 'column';
+          sec.style.gap = '6px';
+          sec.style.padding = '4px 6px 4px';
+          sec.style.minHeight = '28px';
+          sec.style.overflow = 'hidden';
+          if (feedErrors.length > 0) {
+            const warn = document.createElement('div');
+            warn.className = 'board-region-agenda-calendar-feed-error';
+            warn.textContent = feedErrorsIncludeIcsUrl
+              ? 'Calendar could not be loaded. Outlook .ics links often require sign-in from the server. Use Outlook → Share calendar → Publish (get a link that works without sign-in), or try opening the URL in a browser while logged in to confirm it returns calendar data.'
+              : 'Use the ICS feed URL, not the calendar view page (.html). In Outlook: Share → Publish, copy the ICS link.';
+            sec.appendChild(warn);
+          }
+          if (!hasActiveCalendar) {
+            const grid = document.createElement('div');
+            grid.style.display = 'grid';
+            grid.style.gridTemplateColumns = `repeat(${numCols}, 1fr)`;
+            grid.style.gap = '2px';
+            grid.style.flex = '1';
+            grid.style.minHeight = '0';
+            grid.style.overflow = 'auto';
+            function formatEventTimeSimple(ev) {
+              if (ev.allDay) return 'All day';
+              const fmt = (d) => (d.getHours() % 12 || 12) + ':' + String(d.getMinutes()).padStart(2, '0') + (d.getHours() >= 12 ? 'p' : 'a');
+              return fmt(ev.start) + ' – ' + fmt(ev.end);
+            }
+            dateRange.forEach((dateStr) => {
+              const cell = document.createElement('div');
+              cell.style.display = 'flex';
+              cell.style.flexDirection = 'column';
+              cell.style.gap = '2px';
+              cell.style.minHeight = '0';
+              cell.style.overflowY = 'auto';
+              const list = eventsByDate.get(dateStr) || [];
+              if (list.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'board-region-agenda-calendar-empty';
+                empty.textContent = 'No events';
+                cell.appendChild(empty);
+              } else {
+                list.forEach((ev) => {
+                  const div = document.createElement('div');
+                  div.className = 'board-region-agenda-calendar-event';
+                  div.style.backgroundColor = ev.color || '#9ca3af';
+                  const titleEl = document.createElement('div');
+                  titleEl.className = 'board-region-agenda-calendar-event-title';
+                  titleEl.textContent = (ev.summary || '').replace(/</g, '&lt;');
+                  div.appendChild(titleEl);
+                  div.addEventListener('mouseenter', (e) => { showAgendaEventPopover(e, ev.summary || '', formatEventTimeSimple(ev)); });
+                  div.addEventListener('mouseleave', () => { hideAgendaEventPopover(); });
+                  cell.appendChild(div);
+                });
+              }
+              grid.appendChild(cell);
+            });
+            sec.appendChild(grid);
+            return sec;
+          }
+          const dayStart = (region.agendaCalendarStartTime || '').trim() || '00:00';
+          const dayEnd = (region.agendaCalendarEndTime || '').trim() || '18:00';
+          const [sh = 0, sm = 0] = dayStart.split(':').map((x) => parseInt(x, 10) || 0);
+          const [eh = 18, em = 0] = dayEnd.split(':').map((x) => parseInt(x, 10) || 0);
+          const dayStartM = sh * 60 + sm;
+          const dayEndM = eh * 60 + em;
+          const numRows = Math.max(1, Math.floor((dayEndM - dayStartM) / 15));
+          const ROW_HEIGHT_PX = 8;
+          function formatHour(minutesFromMidnight) {
+            const h = Math.floor(minutesFromMidnight / 60) % 24;
+            const m = minutesFromMidnight % 60;
+            if (m === 0) return (h % 12 || 12) + (h < 12 ? 'am' : 'pm');
+            return (h % 12 || 12) + ':' + String(m).padStart(2, '0') + (h < 12 ? 'am' : 'pm');
+          }
+          function formatEventTime(ev) {
+            if (ev.allDay) return 'All day';
+            const fmt = (d) => (d.getHours() % 12 || 12) + ':' + String(d.getMinutes()).padStart(2, '0') + (d.getHours() >= 12 ? 'p' : 'a');
+            return fmt(ev.start) + ' – ' + fmt(ev.end);
+          }
+          const allDayByDate = new Map();
+          const timedByDate = new Map();
+          dateRange.forEach((dateStr) => {
+            allDayByDate.set(dateStr, []);
+            timedByDate.set(dateStr, []);
+          });
+          dateRange.forEach((dateStr) => {
+            (eventsByDate.get(dateStr) || []).forEach((ev) => {
+              if (ev.allDay) allDayByDate.get(dateStr).push(ev);
+              else {
+                const startM = ev.start.getHours() * 60 + ev.start.getMinutes();
+                if (startM >= dayStartM && startM < dayEndM) {
+                  timedByDate.get(dateStr).push(ev);
+                }
+              }
+            });
+          });
+          const hasAllDay = dateRange.some((d) => (allDayByDate.get(d) || []).length > 0);
+          const grid = document.createElement('div');
+          grid.className = 'board-region-agenda-calendar-time-grid';
+          grid.style.display = 'grid';
+          grid.style.gridTemplateColumns = `auto repeat(${numCols}, 1fr) auto`;
+          grid.style.gridTemplateRows = (hasAllDay ? 'auto ' : '') + `repeat(${numRows}, ${ROW_HEIGHT_PX}px)`;
+          grid.style.columnGap = '2px';
+          grid.style.rowGap = '0';
+          grid.style.flex = '1';
+          grid.style.minHeight = '0';
+          grid.style.overflow = 'auto';
+          let rowOffset = 0;
+          if (hasAllDay) {
+            const leftLabel = document.createElement('div');
+            leftLabel.className = 'board-region-agenda-calendar-hour-label';
+            leftLabel.style.gridColumn = '1';
+            leftLabel.style.gridRow = '1';
+            grid.appendChild(leftLabel);
+            dateRange.forEach((dateStr, colIdx) => {
+              const cell = document.createElement('div');
+              cell.className = 'board-region-agenda-calendar-slot';
+              cell.style.display = 'flex';
+              cell.style.flexDirection = 'row';
+              cell.style.flexWrap = 'wrap';
+              cell.style.gap = '2px';
+              cell.style.gridColumn = String(colIdx + 2);
+              cell.style.gridRow = '1';
+              (allDayByDate.get(dateStr) || []).forEach((ev) => {
+                const div = document.createElement('div');
+                div.className = 'board-region-agenda-calendar-event';
+                div.style.backgroundColor = ev.color || '#9ca3af';
+                div.style.flex = '1 1 0';
+                div.style.minWidth = '0';
+                const titleEl = document.createElement('div');
+                titleEl.className = 'board-region-agenda-calendar-event-title';
+                titleEl.textContent = (ev.summary || '').replace(/</g, '&lt;');
+                div.appendChild(titleEl);
+                div.addEventListener('mouseenter', (e) => { showAgendaEventPopover(e, ev.summary || '', formatEventTime(ev)); });
+                div.addEventListener('mouseleave', () => { hideAgendaEventPopover(); });
+                cell.appendChild(div);
+              });
+              grid.appendChild(cell);
+            });
+            const rightLabel = document.createElement('div');
+            rightLabel.className = 'board-region-agenda-calendar-hour-label board-region-agenda-calendar-hour-label-right';
+            rightLabel.style.gridColumn = String(numCols + 2);
+            rightLabel.style.gridRow = '1';
+            grid.appendChild(rightLabel);
+            rowOffset = 1;
+          }
+          const SLOTS_PER_HOUR = 4;
+          for (let r = 0; r < numRows; r += SLOTS_PER_HOUR) {
+            const hourM = dayStartM + r * 15;
+            const labelText = formatHour(hourM);
+            const leftLabel = document.createElement('div');
+            leftLabel.className = 'board-region-agenda-calendar-hour-label';
+            leftLabel.textContent = labelText;
+            leftLabel.style.gridColumn = '1';
+            leftLabel.style.gridRow = `${r + rowOffset + 1} / span ${SLOTS_PER_HOUR}`;
+            grid.appendChild(leftLabel);
+            const rightLabel = document.createElement('div');
+            rightLabel.className = 'board-region-agenda-calendar-hour-label board-region-agenda-calendar-hour-label-right';
+            rightLabel.textContent = labelText;
+            rightLabel.style.gridColumn = String(numCols + 2);
+            rightLabel.style.gridRow = `${r + rowOffset + 1} / span ${SLOTS_PER_HOUR}`;
+            grid.appendChild(rightLabel);
+            const hourLine = document.createElement('div');
+            hourLine.className = 'board-region-agenda-calendar-hour-line';
+            hourLine.style.gridRow = String(r + rowOffset + 1);
+            hourLine.setAttribute('aria-hidden', 'true');
+            grid.appendChild(hourLine);
+          }
+          dateRange.forEach((dateStr, colIdx) => {
+            const colBg = document.createElement('div');
+            colBg.className = 'board-region-agenda-calendar-slot board-region-agenda-calendar-day-col';
+            colBg.style.gridColumn = String(colIdx + 2);
+            colBg.style.gridRow = `${rowOffset + 1} / span ${numRows}`;
+            grid.appendChild(colBg);
+          });
+          dateRange.forEach((dateStr, colIdx) => {
+            const dayEvents = (timedByDate.get(dateStr) || []).map((ev) => {
+              const startM = ev.start.getHours() * 60 + ev.start.getMinutes();
+              const endM = ev.end.getHours() * 60 + ev.end.getMinutes();
+              let startSlot = (startM - dayStartM) / 15;
+              let endSlot = (endM - dayStartM) / 15;
+              startSlot = Math.max(0, Math.floor(startSlot));
+              endSlot = Math.min(numRows, Math.ceil(endSlot));
+              if (endSlot <= startSlot) endSlot = startSlot + 1;
+              return { ev, startSlot, endSlot };
+            });
+            const laneEnd = [];
+            const laneIndex = [];
+            dayEvents.sort((a, b) => a.startSlot - b.startSlot);
+            dayEvents.forEach(({ startSlot, endSlot }) => {
+              let L = 0;
+              while (L < laneEnd.length && laneEnd[L] > startSlot) L++;
+              if (L === laneEnd.length) laneEnd.push(0);
+              laneEnd[L] = endSlot;
+              laneIndex.push(L);
+            });
+            const N = Math.max(1, laneEnd.length);
+            dayEvents.forEach(({ ev, startSlot, endSlot }, i) => {
+              const lane = laneIndex[i];
+              const div = document.createElement('div');
+              div.className = 'board-region-agenda-calendar-event board-region-agenda-calendar-event-timed';
+              div.style.backgroundColor = ev.color || '#9ca3af';
+              div.style.gridColumn = String(colIdx + 2);
+              div.style.gridRow = `${rowOffset + 1 + startSlot} / span ${endSlot - startSlot}`;
+              div.style.width = `${100 / N}%`;
+              div.style.margin = '0';
+              div.style.marginLeft = `${(lane * 100) / N}%`;
+              const titleEl = document.createElement('div');
+              titleEl.className = 'board-region-agenda-calendar-event-title';
+              titleEl.textContent = (ev.summary || '').replace(/</g, '&lt;');
+              div.appendChild(titleEl);
+              div.addEventListener('mouseenter', (e) => { showAgendaEventPopover(e, ev.summary || '', formatEventTime(ev)); });
+              div.addEventListener('mouseleave', () => { hideAgendaEventPopover(); });
+              grid.appendChild(div);
+            });
+          });
+          sec.appendChild(grid);
+          return sec;
+        })() : null;
+        const rowHeader = 1;
+        const rowCalendar = hasCalendars ? (calendarsAbove ? 2 : 3) : -1;
+        const rowTasks = hasCalendars ? (calendarsAbove ? 3 : 2) : 2;
+        daysEl.style.gridTemplateRows = hasCalendars ? (calendarsAbove ? 'auto auto 1fr' : 'auto 1fr auto') : 'auto 1fr';
         dateRange.forEach((_, colIdx) => {
           const colDiv = document.createElement('div');
           colDiv.className = 'board-region-agenda-column board-region-agenda-column-header';
           colDiv.style.gridColumn = String(colIdx + 1);
-          colDiv.style.gridRow = '1';
+          colDiv.style.gridRow = String(rowHeader);
           colDiv.innerHTML = `<div class="board-region-agenda-day-header">${(dayHeaders[colIdx] || '').replace(/</g, '&lt;')}</div>`;
           daysEl.appendChild(colDiv);
         });
         const linesContainer = document.createElement('div');
         linesContainer.className = 'board-region-agenda-lines';
         linesContainer.style.gridColumn = '1 / -1';
-        linesContainer.style.gridRow = '2';
+        linesContainer.style.gridRow = String(rowTasks);
         linesContainer.style.display = 'grid';
         linesContainer.style.gridTemplateColumns = `repeat(${numCols}, 1fr)`;
         linesContainer.style.gridAutoRows = 'minmax(32px, auto)';
@@ -5501,6 +6147,19 @@
           stops.push('transparent 100%');
           linesContainer.style.backgroundImage = `linear-gradient(to right, ${stops.join(', ')})`;
         }
+        if (calendarSection) {
+          calendarSection.style.gridColumn = '1 / -1';
+          calendarSection.style.gridRow = String(rowCalendar);
+          if (calendarsAbove) {
+            daysEl.appendChild(calendarSection);
+            daysEl.appendChild(linesContainer);
+          } else {
+            daysEl.appendChild(linesContainer);
+            daysEl.appendChild(calendarSection);
+          }
+        } else {
+          daysEl.appendChild(linesContainer);
+        }
         placements.forEach(({ taskId, task: t, lineIndex, startColIdx, endColIdx }) => {
           const lineDiv = buildBoardRegionLineDiv(taskId, t, region, showPriority, showFlag, boardId);
           lineDiv.dataset.lineIndex = String(lineIndex);
@@ -5508,7 +6167,6 @@
           linesContainer.appendChild(lineDiv);
           attachBoardRegionLineDrag(lineDiv, boardId, regionIndex, lineIndex);
         });
-        daysEl.appendChild(linesContainer);
         outside.forEach(({ taskId, task: t, lineIndex }) => {
           const lineDiv = buildBoardRegionLineDiv(taskId, t, region, showPriority, showFlag, boardId);
           lineDiv.dataset.lineIndex = String(lineIndex);
@@ -5573,6 +6231,13 @@
       if (headerEl) attachBoardRegionMove(headerEl, el, boardId, regionIndex);
       boardRegionsLayerEl.appendChild(el);
     });
+    if (agendaWithCalendars.length > 0 && !(injectedCalendarResults instanceof Map)) {
+      Promise.all(agendaWithCalendars.map(async (region) => {
+        const dateRange = getAgendaDateRange(region);
+        const result = await getAgendaCalendarEvents(region, dateRange);
+        calendarEventsByRegionId.set(region.id, result);
+      })).then(() => renderBoardRegions(boardId, calendarEventsByRegionId));
+    }
   }
   function attachBoardRegionMove(headerEl, regionEl, boardId, regionIndex) {
     headerEl.addEventListener('mousedown', (e) => {

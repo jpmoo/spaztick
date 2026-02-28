@@ -3340,11 +3340,11 @@ body[data-theme="cupertino"] .board-region-line:hover {
 .board-region-edit-region-only.hidden {
   display: none !important;
 }
-.board-region-edit-agenda-days-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+#board-region-edit-overlay input,
+#board-region-edit-overlay select,
+#board-region-edit-overlay button,
+#board-region-edit-overlay textarea {
+  font-family: inherit;
 }
 .board-region-edit-agenda-days-input {
   width: 56px;
@@ -3355,13 +3355,211 @@ body[data-theme="cupertino"] .board-region-line:hover {
   background: var(--surface);
   color: var(--text);
 }
-.board-region-edit-agenda-direction-select {
+.board-region-edit-agenda-time-input {
+  padding: 6px 8px;
+  font-size: 14px;
+  font-family: inherit;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+.board-region-edit-agenda-section .setting-row:has(.setting-hint) {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.board-region-edit-agenda-section .setting-row:has(.setting-hint) .setting-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.board-region-edit-agenda-position-select {
   padding: 6px 10px;
   font-size: 14px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
+}
+.board-region-edit-calendars-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.board-region-edit-calendars-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.board-region-edit-calendar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.board-region-edit-calendar-row input.board-region-edit-calendar-url {
+  flex: 1;
+  min-width: 120px;
+  padding: 6px 8px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+}
+.board-region-edit-calendar-row .board-region-edit-calendar-color-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--border);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.board-region-edit-calendar-row .board-region-edit-calendar-color-swatch.selected {
+  border-color: var(--text);
+  box-shadow: 0 0 0 1px var(--text);
+}
+.board-region-edit-calendar-row .board-region-edit-calendar-remove {
+  padding: 4px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.board-region-edit-calendars-add-btn {
+  align-self: flex-start;
+  padding: 6px 12px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.board-region-edit-calendars-add-btn:hover {
+  background: var(--hover);
+}
+/* Agenda calendar event (muted) */
+.board-region-agenda-calendar-event {
+  font-size: 10px;
+  padding: 4px 6px;
+  border-radius: 3px;
+  margin-bottom: 2px;
+  min-height: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  overflow: hidden;
+}
+.board-region-agenda-calendar-event .board-region-agenda-calendar-event-title {
+  font-size: 10px;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-region-agenda-calendar-event .board-region-agenda-calendar-event-time {
+  font-size: 9px;
+  opacity: 0.9;
+}
+.board-region-agenda-calendar-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 4px 6px;
+  font-style: italic;
+}
+.board-region-agenda-calendar-feed-error {
+  font-size: 11px;
+  color: var(--text);
+  background: rgba(200, 120, 0, 0.15);
+  padding: 6px 8px;
+  border-radius: 3px;
+}
+.board-region-agenda-calendar-loading {
+  background: rgba(0, 0, 0, 0.06);
+  border-radius: 4px;
+}
+.board-region-agenda-calendar-loading-msg {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.board-region-agenda-calendar-time-grid {
+  align-content: start;
+}
+.board-region-agenda-calendar-hour-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 6px 0;
+  align-self: start;
+  justify-self: end;
+}
+.board-region-agenda-calendar-hour-label-right {
+  justify-self: start;
+}
+.board-region-agenda-calendar-hour-line {
+  grid-column: 2 / -2;
+  border-top: 1px dotted rgba(0, 0, 0, 0.18);
+  pointer-events: none;
+  min-height: 0;
+}
+body[data-theme="dark"] .board-region-agenda-calendar-hour-line,
+body[data-theme="blue"] .board-region-agenda-calendar-hour-line,
+body[data-theme="green"] .board-region-agenda-calendar-hour-line,
+body[data-theme="orange"] .board-region-agenda-calendar-hour-line {
+  border-top-color: rgba(255, 255, 255, 0.2);
+}
+.board-region-agenda-calendar-slot {
+  min-height: 0;
+  min-width: 0;
+}
+.board-region-agenda-calendar-day-col {
+  min-height: 0;
+  background: rgba(0, 0, 0, 0.04);
+  border-radius: 2px;
+}
+.board-region-agenda-calendar-event-timed {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding: 2px 4px;
+  border-radius: 2px;
+  margin: 0 2px;
+  align-self: stretch;
+  box-sizing: border-box;
+}
+.board-region-agenda-calendar-event-timed .board-region-agenda-calendar-event-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.board-region-agenda-event-popover {
+  position: fixed;
+  z-index: 10000;
+  max-width: 280px;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  pointer-events: none;
+}
+.board-region-agenda-event-popover.hidden {
+  display: none !important;
+}
+.board-region-agenda-event-popover-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+.board-region-agenda-event-popover-time {
+  font-size: 12px;
+  color: var(--text-muted);
 }
 /* Agenda region: column layout */
 .board-region.board-region-agenda {
@@ -3411,6 +3609,22 @@ body[data-theme="orange"] .board-region-agenda-day-header {
 .board-region-agenda-lines .board-region-line {
   min-width: 0;
 }
+.board-region-agenda-lines .board-region-line .board-region-line-text,
+.board-region-agenda-outside-lines .board-region-line .board-region-line-text {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.board-region-agenda-lines .board-region-line .board-region-line-title,
+.board-region-agenda-outside-lines .board-region-line .board-region-line-title {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+.board-region-agenda-outside-lines .board-region-line .board-region-line-dates {
+  flex-shrink: 0;
+}
 .board-region-agenda-column-lines {
   flex: 1;
   overflow-y: auto;
@@ -3445,6 +3659,8 @@ body[data-theme="orange"] .board-region-agenda-outside {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  max-height: 170px;
+  overflow-y: auto;
 }
 .board-view-zoom {
   position: absolute;
@@ -5082,6 +5298,36 @@ h6.description-line-heading { font-size: 0.95em; }
   width: 18px;
   height: 18px;
   pointer-events: none;
+}
+.board-region-edit-add-hopper {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+.board-region-edit-add-hopper:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+.board-region-edit-add-hopper.hidden {
+  display: none !important;
+}
+.board-region-edit-add-hopper svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  pointer-events: none;
+}
+.board-region-edit-add-hopper-label {
+  white-space: nowrap;
 }
 .btn-primary {
   padding: 10px 20px;
