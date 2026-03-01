@@ -35,6 +35,8 @@ class AppConfig(BaseModel):
     user_timezone: str = Field(default="UTC", description="IANA timezone for relative dates (e.g. America/New_York). Used for 'today'/'tomorrow'.")
     api_key: str = Field(default="", description="API key for external app access. If set, /api/external/* requires X-API-Key header. Empty = external API disabled.")
     archive_cron: str = Field(default="", description="Cron expression (5-field: min hour day month weekday) to archive completed tasks into the archived table. E.g. 0 2 * * * = 2am daily. Empty = disabled.")
+    mcp_port: int | None = Field(default=None, ge=1, le=65535, description="Port for MCP SSE server (e.g. 8082). When set, run.py starts the MCP server. Empty/0 = MCP not started.")
+    mcp_host: str = Field(default="0.0.0.0", description="Bind address for MCP server (0.0.0.0 = all interfaces).")
 
     @property
     def ollama_base_url(self) -> str:

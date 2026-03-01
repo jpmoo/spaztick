@@ -68,6 +68,8 @@ class ConfigUpdate(BaseModel):
     webhook_public_url: str = ""
     web_ui_port: int = Field(8081, ge=1, le=65535)
     use_polling: bool = True
+    mcp_port: int | None = Field(None, ge=1, le=65535, description="MCP SSE server port; empty = disabled")
+    mcp_host: str = Field("0.0.0.0", description="MCP bind address")
     database_path: str = ""
     user_timezone: str = "UTC"
     api_key: str = ""
@@ -94,6 +96,8 @@ def get_config() -> ConfigUpdate:
         webhook_public_url=c.webhook_public_url or "",
         web_ui_port=c.web_ui_port,
         use_polling=c.use_polling,
+        mcp_port=getattr(c, "mcp_port", None),
+        mcp_host=getattr(c, "mcp_host", "0.0.0.0") or "0.0.0.0",
         database_path=getattr(c, "database_path", "") or "",
         user_timezone=getattr(c, "user_timezone", "") or "UTC",
         api_key=getattr(c, "api_key", "") or "",
@@ -117,6 +121,8 @@ def put_config(body: ConfigUpdate) -> dict[str, str]:
     c.webhook_public_url = body.webhook_public_url
     c.web_ui_port = body.web_ui_port
     c.use_polling = body.use_polling
+    c.mcp_port = getattr(body, "mcp_port", None) if getattr(body, "mcp_port", None) else None
+    c.mcp_host = (getattr(body, "mcp_host", "") or "").strip() or "0.0.0.0"
     c.database_path = getattr(body, "database_path", "") or ""
     c.user_timezone = getattr(body, "user_timezone", "") or "UTC"
     c.api_key = getattr(body, "api_key", "") or ""
@@ -1043,6 +1049,21 @@ HTML_PAGE = """<!DOCTYPE html>
   </div>
 
   <div class="card">
+    <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Claude MCP</h2>
+    <p class="status" style="margin-bottom:0.75rem;">Expose Spaztick tools to Claude Desktop or Claude Code over MCP (Model Context Protocol). When a port is set, <code>run.py</code> starts the MCP server; point Claude at <code>http://&lt;this-host&gt;:&lt;port&gt;/sse</code> (e.g. <code>http://localhost:8082/sse</code>). Leave port <strong>empty</strong> to disable.</p>
+    <div class="row">
+      <div>
+        <label>MCP port</label>
+        <input type="number" id="mcp_port" min="1" max="65535" placeholder="8082 (empty = off)" />
+      </div>
+      <div>
+        <label>MCP bind address</label>
+        <input type="text" id="mcp_host" placeholder="0.0.0.0" />
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
     <h2 style="margin:0 0 0.75rem; font-size:1.1rem;">Database &amp; timezone</h2>
     <p class="status" style="margin-bottom:0.5rem;">SQLite path. Empty = project dir / spaztick.db</p>
     <div>
@@ -1144,6 +1165,8 @@ HTML_PAGE = """<!DOCTYPE html>
       $('webhook_public_url').value = c.webhook_public_url || '';
       $('web_ui_port').value = c.web_ui_port ?? 8081;
       $('use_polling').checked = c.use_polling !== false;
+      $('mcp_port').value = (c.mcp_port != null && c.mcp_port !== '') ? c.mcp_port : '';
+      $('mcp_host').value = c.mcp_host || '0.0.0.0';
       $('database_path').value = c.database_path || '';
       const tz = c.user_timezone || 'UTC';
       const tzSel = $('user_timezone');
@@ -1202,6 +1225,8 @@ HTML_PAGE = """<!DOCTYPE html>
         webhook_public_url: $('webhook_public_url').value.trim(),
         web_ui_port: parseInt($('web_ui_port').value, 10) || 8081,
         use_polling: usePolling(),
+        mcp_port: (() => { const v = $('mcp_port').value.trim(); const n = parseInt(v, 10); return (v === '' || isNaN(n)) ? null : n; })(),
+        mcp_host: $('mcp_host').value.trim() || '0.0.0.0',
         database_path: $('database_path').value.trim(),
         user_timezone: $('user_timezone').value.trim() || 'UTC',
         api_key: $('api_key').value.trim(),

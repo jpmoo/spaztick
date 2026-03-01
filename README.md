@@ -45,6 +45,41 @@ python -m web_app
 python telegram_bot.py
 ```
 
+**MCP server only** (for Claude Desktop / Claude Code):
+
+```bash
+python mcp_server.py
+```
+
+- Listens on port 8082 by default (or set `mcp_port` and optionally `mcp_host` in `config.json`).
+- To run the MCP server together with the web app and Telegram bot, set `mcp_port` (e.g. `8082`) in config; `run.py` will start the MCP server as a subprocess.
+
+## MCP (Model Context Protocol)
+
+Spaztick can expose its tools over MCP so **Claude Desktop** or **Claude Code** can create, list, update, and delete tasks and projects via natural conversation—without using Ollama for this path.
+
+1. **Start the MCP server**  
+   - Standalone: `python mcp_server.py` (default port 8082).  
+   - With the rest of the app: set `mcp_port` (e.g. `8082`) in `config.json` and run `python run.py`; the MCP server will start automatically.
+
+2. **Point Claude Desktop at it**  
+   In Claude Desktop’s config (e.g. `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS), add:
+
+   ```json
+   {
+     "mcpServers": {
+       "spaztick": {
+         "url": "http://localhost:8082/sse"
+       }
+     }
+   }
+   ```
+
+   If the server runs on another host (e.g. a home server), use that hostname: `http://homeserver.local:8082/sse`.
+
+3. **Use it**  
+   In Claude Desktop, start a new conversation; Claude can use the Spaztick tools (task_create, task_find, task_info, task_update, delete_task, project_*, list_lists, tag_list, tag_rename, tag_delete) to manage your tasks. Destructive actions (delete task, delete project, archive, tag delete/rename) return a confirmation message first; call the same tool again with `confirm: true` after the user confirms.
+
 ## Configuration (Web UI)
 
 1. Open http://localhost:8081 (or the port you set).

@@ -1236,6 +1236,76 @@ def _format_task_list_for_telegram(tasks: list[dict[str, Any]], max_show: int = 
     return "\n".join(lines)
 
 
+def _format_task_list_for_mcp(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
+    """Format task list for MCP: plain text, no HTML or Telegram markdown. Overdue/due-today indicated in text."""
+    if not tasks:
+        return "I can't find any tasks matching your criteria."
+    total = len(tasks)
+    show = tasks[:max_show]
+    try:
+        from date_utils import resolve_relative_date
+        today_iso = resolve_relative_date("today", tz_name)
+    except Exception:
+        from datetime import date
+        today_iso = date.today().isoformat()
+    if not today_iso:
+        from datetime import date
+        today_iso = date.today().isoformat()
+    try:
+        from project_service import get_project
+    except ImportError:
+        get_project = None
+    lines = [f"Tasks ({total}):"]
+    for t in show:
+        priority = t.get("priority")
+        prio_emoji = _priority_emoji(priority)
+        flagged = t.get("flagged") in (1, True, "1")
+        status = t.get("status") or "incomplete"
+        status_icon = "■" if status == "complete" else "□"
+        flag_str = "★" if flagged else ""
+        title = (t.get("title") or "").strip() or "(no title)"
+        num = t.get("number")
+        num_str = f"({num})" if num is not None else f"({(t.get('id') or '')[:8]})"
+        if get_project and t.get("projects"):
+            short_ids = []
+            for pid in t["projects"]:
+                p = get_project(pid)
+                if p:
+                    short_id = (p.get("short_id") or "").strip() or (p.get("id") or "")[:8]
+                    if short_id:
+                        short_ids.append(short_id)
+            in_projects = ", ".join(short_ids) if short_ids else "inbox"
+        else:
+            in_projects = "inbox"
+        date_parts = []
+        if t.get("available_date"):
+            date_parts.append("avail: " + _friendly_date(t["available_date"], tz_name))
+        due = t.get("due_date")
+        if due:
+            due_friendly = _friendly_date(due, tz_name)
+            if due < today_iso:
+                date_parts.append("due: " + due_friendly + " (overdue)")
+            elif due == today_iso:
+                date_parts.append("due: " + due_friendly + " (today)")
+            else:
+                date_parts.append("due: " + due_friendly)
+        date_block = " " + " ".join(date_parts) if date_parts else ""
+        line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_block}"
+        lines.append("• " + line_content)
+    if total > max_show:
+        lines.append(f"... and {total - max_show} more.")
+    return "\n".join(lines)
+
+
+def _task_list_formatter(response_format: str):
+    """Return the task list formatter for the given response format (api, telegram, mcp)."""
+    if response_format == "mcp":
+        return _format_task_list_for_mcp
+    if response_format == "telegram":
+        return _format_task_list_for_telegram
+    return _format_task_list_for_api
+
+
 def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, tz_name: str = "UTC") -> str:
     """Format task list for API per PDF (native UI): bold header, emoji per line, monospace for dates. Output as HTML for client chat."""
     if not tasks:
@@ -1510,68 +1580,77 @@ def run_orchestrator(
     system_prefix: str,
     history: list[dict[str, str]] | None = None,
     response_format: str = "api",
+    override_parsed: tuple[str, dict[str, Any]] | None = None,
 ) -> tuple[str, bool, dict[str, Any] | None, bool]:
     """
     Run the orchestrator. Returns (response_text, tool_used, pending_confirm, used_fallback).
-    response_format: "api" (HTML for task lists) or "telegram" (diff code block for Telegram).
+    When override_parsed is set, skips LLM (intent + tool) and runs the given (tool_name, params) directly (e.g. for MCP).
+    response_format: "api", "telegram", or "mcp".
     pending_confirm is set when delete_task/delete_project was run without confirm (caller can execute it when user says "yes").
     tool_used is True when a mutating tool was successfully executed (caller should clear history). For delete_* without confirm, tool_used is False.
     used_fallback is True when the tool was inferred from the user message (quick-add) rather than chosen by the AI.
     """
     used_fallback = False
-    url = f"{ollama_base_url.rstrip('/')}/api/generate"
-    # When history is empty (caller can disable conversation history), only the current user message is sent.
-    history_list = history or []
-    history_block = _format_history(history_list)
-    # Avoid appending user_message twice: caller often passes history that already includes the current message.
-    last_is_current = (
-        len(history_list) > 0
-        and (history_list[-1].get("role") or "user").lower() == "user"
-        and (history_list[-1].get("content") or "").strip() == user_message.strip()
-    )
-    def _prompt_with_user() -> str:
-        return (history_block + "User: " + user_message).strip() if not last_is_current else history_block.strip()
+    parsed: tuple[str, dict[str, Any]] | None = None
+    response_text = ""
 
-    # Step 1: Classify intent (TOOL vs CHAT)
-    try:
-        intent_response = _call_ollama(INTENT_ROUTER_PROMPT, user_message.strip(), url, model)
-        intent = _parse_intent(intent_response)
-    except Exception as e:
-        logger.exception("Intent router call failed")
-        return (f"Error calling the model: {e}", False, None, used_fallback)
-    logger.info("Intent router classified as: %s", intent)
-
-    if intent == "CHAT":
-        try:
-            chat_prompt = _prompt_with_user()
-            response_text = _call_ollama(CHAT_MODE_PROMPT, chat_prompt, url, model)
-        except Exception as e:
-            logger.exception("Chat mode call failed")
-            return (f"Error calling the model: {e}", False, None, used_fallback)
-        text = response_text.strip() or "I didn't understand. You can ask me to list or create tasks and projects."
-        return (text, False, None, used_fallback)
-
-    # Step 2: TOOL — get tool call from orchestrator, then execute
-    full_system = (system_prefix.strip() + "\n\n" + TOOL_ORCHESTRATOR_PROMPT).strip() if system_prefix else TOOL_ORCHESTRATOR_PROMPT
-    tool_prompt = _prompt_with_user()
-    logger.info("Tool mode request prompt_len=%d system_len=%d", len(tool_prompt), len(full_system))
-    try:
-        response_text = _call_ollama(full_system, tool_prompt, url, model)
-    except Exception as e:
-        logger.exception("Tool orchestrator call failed")
-        return (f"Error calling the model: {e}", False, None, used_fallback)
-
-    parsed = _parse_tool_call(response_text)
-    if parsed:
-        logger.info("LLM tool_call parsed name=%s parameters=%s", parsed[0], json.dumps(parsed[1]))
+    if override_parsed is not None:
+        parsed = override_parsed
     else:
-        inferred = _infer_tool_from_user_message(user_message)
-        if inferred:
-            logger.info("LLM did not return tool call; inferred from user message: name=%s parameters=%s", inferred[0], json.dumps(inferred[1]))
-            parsed = inferred
-            used_fallback = True
+        url = f"{ollama_base_url.rstrip('/')}/api/generate"
+        # When history is empty (caller can disable conversation history), only the current user message is sent.
+        history_list = history or []
+        history_block = _format_history(history_list)
+        # Avoid appending user_message twice: caller often passes history that already includes the current message.
+        last_is_current = (
+            len(history_list) > 0
+            and (history_list[-1].get("role") or "user").lower() == "user"
+            and (history_list[-1].get("content") or "").strip() == user_message.strip()
+        )
+        def _prompt_with_user() -> str:
+            return (history_block + "User: " + user_message).strip() if not last_is_current else history_block.strip()
+
+        # Step 1: Classify intent (TOOL vs CHAT)
+        try:
+            intent_response = _call_ollama(INTENT_ROUTER_PROMPT, user_message.strip(), url, model)
+            intent = _parse_intent(intent_response)
+        except Exception as e:
+            logger.exception("Intent router call failed")
+            return (f"Error calling the model: {e}", False, None, used_fallback)
+        logger.info("Intent router classified as: %s", intent)
+
+        if intent == "CHAT":
+            try:
+                chat_prompt = _prompt_with_user()
+                response_text = _call_ollama(CHAT_MODE_PROMPT, chat_prompt, url, model)
+            except Exception as e:
+                logger.exception("Chat mode call failed")
+                return (f"Error calling the model: {e}", False, None, used_fallback)
+            text = response_text.strip() or "I didn't understand. You can ask me to list or create tasks and projects."
+            return (text, False, None, used_fallback)
+
+        # Step 2: TOOL — get tool call from orchestrator, then execute
+        full_system = (system_prefix.strip() + "\n\n" + TOOL_ORCHESTRATOR_PROMPT).strip() if system_prefix else TOOL_ORCHESTRATOR_PROMPT
+        tool_prompt = _prompt_with_user()
+        logger.info("Tool mode request prompt_len=%d system_len=%d", len(tool_prompt), len(full_system))
+        try:
+            response_text = _call_ollama(full_system, tool_prompt, url, model)
+        except Exception as e:
+            logger.exception("Tool orchestrator call failed")
+            return (f"Error calling the model: {e}", False, None, used_fallback)
+
+        parsed = _parse_tool_call(response_text)
+        if parsed:
+            logger.info("LLM tool_call parsed name=%s parameters=%s", parsed[0], json.dumps(parsed[1]))
         else:
-            logger.info("LLM response is not a tool call, returning as-is")
+            inferred = _infer_tool_from_user_message(user_message)
+            if inferred:
+                logger.info("LLM did not return tool call; inferred from user message: name=%s parameters=%s", inferred[0], json.dumps(inferred[1]))
+                parsed = inferred
+                used_fallback = True
+            else:
+                logger.info("LLM response is not a tool call, returning as-is")
+
     if not parsed:
         text = response_text.strip() or "I didn't understand. You can ask me to create or list tasks or projects."
         if _looks_like_json(text):
@@ -1579,578 +1658,590 @@ def run_orchestrator(
         return (text, False, None, used_fallback)
 
     name, params = parsed
-    if name == "project_info":
-        short_id = (params.get("short_id") or params.get("project_id") or "").strip()
-        if not short_id:
-            return ("project_info requires short_id (the project's friendly id, e.g. 1off or work).", False, None, used_fallback)
-        tz_name = "UTC"
-        try:
-            from config import load as load_config
-            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
-        except Exception:
-            pass
-        try:
-            from project_service import get_project_by_short_id
-            from task_service import list_tasks as svc_list_tasks, get_tasks_that_depend_on
-            project = get_project_by_short_id(short_id)
-        except Exception as e:
-            return (f"Error loading project: {e}", False, None, used_fallback)
-        if not project:
-            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None, used_fallback)
-        try:
-            tasks = svc_list_tasks(project_id=project["id"], limit=500)
-            tasks_with_subtasks: list[tuple[dict[str, Any], list[dict[str, Any]]]] = [
-                (t, get_tasks_that_depend_on(t["id"])) for t in tasks
-            ]
-            return (_format_project_info_text(project, tasks_with_subtasks, tz_name), True, None, used_fallback)
-        except Exception as e:
-            return (f"Error loading project tasks: {e}", False, None, used_fallback)
-    if name == "project_list":
-        try:
-            from project_service import list_projects
-            projects = list_projects(status="active")
-        except Exception as e:
-            return (f"Error listing projects: {e}", False, None, used_fallback)
-        return (_format_project_list_for_telegram(projects), True, None, used_fallback)
-    if name == "project_archived":
-        try:
-            from project_service import list_projects
-            projects = list_projects(status="archived")
-        except Exception as e:
-            return (f"Error listing archived projects: {e}", False, None, used_fallback)
-        return (_format_archived_project_list_for_telegram(projects, tz_name), True, None, used_fallback)
-    if name == "project_archive":
-        short_id = (params.get("short_id") or params.get("project_id") or "").strip()
-        if not short_id:
-            return ("project_archive requires short_id (e.g. 1off or work).", False, None, used_fallback)
-        try:
-            from project_service import get_project_by_short_id, update_project
-            project = get_project_by_short_id(short_id)
-        except Exception as e:
-            return (f"Error looking up project: {e}", False, None, used_fallback)
-        if not project:
-            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None, used_fallback)
-        if project.get("status") == "archived":
-            return (f"Project {short_id} is already archived.", True, None, used_fallback)
-        if not _parse_confirm(params):
-            name_str = (project.get("name") or "").strip() or short_id
-            return (
-                f"Archive project {short_id} ({name_str})? It will be hidden from the project list until you unarchive it. Reply \"yes\" to confirm.",
-                False,
-                {"tool": "project_archive", "short_id": short_id},
-                used_fallback,
-            )
-        try:
-            update_project(project["id"], status="archived")
-        except ValueError as e:
-            return (str(e), False, None, used_fallback)
-        except Exception as e:
-            return (f"Error archiving project: {e}", False, None, used_fallback)
-        return (f"Project {short_id} archived. It is now hidden from the project list.", True, None, used_fallback)
-    if name == "project_unarchive":
-        short_id = (params.get("short_id") or params.get("project_id") or "").strip()
-        if not short_id:
-            return ("project_unarchive requires short_id (e.g. 1off or work).", False, None, used_fallback)
-        try:
-            from project_service import get_project_by_short_id, update_project
-            project = get_project_by_short_id(short_id)
-        except Exception as e:
-            return (f"Error looking up project: {e}", False, None, used_fallback)
-        if not project:
-            return (f"No project with id \"{short_id}\". List archived projects to see short_ids.", False, None, used_fallback)
-        if project.get("status") != "archived":
-            return (f"Project {short_id} is not archived.", True, None, used_fallback)
-        if not _parse_confirm(params):
-            name_str = (project.get("name") or "").strip() or short_id
-            return (
-                f"Unarchive project {short_id} ({name_str})? It will appear in the project list again. Reply \"yes\" to confirm.",
-                False,
-                {"tool": "project_unarchive", "short_id": short_id},
-                used_fallback,
-            )
-        try:
-            update_project(project["id"], status="active")
-        except Exception as e:
-            return (f"Error unarchiving project: {e}", False, None, used_fallback)
-        return (f"Project {short_id} unarchived. It is back in the project list.", True, None, used_fallback)
-    if name == "project_create":
-        try:
-            validated = _validate_project_create(params)
-        except ValueError as e:
-            return (f"Invalid project_create parameters: {e}", False, None, used_fallback)
-        try:
-            from project_service import create_project
-            project = create_project(
-                name=validated["title"],
-                description=validated.get("description"),
-                status=validated.get("status", "active"),
-            )
-        except Exception as e:
-            return (f"Error creating project: {e}", False, None, used_fallback)
-        return (_format_project_created_for_telegram(project), True, None, used_fallback)
-    if name == "delete_project":
-        short_id = (params.get("short_id") or params.get("project_id") or "").strip()
-        if not short_id:
-            return ("delete_project requires short_id (the project's friendly id, e.g. 1off or work).", False, None, used_fallback)
-        try:
-            from project_service import get_project_by_short_id, delete_project
-            project = get_project_by_short_id(short_id)
-        except Exception as e:
-            return (f"Error looking up project: {e}", False, None, used_fallback)
-        if not project:
-            return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None, used_fallback)
-        if not _parse_confirm(params):
-            name_str = (project.get("name") or "").strip() or short_id
-            return (
-                f"Delete project {short_id} ({name_str})? It will be removed from all tasks that use it; "
-                "some tasks may end up with no project assignments. Reply \"yes\" to confirm.",
-                False,
-                {"tool": "delete_project", "short_id": short_id},
-                used_fallback,
-            )
-        try:
-            delete_project(project["id"])
-        except Exception as e:
-            return (f"Error deleting project: {e}", False, None, used_fallback)
-        return (f"Project {short_id} deleted. It has been removed from all tasks.", True, None, used_fallback)
-    if name == "delete_task":
-        num = _parse_task_number(params)
-        if num is None:
-            return ("delete_task requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None, used_fallback)
-        try:
-            from task_service import get_task_by_number, delete_task
-            task = get_task_by_number(num)
-        except Exception as e:
-            return (f"Error looking up task: {e}", False, None, used_fallback)
-        if not task:
-            return (f"No task {num}. List tasks to see numbers.", False, None, used_fallback)
-        if not _parse_confirm(params):
-            title = (task.get("title") or "").strip() or "(no title)"
-            return (f"Delete task {num} ({title})? This cannot be undone. Reply \"yes\" to confirm.", False, {"tool": "delete_task", "number": num}, used_fallback)
-        try:
-            delete_task(task["id"])
-        except Exception as e:
-            return (f"Error deleting task: {e}", False, None, used_fallback)
-        return (f"Task {num} deleted.", True, None, used_fallback)
-    if name == "task_info":
-        num = _parse_task_number(params)
-        if num is None:
-            return ("task_info requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None, used_fallback)
-        tz_name = "UTC"
-        try:
-            from config import load as load_config
-            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
-        except Exception:
-            pass
-        try:
-            from task_service import get_task_by_number, get_task, get_tasks_that_depend_on
-            task = get_task_by_number(num)
-        except Exception as e:
-            return (f"Error loading task: {e}", False, None, used_fallback)
-        if not task:
-            return (f"No task {num}. List tasks to see numbers.", False, None, used_fallback)
-        try:
-            from project_service import get_project
-            parent_tasks: list[dict[str, Any]] = []
-            for dep_id in task.get("depends_on") or []:
-                pt = get_task(dep_id)
-                if pt:
-                    parent_tasks.append(pt)
-            subtasks = get_tasks_that_depend_on(task["id"])
-            project_labels: list[str] = []
-            for pid in task.get("projects") or []:
-                p = get_project(pid)
-                if p:
-                    short_id = (p.get("short_id") or "").strip() or p.get("id", "")[:8]
-                    name = (p.get("name") or "").strip() or "(no name)"
-                    project_labels.append(f"{short_id}: {name}")
-            return (_format_task_info_text(task, parent_tasks, subtasks, project_labels, tz_name), True, None, used_fallback)
-        except Exception as e:
-            return (f"Error loading task details: {e}", False, None, used_fallback)
-    if name == "task_find":
-        tz_name = "UTC"
-        try:
-            from config import load as load_config
-            tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
-        except Exception:
-            pass
-        # List by list_id: run the saved list's query and return tasks (same as app list view)
-        list_id = (params.get("list_id") or params.get("name") or "").strip()
-        if not list_id:
-            extracted = _extract_list_identifier_from_message(user_message)
-            if extracted:
-                list_id = extracted
-        if list_id:
+
+    def execute_tool(
+        tool_name: str,
+        tool_params: dict[str, Any],
+        response_format: str = "api",
+        user_message: str = "",
+        used_fb: bool = False,
+    ) -> tuple[str, bool, dict[str, Any] | None, bool]:
+        """Execute one tool. Returns (text, success, pending_confirm, used_fallback)."""
+        if tool_name == "project_info":
+            short_id = (tool_params.get("short_id") or tool_params.get("project_id") or "").strip()
+            if not short_id:
+                return ("project_info requires short_id (the project's friendly id, e.g. 1off or work).", False, None, used_fb)
+            tz_name = "UTC"
             try:
-                from list_service import get_list, run_list
-            except Exception as e:
-                return (f"Error loading list service: {e}", False, None, used_fallback)
-            lst = get_list(list_id)
-            if lst:
-                try:
-                    tasks = run_list(list_id, limit=500, tz_name=tz_name)
-                except Exception as e:
-                    return (f"Error running list: {e}", False, None, used_fallback)
-                list_label = (lst.get("name") or "").strip() or list_id
-                short_id = (lst.get("short_id") or "").strip()
-                if response_format == "telegram":
-                    safe_label = _escape_telegram_markdown(list_label)
-                    safe_short = _escape_telegram_markdown(short_id) if short_id else ""
-                    header = f"*List: {safe_label} ({safe_short})*\n" if short_id else f"*List: {safe_label}*\n"
-                else:
-                    header = f"List: {list_label} ({short_id})\n" if short_id else f"List: {list_label}\n"
-                fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
-                return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
-            # No list found: try as project short_id (e.g. "tasks in 1off" where 1off is a project)
+                from config import load as load_config
+                tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+            except Exception:
+                pass
             try:
                 from project_service import get_project_by_short_id
-                from task_service import list_tasks as svc_list_tasks
-                project = get_project_by_short_id(list_id)
+                from task_service import list_tasks as svc_list_tasks, get_tasks_that_depend_on
+                project = get_project_by_short_id(short_id)
+            except Exception as e:
+                return (f"Error loading project: {e}", False, None, used_fb)
+            if not project:
+                return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None, used_fb)
+            try:
+                tasks = svc_list_tasks(project_id=project["id"], limit=500)
+                tasks_with_subtasks: list[tuple[dict[str, Any], list[dict[str, Any]]]] = [
+                    (t, get_tasks_that_depend_on(t["id"])) for t in tasks
+                ]
+                return (_format_project_info_text(project, tasks_with_subtasks, tz_name), True, None, used_fb)
+            except Exception as e:
+                return (f"Error loading project tasks: {e}", False, None, used_fb)
+        if tool_name == "project_list":
+            try:
+                from project_service import list_projects
+                projects = list_projects(status="active")
+            except Exception as e:
+                return (f"Error listing projects: {e}", False, None, used_fb)
+            return (_format_project_list_for_telegram(projects), True, None, used_fb)
+        if tool_name == "project_archived":
+            try:
+                from project_service import list_projects
+                projects = list_projects(status="archived")
+            except Exception as e:
+                return (f"Error listing archived projects: {e}", False, None, used_fb)
+            return (_format_archived_project_list_for_telegram(projects, tz_name), True, None, used_fb)
+        if tool_name == "project_archive":
+            short_id = (tool_params.get("short_id") or tool_params.get("project_id") or "").strip()
+            if not short_id:
+                return ("project_archive requires short_id (e.g. 1off or work).", False, None, used_fb)
+            try:
+                from project_service import get_project_by_short_id, update_project
+                project = get_project_by_short_id(short_id)
+            except Exception as e:
+                return (f"Error looking up project: {e}", False, None, used_fb)
+            if not project:
+                return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None, used_fb)
+            if project.get("status") == "archived":
+                return (f"Project {short_id} is already archived.", True, None, used_fb)
+            if not _parse_confirm(tool_params):
+                name_str = (project.get("name") or "").strip() or short_id
+                return (
+                    f"Archive project {short_id} ({name_str})? It will be hidden from the project list until you unarchive it. Reply \"yes\" to confirm.",
+                    False,
+                    {"tool": "project_archive", "short_id": short_id},
+                    used_fb,
+                )
+            try:
+                update_project(project["id"], status="archived")
+            except ValueError as e:
+                return (str(e), False, None, used_fb)
+            except Exception as e:
+                return (f"Error archiving project: {e}", False, None, used_fb)
+            return (f"Project {short_id} archived. It is now hidden from the project list.", True, None, used_fb)
+        if tool_name == "project_unarchive":
+            short_id = (tool_params.get("short_id") or tool_params.get("project_id") or "").strip()
+            if not short_id:
+                return ("project_unarchive requires short_id (e.g. 1off or work).", False, None, used_fb)
+            try:
+                from project_service import get_project_by_short_id, update_project
+                project = get_project_by_short_id(short_id)
+            except Exception as e:
+                return (f"Error looking up project: {e}", False, None, used_fb)
+            if not project:
+                return (f"No project with id \"{short_id}\". List archived projects to see short_ids.", False, None, used_fb)
+            if project.get("status") != "archived":
+                return (f"Project {short_id} is not archived.", True, None, used_fb)
+            if not _parse_confirm(tool_params):
+                name_str = (project.get("name") or "").strip() or short_id
+                return (
+                    f"Unarchive project {short_id} ({name_str})? It will appear in the project list again. Reply \"yes\" to confirm.",
+                    False,
+                    {"tool": "project_unarchive", "short_id": short_id},
+                    used_fb,
+                )
+            try:
+                update_project(project["id"], status="active")
+            except Exception as e:
+                return (f"Error unarchiving project: {e}", False, None, used_fb)
+            return (f"Project {short_id} unarchived. It is back in the project list.", True, None, used_fb)
+        if tool_name == "project_create":
+            try:
+                validated = _validate_project_create(tool_params)
+            except ValueError as e:
+                return (f"Invalid project_create parameters: {e}", False, None, used_fb)
+            try:
+                from project_service import create_project
+                project = create_project(
+                    name=validated["title"],
+                    description=validated.get("description"),
+                    status=validated.get("status", "active"),
+                )
+            except Exception as e:
+                return (f"Error creating project: {e}", False, None, used_fb)
+            return (_format_project_created_for_telegram(project), True, None, used_fb)
+        if tool_name == "delete_project":
+            short_id = (tool_params.get("short_id") or tool_params.get("project_id") or "").strip()
+            if not short_id:
+                return ("delete_project requires short_id (the project's friendly id, e.g. 1off or work).", False, None, used_fb)
+            try:
+                from project_service import get_project_by_short_id, delete_project
+                project = get_project_by_short_id(short_id)
+            except Exception as e:
+                return (f"Error looking up project: {e}", False, None, used_fb)
+            if not project:
+                return (f"No project with id \"{short_id}\". List projects to see short_ids.", False, None, used_fb)
+            if not _parse_confirm(tool_params):
+                name_str = (project.get("name") or "").strip() or short_id
+                return (
+                    f"Delete project {short_id} ({name_str})? It will be removed from all tasks that use it; "
+                    "some tasks may end up with no project assignments. Reply \"yes\" to confirm.",
+                    False,
+                    {"tool": "delete_project", "short_id": short_id},
+                    used_fb,
+                )
+            try:
+                delete_project(project["id"])
+            except Exception as e:
+                return (f"Error deleting project: {e}", False, None, used_fb)
+            return (f"Project {short_id} deleted. It has been removed from all tasks.", True, None, used_fb)
+        if tool_name == "delete_task":
+            num = _parse_task_number(tool_params)
+            if num is None:
+                return ("delete_task requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None, used_fb)
+            try:
+                from task_service import get_task_by_number, delete_task
+                task = get_task_by_number(num)
+            except Exception as e:
+                return (f"Error looking up task: {e}", False, None, used_fb)
+            if not task:
+                return (f"No task {num}. List tasks to see numbers.", False, None, used_fb)
+            if not _parse_confirm(tool_params):
+                title = (task.get("title") or "").strip() or "(no title)"
+                return (f"Delete task {num} ({title})? This cannot be undone. Reply \"yes\" to confirm.", False, {"tool": "delete_task", "number": num}, used_fb)
+            try:
+                delete_task(task["id"])
+            except Exception as e:
+                return (f"Error deleting task: {e}", False, None, used_fb)
+            return (f"Task {num} deleted.", True, None, used_fb)
+        if tool_name == "task_info":
+            num = _parse_task_number(tool_params)
+            if num is None:
+                return ("task_info requires number (the task's friendly id, e.g. 1). List tasks to see numbers.", False, None, used_fb)
+            tz_name = "UTC"
+            try:
+                from config import load as load_config
+                tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
             except Exception:
-                project = None
-            if project:
+                pass
+            try:
+                from task_service import get_task_by_number, get_task, get_tasks_that_depend_on
+                task = get_task_by_number(num)
+            except Exception as e:
+                return (f"Error loading task: {e}", False, None, used_fb)
+            if not task:
+                return (f"No task {num}. List tasks to see numbers.", False, None, used_fb)
+            try:
+                from project_service import get_project
+                parent_tasks: list[dict[str, Any]] = []
+                for dep_id in task.get("depends_on") or []:
+                    pt = get_task(dep_id)
+                    if pt:
+                        parent_tasks.append(pt)
+                subtasks = get_tasks_that_depend_on(task["id"])
+                project_labels: list[str] = []
+                for pid in task.get("projects") or []:
+                    p = get_project(pid)
+                    if p:
+                        short_id = (p.get("short_id") or "").strip() or p.get("id", "")[:8]
+                        name = (p.get("name") or "").strip() or "(no name)"
+                        project_labels.append(f"{short_id}: {name}")
+                return (_format_task_info_text(task, parent_tasks, subtasks, project_labels, tz_name), True, None, used_fb)
+            except Exception as e:
+                return (f"Error loading task details: {e}", False, None, used_fb)
+        if tool_name == "task_find":
+            tz_name = "UTC"
+            try:
+                from config import load as load_config
+                tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+            except Exception:
+                pass
+            # List by list_id: run the saved list's query and return tasks (same as app list view)
+            list_id = (tool_params.get("list_id") or tool_params.get("name") or "").strip()
+            if not list_id:
+                extracted = _extract_list_identifier_from_message(user_message)
+                if extracted:
+                    list_id = extracted
+            if list_id:
                 try:
-                    tasks = svc_list_tasks(project_id=project["id"], limit=500)
+                    from list_service import get_list, run_list
                 except Exception as e:
-                    return (f"Error listing project tasks: {e}", False, None, used_fallback)
-                proj_label = (project.get("name") or "").strip() or list_id
-                header = f"Project {list_id}: {proj_label}\n"
-                fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
-                return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
-            return (f"List \"{list_id}\" not found. Use list_lists to see short_ids.", False, None, used_fallback)
-        merged = dict(params)
-        when = (merged.pop("when", None) or "").strip()
-        term = (merged.get("term") or merged.get("query") or "").strip()
-        merged.pop("term", None)
-        merged.pop("query", None)
-        when_for_date = when
-        if when:
-            when_for_date, extracted_tag = _extract_tag_from_when(when)
-            if extracted_tag and not merged.get("tag") and not merged.get("tags"):
-                merged["tag"] = extracted_tag
-        if when_for_date:
-            when_params = _parse_when_to_task_list_params(when_for_date, tz_name)
-            if not when_params:
-                return (f"Could not parse date from \"{when_for_date}\". Try: due today, due or available today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fallback)
-            merged.update(when_params)
-            # So "due or available today" isn't narrowed: drop other date filters when we have available_or_due_by
-            if when_params.get("available_or_due_by"):
-                for k in ("due_on", "due_by", "due_before", "available_by", "available_by_required"):
-                    merged.pop(k, None)
-        merged.setdefault("status", "incomplete")
-        try:
-            validated = _validate_task_list_params(merged, tz_name)
-            from task_service import list_tasks as svc_list_tasks
-            tasks = svc_list_tasks(
-                limit=500,
-                status=validated.get("status"),
-                project_id=validated.get("project_id"),
-                project_ids=validated.get("project_ids"),
-                project_mode=validated.get("project_mode") or "any",
-                inbox=validated.get("inbox") or False,
-                tag=validated.get("tag"),
-                tags=validated.get("tags"),
-                tag_mode=validated.get("tag_mode") or "any",
-                due_by=validated.get("due_by"),
-                due_before=validated.get("due_before"),
-                due_on=validated.get("due_on"),
-                available_by=validated.get("available_by"),
-                available_by_required=validated.get("available_by_required") or False,
-                available_or_due_by=validated.get("available_or_due_by"),
-                completed_by=validated.get("completed_by"),
-                completed_after=validated.get("completed_after"),
-                title_contains=validated.get("title_contains"),
-                sort_by=validated.get("sort_by"),
-                flagged=validated.get("flagged"),
-                priority=validated.get("priority"),
-                blocked_by_task_id=validated.get("blocked_by_task_id"),
-                blocking_task_id=validated.get("blocking_task_id"),
-                q=term if term else None,
-            )
-        except Exception as e:
-            return (f"Error listing tasks: {e}", False, None, used_fallback)
-        # Treat large unfiltered result as suspicious unless user explicitly asked for "all" or "every" tasks
-        SUSPICIOUS_TASK_COUNT = 20
-        unfiltered = not validated.get("project_id") and not validated.get("project_ids") and not validated.get("tag") and not validated.get("tags") and not when_for_date
-        user_asked_all = bool(re.search(r"\b(all|every)\s+tasks?\b", user_message.strip(), re.I))
-        if unfiltered and len(tasks) >= SUSPICIOUS_TASK_COUNT and not user_asked_all:
-            word_before = _extract_list_or_project_word_before_tasks(user_message)
-            if word_before:
-                narrowed = _resolve_list_or_project_from_word(word_before)
-                if narrowed and narrowed.get("list_id"):
+                    return (f"Error loading list service: {e}", False, None, used_fb)
+                lst = get_list(list_id)
+                if lst:
                     try:
-                        from list_service import get_list, run_list
-                        lst = get_list(narrowed["list_id"])
-                        if lst:
-                            tasks = run_list(narrowed["list_id"], limit=500, tz_name=tz_name)
-                            list_label = (lst.get("name") or "").strip() or narrowed["list_id"]
-                            short_id = (lst.get("short_id") or "").strip()
-                            if response_format == "telegram":
-                                safe_label = _escape_telegram_markdown(list_label)
-                                safe_short = _escape_telegram_markdown(short_id) if short_id else ""
-                                header = f"*List: {safe_label} ({safe_short})*\n" if short_id else f"*List: {safe_label}*\n"
-                            else:
-                                header = f"List: {list_label} ({short_id})\n" if short_id else f"List: {list_label}\n"
-                            fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
-                            return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
-                    except Exception:
-                        pass
-                if narrowed and narrowed.get("short_id"):
+                        tasks = run_list(list_id, limit=500, tz_name=tz_name)
+                    except Exception as e:
+                        return (f"Error running list: {e}", False, None, used_fb)
+                    list_label = (lst.get("name") or "").strip() or list_id
+                    short_id = (lst.get("short_id") or "").strip()
+                    if response_format == "telegram":
+                        safe_label = _escape_telegram_markdown(list_label)
+                        safe_short = _escape_telegram_markdown(short_id) if short_id else ""
+                        header = f"*List: {safe_label} ({safe_short})*\n" if short_id else f"*List: {safe_label}*\n"
+                    else:
+                        header = f"List: {list_label} ({short_id})\n" if short_id else f"List: {list_label}\n"
+                    fmt = _task_list_formatter(response_format)
+                    return (header + fmt(tasks, 50, tz_name), True, None, used_fb)
+                # No list found: try as project short_id (e.g. "tasks in 1off" where 1off is a project)
+                try:
+                    from project_service import get_project_by_short_id
+                    from task_service import list_tasks as svc_list_tasks
+                    project = get_project_by_short_id(list_id)
+                except Exception:
+                    project = None
+                if project:
                     try:
-                        from project_service import get_project_by_short_id
-                        project = get_project_by_short_id(narrowed["short_id"])
-                        if project:
-                            tasks = svc_list_tasks(project_id=project["id"], limit=500)
-                            proj_label = (project.get("name") or "").strip() or narrowed["short_id"]
-                            header = f"Project {narrowed['short_id']}: {proj_label}\n"
-                            fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
-                            return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
-                    except Exception:
-                        pass
-        header = (f"Tasks matching \"{term}\":\n" if term else "")
-        fmt = _format_task_list_for_telegram if response_format == "telegram" else _format_task_list_for_api
-        return (header + fmt(tasks, 50, tz_name), True, None, used_fallback)
-    if name == "list_lists":
+                        tasks = svc_list_tasks(project_id=project["id"], limit=500)
+                    except Exception as e:
+                        return (f"Error listing project tasks: {e}", False, None, used_fb)
+                    proj_label = (project.get("name") or "").strip() or list_id
+                    header = f"Project {list_id}: {proj_label}\n"
+                    fmt = _task_list_formatter(response_format)
+                    return (header + fmt(tasks, 50, tz_name), True, None, used_fb)
+                return (f"List \"{list_id}\" not found. Use list_lists to see short_ids.", False, None, used_fb)
+            merged = dict(tool_params)
+            when = (merged.pop("when", None) or "").strip()
+            term = (merged.get("term") or merged.get("query") or "").strip()
+            merged.pop("term", None)
+            merged.pop("query", None)
+            when_for_date = when
+            if when:
+                when_for_date, extracted_tag = _extract_tag_from_when(when)
+                if extracted_tag and not merged.get("tag") and not merged.get("tags"):
+                    merged["tag"] = extracted_tag
+            if when_for_date:
+                when_params = _parse_when_to_task_list_params(when_for_date, tz_name)
+                if not when_params:
+                    return (f"Could not parse date from \"{when_for_date}\". Try: due today, due or available today, due tomorrow, due within the next week, available tomorrow, overdue.", False, None, used_fb)
+                merged.update(when_params)
+                # So "due or available today" isn't narrowed: drop other date filters when we have available_or_due_by
+                if when_params.get("available_or_due_by"):
+                    for k in ("due_on", "due_by", "due_before", "available_by", "available_by_required"):
+                        merged.pop(k, None)
+            merged.setdefault("status", "incomplete")
+            try:
+                validated = _validate_task_list_params(merged, tz_name)
+                from task_service import list_tasks as svc_list_tasks
+                tasks = svc_list_tasks(
+                    limit=500,
+                    status=validated.get("status"),
+                    project_id=validated.get("project_id"),
+                    project_ids=validated.get("project_ids"),
+                    project_mode=validated.get("project_mode") or "any",
+                    inbox=validated.get("inbox") or False,
+                    tag=validated.get("tag"),
+                    tags=validated.get("tags"),
+                    tag_mode=validated.get("tag_mode") or "any",
+                    due_by=validated.get("due_by"),
+                    due_before=validated.get("due_before"),
+                    due_on=validated.get("due_on"),
+                    available_by=validated.get("available_by"),
+                    available_by_required=validated.get("available_by_required") or False,
+                    available_or_due_by=validated.get("available_or_due_by"),
+                    completed_by=validated.get("completed_by"),
+                    completed_after=validated.get("completed_after"),
+                    title_contains=validated.get("title_contains"),
+                    sort_by=validated.get("sort_by"),
+                    flagged=validated.get("flagged"),
+                    priority=validated.get("priority"),
+                    blocked_by_task_id=validated.get("blocked_by_task_id"),
+                    blocking_task_id=validated.get("blocking_task_id"),
+                    q=term if term else None,
+                )
+            except Exception as e:
+                return (f"Error listing tasks: {e}", False, None, used_fb)
+            # Treat large unfiltered result as suspicious unless user explicitly asked for "all" or "every" tasks
+            SUSPICIOUS_TASK_COUNT = 20
+            unfiltered = not validated.get("project_id") and not validated.get("project_ids") and not validated.get("tag") and not validated.get("tags") and not when_for_date
+            user_asked_all = bool(re.search(r"\b(all|every)\s+tasks?\b", user_message.strip(), re.I))
+            if unfiltered and len(tasks) >= SUSPICIOUS_TASK_COUNT and not user_asked_all:
+                word_before = _extract_list_or_project_word_before_tasks(user_message)
+                if word_before:
+                    narrowed = _resolve_list_or_project_from_word(word_before)
+                    if narrowed and narrowed.get("list_id"):
+                        try:
+                            from list_service import get_list, run_list
+                            lst = get_list(narrowed["list_id"])
+                            if lst:
+                                tasks = run_list(narrowed["list_id"], limit=500, tz_name=tz_name)
+                                list_label = (lst.get("name") or "").strip() or narrowed["list_id"]
+                                short_id = (lst.get("short_id") or "").strip()
+                                if response_format == "telegram":
+                                    safe_label = _escape_telegram_markdown(list_label)
+                                    safe_short = _escape_telegram_markdown(short_id) if short_id else ""
+                                    header = f"*List: {safe_label} ({safe_short})*\n" if short_id else f"*List: {safe_label}*\n"
+                                else:
+                                    header = f"List: {list_label} ({short_id})\n" if short_id else f"List: {list_label}\n"
+                                fmt = _task_list_formatter(response_format)
+                                return (header + fmt(tasks, 50, tz_name), True, None, used_fb)
+                        except Exception:
+                            pass
+                    if narrowed and narrowed.get("short_id"):
+                        try:
+                            from project_service import get_project_by_short_id
+                            project = get_project_by_short_id(narrowed["short_id"])
+                            if project:
+                                tasks = svc_list_tasks(project_id=project["id"], limit=500)
+                                proj_label = (project.get("name") or "").strip() or narrowed["short_id"]
+                                header = f"Project {narrowed['short_id']}: {proj_label}\n"
+                                fmt = _task_list_formatter(response_format)
+                                return (header + fmt(tasks, 50, tz_name), True, None, used_fb)
+                        except Exception:
+                            pass
+            header = (f"Tasks matching \"{term}\":\n" if term else "")
+            fmt = _task_list_formatter(response_format)
+            return (header + fmt(tasks, 50, tz_name), True, None, used_fb)
+        if tool_name == "list_lists":
+            try:
+                from list_service import list_lists as list_lists_svc
+            except Exception as e:
+                return (f"Error loading list service: {e}", False, None, used_fb)
+            try:
+                lists = list_lists_svc()
+            except Exception as e:
+                return (f"Error listing lists: {e}", False, None, used_fb)
+            if not lists:
+                return ("No saved lists yet. Create one via the app or API to view lists here.", True, None, used_fb)
+            lines = ["Lists:"]
+            for lst in lists:
+                name_part = (lst.get("name") or "").strip() or "(no name)"
+                short = (lst.get("short_id") or "").strip()
+                if short:
+                    lines.append(f"• {name_part} ({short})")
+                else:
+                    lines.append(f"• {name_part}")
+            return ("\n".join(lines), True, None, used_fb)
+        if tool_name == "tag_list":
+            try:
+                from task_service import tag_list as svc_tag_list
+                items = svc_tag_list()
+            except Exception as e:
+                return (f"Error listing tags: {e}", False, None, used_fb)
+            if not items:
+                return ("No tags yet. Tags come from task tags or #tag in task titles/notes.", True, None, used_fb)
+            lines = ["Tags (task count):"]
+            for item in items:
+                lines.append(f"• {item['tag']}: {item['count']} task(s)")
+            return ("\n".join(lines), True, None, used_fb)
+        if tool_name == "tag_rename":
+            old_tag = (tool_params.get("old_tag") or "").strip()
+            new_tag = (tool_params.get("new_tag") or "").strip()
+            if not old_tag:
+                return ("tag_rename requires old_tag.", False, None, used_fb)
+            if not new_tag:
+                return ("tag_rename requires new_tag.", False, None, used_fb)
+            if old_tag == new_tag:
+                return ("old_tag and new_tag are the same.", True, None, used_fb)
+            try:
+                from task_service import tag_list
+                tags = tag_list()
+                count = next((x["count"] for x in tags if x["tag"] == old_tag), 0)
+            except Exception:
+                count = 0
+            if not _parse_confirm(tool_params):
+                return (
+                    f"Rename tag \"{old_tag}\" to \"{new_tag}\"? This will update task tags and any #{old_tag} in titles/notes ({count} task(s)). Reply \"yes\" to confirm.",
+                    False,
+                    {"tool": "tag_rename", "old_tag": old_tag, "new_tag": new_tag},
+                    used_fb,
+                )
+            try:
+                from task_service import tag_rename as svc_tag_rename
+                n = svc_tag_rename(old_tag, new_tag)
+                return (f"Tag \"{old_tag}\" renamed to \"{new_tag}\". Updated {n} task(s).", True, None, used_fb)
+            except ValueError as e:
+                return (str(e), False, None, used_fb)
+            except Exception as e:
+                return (f"Error renaming tag: {e}", False, None, used_fb)
+        if tool_name == "tag_delete":
+            tag = (tool_params.get("tag") or "").strip()
+            if not tag:
+                return ("tag_delete requires tag.", False, None, used_fb)
+            try:
+                from task_service import tag_list
+                tags = tag_list()
+                count = next((x["count"] for x in tags if x["tag"] == tag), 0)
+            except Exception:
+                count = 0
+            if not _parse_confirm(tool_params):
+                return (
+                    f"Delete tag \"{tag}\"? It will be removed from all task tags and any #{tag} in titles/notes ({count} task(s)). Reply \"yes\" to confirm.",
+                    False,
+                    {"tool": "tag_delete", "tag": tag},
+                    used_fb,
+                )
+            try:
+                from task_service import tag_delete as svc_tag_delete
+                svc_tag_delete(tag)
+                return (f"Tag \"{tag}\" removed from all tasks.", True, None, used_fb)
+            except ValueError as e:
+                return (str(e), False, None, used_fb)
+            except Exception as e:
+                return (f"Error deleting tag: {e}", False, None, used_fb)
+        if tool_name == "task_update":
+            tz_name = "UTC"
+            try:
+                from config import load as load_config
+                tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
+            except Exception:
+                pass
+            try:
+                validated = _validate_task_update(tool_params, tz_name)
+            except ValueError as e:
+                return (str(e), False, None, used_fb)
+            from date_utils import resolve_task_dates
+            validated = resolve_task_dates(validated, tz_name)
+            num = validated.pop("number")
+            try:
+                from task_service import get_task_by_number, update_task, complete_recurring_task, remove_task_project, add_task_project, remove_task_tag, add_task_tag
+                task = get_task_by_number(num)
+            except Exception as e:
+                return (f"Error looking up task: {e}", False, None, used_fb)
+            if not task:
+                return (f"No task {num}. List tasks to see numbers.", False, None, used_fb)
+            task_id = task["id"]
+            scalar_keys = ("status", "flagged", "due_date", "available_date", "title", "description", "notes", "priority")
+            kwargs = {k: v for k, v in validated.items() if k in scalar_keys and (v is not None or k in ("due_date", "available_date"))}
+            has_projects = "projects" in validated
+            has_remove_projects = "remove_projects" in validated and validated["remove_projects"]
+            has_tags = "tags" in validated
+            if not kwargs and not has_projects and not has_remove_projects and not has_tags:
+                return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", False, None, used_fb)
+            # When marking a recurring task complete, create next instance and mark current complete
+            if kwargs.get("status") == "complete" and task.get("recurrence"):
+                try:
+                    complete_recurring_task(task_id)
+                except Exception as e:
+                    return (f"Error completing recurring task: {e}", False, None, used_fb)
+                kwargs = {k: v for k, v in kwargs.items() if k != "status"}
+            if kwargs:
+                try:
+                    updated = update_task(task_id, **kwargs)
+                except Exception as e:
+                    return (f"Error updating task: {e}", False, None, used_fb)
+                if not updated:
+                    return (f"Task {num} not found.", False, None, used_fb)
+            if has_projects:
+                try:
+                    from project_service import get_project_by_short_id
+                    for pid in task.get("projects") or []:
+                        remove_task_project(task_id, pid)
+                    for ref in validated["projects"]:
+                        if not ref:
+                            continue
+                        p = get_project_by_short_id(ref)
+                        project_id = p["id"] if p else ref
+                        add_task_project(task_id, str(project_id))
+                except Exception as e:
+                    return (f"Error updating task projects: {e}", False, None, used_fb)
+            elif has_remove_projects:
+                try:
+                    from project_service import get_project_by_short_id
+                    current_ids = list(task.get("projects") or [])
+                    to_remove_ids = set()
+                    for ref in validated["remove_projects"]:
+                        if not ref:
+                            continue
+                        p = get_project_by_short_id(ref)
+                        pid = p["id"] if p else ref
+                        to_remove_ids.add(str(pid))
+                    new_ids = [pid for pid in current_ids if str(pid) not in to_remove_ids]
+                    for pid in task.get("projects") or []:
+                        remove_task_project(task_id, pid)
+                    for pid in new_ids:
+                        add_task_project(task_id, str(pid))
+                except Exception as e:
+                    return (f"Error removing task from project(s): {e}", False, None, used_fb)
+            if has_tags:
+                try:
+                    for tag in task.get("tags") or []:
+                        remove_task_tag(task_id, tag)
+                    for tag in validated["tags"]:
+                        if tag:
+                            add_task_tag(task_id, tag)
+                except Exception as e:
+                    return (f"Error updating task tags: {e}", False, None, used_fb)
+            parts = []
+            if "status" in kwargs:
+                parts.append("complete" if kwargs["status"] == "complete" else "reopened")
+            if "flagged" in kwargs:
+                parts.append("flagged" if kwargs["flagged"] else "unflagged")
+            if "due_date" in kwargs:
+                parts.append("due date cleared" if kwargs["due_date"] is None else f"due {kwargs['due_date']}")
+            if "available_date" in kwargs:
+                parts.append("available date cleared" if kwargs["available_date"] is None else f"available {kwargs['available_date']}")
+            if "title" in kwargs:
+                parts.append("title updated")
+            if "description" in kwargs or "notes" in kwargs or "priority" in kwargs:
+                parts.append("updated")
+            if has_projects:
+                parts.append("projects updated")
+            if has_remove_projects:
+                parts.append("removed from project(s)")
+            if has_tags:
+                parts.append("tags updated")
+            msg = f"Task {num} " + (", ".join(parts) if parts else "updated") + "."
+            return (msg, True, None, used_fb)
+        if tool_name != "task_create":
+            fallback = f"Tool '{tool_name}' is not implemented yet. You can create, list, info, update, or delete tasks and projects."
+            text = response_text.strip() or fallback
+            return (fallback if _looks_like_json(text) else text, False, None, used_fb)
+    
         try:
-            from list_service import list_lists as list_lists_svc
-        except Exception as e:
-            return (f"Error loading list service: {e}", False, None, used_fallback)
-        try:
-            lists = list_lists_svc()
-        except Exception as e:
-            return (f"Error listing lists: {e}", False, None, used_fallback)
-        if not lists:
-            return ("No saved lists yet. Create one via the app or API to view lists here.", True, None, used_fallback)
-        lines = ["Lists:"]
-        for lst in lists:
-            name_part = (lst.get("name") or "").strip() or "(no name)"
-            short = (lst.get("short_id") or "").strip()
-            if short:
-                lines.append(f"• {name_part} ({short})")
-            else:
-                lines.append(f"• {name_part}")
-        return ("\n".join(lines), True, None, used_fallback)
-    if name == "tag_list":
-        try:
-            from task_service import tag_list as svc_tag_list
-            items = svc_tag_list()
-        except Exception as e:
-            return (f"Error listing tags: {e}", False, None, used_fallback)
-        if not items:
-            return ("No tags yet. Tags come from task tags or #tag in task titles/notes.", True, None, used_fallback)
-        lines = ["Tags (task count):"]
-        for item in items:
-            lines.append(f"• {item['tag']}: {item['count']} task(s)")
-        return ("\n".join(lines), True, None, used_fallback)
-    if name == "tag_rename":
-        old_tag = (params.get("old_tag") or "").strip()
-        new_tag = (params.get("new_tag") or "").strip()
-        if not old_tag:
-            return ("tag_rename requires old_tag.", False, None, used_fallback)
-        if not new_tag:
-            return ("tag_rename requires new_tag.", False, None, used_fallback)
-        if old_tag == new_tag:
-            return ("old_tag and new_tag are the same.", True, None, used_fallback)
-        try:
-            from task_service import tag_list
-            tags = tag_list()
-            count = next((x["count"] for x in tags if x["tag"] == old_tag), 0)
-        except Exception:
-            count = 0
-        if not _parse_confirm(params):
-            return (
-                f"Rename tag \"{old_tag}\" to \"{new_tag}\"? This will update task tags and any #{old_tag} in titles/notes ({count} task(s)). Reply \"yes\" to confirm.",
-                False,
-                {"tool": "tag_rename", "old_tag": old_tag, "new_tag": new_tag},
-                used_fallback,
-            )
-        try:
-            from task_service import tag_rename as svc_tag_rename
-            n = svc_tag_rename(old_tag, new_tag)
-            return (f"Tag \"{old_tag}\" renamed to \"{new_tag}\". Updated {n} task(s).", True, None, used_fallback)
+            validated = _validate_task_create(tool_params)
         except ValueError as e:
-            return (str(e), False, None, used_fallback)
-        except Exception as e:
-            return (f"Error renaming tag: {e}", False, None, used_fallback)
-    if name == "tag_delete":
-        tag = (params.get("tag") or "").strip()
-        if not tag:
-            return ("tag_delete requires tag.", False, None, used_fallback)
-        try:
-            from task_service import tag_list
-            tags = tag_list()
-            count = next((x["count"] for x in tags if x["tag"] == tag), 0)
-        except Exception:
-            count = 0
-        if not _parse_confirm(params):
-            return (
-                f"Delete tag \"{tag}\"? It will be removed from all task tags and any #{tag} in titles/notes ({count} task(s)). Reply \"yes\" to confirm.",
-                False,
-                {"tool": "tag_delete", "tag": tag},
-                used_fallback,
-            )
-        try:
-            from task_service import tag_delete as svc_tag_delete
-            svc_tag_delete(tag)
-            return (f"Tag \"{tag}\" removed from all tasks.", True, None, used_fallback)
-        except ValueError as e:
-            return (str(e), False, None, used_fallback)
-        except Exception as e:
-            return (f"Error deleting tag: {e}", False, None, used_fallback)
-    if name == "task_update":
+            return (f"Invalid task_create parameters: {e}", False, None, used_fb)
+    
         tz_name = "UTC"
         try:
             from config import load as load_config
             tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
         except Exception:
             pass
-        try:
-            validated = _validate_task_update(params, tz_name)
-        except ValueError as e:
-            return (str(e), False, None, used_fallback)
         from date_utils import resolve_task_dates
         validated = resolve_task_dates(validated, tz_name)
-        num = validated.pop("number")
-        try:
-            from task_service import get_task_by_number, update_task, complete_recurring_task, remove_task_project, add_task_project, remove_task_tag, add_task_tag
-            task = get_task_by_number(num)
-        except Exception as e:
-            return (f"Error looking up task: {e}", False, None, used_fallback)
-        if not task:
-            return (f"No task {num}. List tasks to see numbers.", False, None, used_fallback)
-        task_id = task["id"]
-        scalar_keys = ("status", "flagged", "due_date", "available_date", "title", "description", "notes", "priority")
-        kwargs = {k: v for k, v in validated.items() if k in scalar_keys and (v is not None or k in ("due_date", "available_date"))}
-        has_projects = "projects" in validated
-        has_remove_projects = "remove_projects" in validated and validated["remove_projects"]
-        has_tags = "tags" in validated
-        if not kwargs and not has_projects and not has_remove_projects and not has_tags:
-            return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", False, None, used_fallback)
-        # When marking a recurring task complete, create next instance and mark current complete
-        if kwargs.get("status") == "complete" and task.get("recurrence"):
-            try:
-                complete_recurring_task(task_id)
-            except Exception as e:
-                return (f"Error completing recurring task: {e}", False, None, used_fallback)
-            kwargs = {k: v for k, v in kwargs.items() if k != "status"}
-        if kwargs:
-            try:
-                updated = update_task(task_id, **kwargs)
-            except Exception as e:
-                return (f"Error updating task: {e}", False, None, used_fallback)
-            if not updated:
-                return (f"Task {num} not found.", False, None, used_fallback)
-        if has_projects:
+    
+        project_ids = None
+        if validated.get("projects"):
             try:
                 from project_service import get_project_by_short_id
-                for pid in task.get("projects") or []:
-                    remove_task_project(task_id, pid)
+                project_ids = []
                 for ref in validated["projects"]:
-                    if not ref:
+                    ref = str(ref).strip()
+                    if not ref or _is_inbox_ref(ref):
                         continue
                     p = get_project_by_short_id(ref)
-                    project_id = p["id"] if p else ref
-                    add_task_project(task_id, str(project_id))
-            except Exception as e:
-                return (f"Error updating task projects: {e}", False, None, used_fallback)
-        elif has_remove_projects:
-            try:
-                from project_service import get_project_by_short_id
-                current_ids = list(task.get("projects") or [])
-                to_remove_ids = set()
-                for ref in validated["remove_projects"]:
-                    if not ref:
-                        continue
-                    p = get_project_by_short_id(ref)
-                    pid = p["id"] if p else ref
-                    to_remove_ids.add(str(pid))
-                new_ids = [pid for pid in current_ids if str(pid) not in to_remove_ids]
-                for pid in task.get("projects") or []:
-                    remove_task_project(task_id, pid)
-                for pid in new_ids:
-                    add_task_project(task_id, str(pid))
-            except Exception as e:
-                return (f"Error removing task from project(s): {e}", False, None, used_fallback)
-        if has_tags:
-            try:
-                for tag in task.get("tags") or []:
-                    remove_task_tag(task_id, tag)
-                for tag in validated["tags"]:
-                    if tag:
-                        add_task_tag(task_id, tag)
-            except Exception as e:
-                return (f"Error updating task tags: {e}", False, None, used_fallback)
-        parts = []
-        if "status" in kwargs:
-            parts.append("complete" if kwargs["status"] == "complete" else "reopened")
-        if "flagged" in kwargs:
-            parts.append("flagged" if kwargs["flagged"] else "unflagged")
-        if "due_date" in kwargs:
-            parts.append("due date cleared" if kwargs["due_date"] is None else f"due {kwargs['due_date']}")
-        if "available_date" in kwargs:
-            parts.append("available date cleared" if kwargs["available_date"] is None else f"available {kwargs['available_date']}")
-        if "title" in kwargs:
-            parts.append("title updated")
-        if "description" in kwargs or "notes" in kwargs or "priority" in kwargs:
-            parts.append("updated")
-        if has_projects:
-            parts.append("projects updated")
-        if has_remove_projects:
-            parts.append("removed from project(s)")
-        if has_tags:
-            parts.append("tags updated")
-        msg = f"Task {num} " + (", ".join(parts) if parts else "updated") + "."
-        return (msg, True, None, used_fallback)
-    if name != "task_create":
-        fallback = f"Tool '{name}' is not implemented yet. You can create, list, info, update, or delete tasks and projects."
-        text = response_text.strip() or fallback
-        return (fallback if _looks_like_json(text) else text, False, None, used_fallback)
-
-    try:
-        validated = _validate_task_create(params)
-    except ValueError as e:
-        return (f"Invalid task_create parameters: {e}", False, None, used_fallback)
-
-    tz_name = "UTC"
-    try:
-        from config import load as load_config
-        tz_name = getattr(load_config(), "user_timezone", "") or "UTC"
-    except Exception:
-        pass
-    from date_utils import resolve_task_dates
-    validated = resolve_task_dates(validated, tz_name)
-
-    project_ids = None
-    if validated.get("projects"):
+                    if p:
+                        project_ids.append(p["id"])
+                    # skip unresolved short_id so we don't pass it as project_id (FK expects UUID)
+            except Exception:
+                project_ids = None
+    
         try:
-            from project_service import get_project_by_short_id
-            project_ids = []
-            for ref in validated["projects"]:
-                ref = str(ref).strip()
-                if not ref or _is_inbox_ref(ref):
-                    continue
-                p = get_project_by_short_id(ref)
-                if p:
-                    project_ids.append(p["id"])
-                # skip unresolved short_id so we don't pass it as project_id (FK expects UUID)
-        except Exception:
-            project_ids = None
+            from task_service import create_task as svc_create_task
+            task = svc_create_task(
+                title=validated["title"],
+                description=validated.get("description"),
+                notes=validated.get("notes"),
+                status=validated.get("status", "incomplete"),
+                priority=validated.get("priority"),
+                available_date=validated.get("available_date"),
+                due_date=validated.get("due_date"),
+                projects=project_ids,
+                tags=validated.get("tags"),
+                flagged=bool(validated.get("flagged", False)),
+            )
+        except Exception as e:
+            return (f"Error creating task: {e}", False, None, used_fb)
+    
+        return (_format_task_created_for_telegram(task, tz_name), True, None, used_fb)
 
-    try:
-        from task_service import create_task as svc_create_task
-        task = svc_create_task(
-            title=validated["title"],
-            description=validated.get("description"),
-            notes=validated.get("notes"),
-            status=validated.get("status", "incomplete"),
-            priority=validated.get("priority"),
-            available_date=validated.get("available_date"),
-            due_date=validated.get("due_date"),
-            projects=project_ids,
-            tags=validated.get("tags"),
-            flagged=bool(validated.get("flagged", False)),
-        )
-    except Exception as e:
-        return (f"Error creating task: {e}", False, None, used_fallback)
-
-    return (_format_task_created_for_telegram(task, tz_name), True, None, used_fallback)
+    text, success, pending, _ = execute_tool(name, params, response_format, user_message, used_fallback)
+    return (text, success, pending, used_fallback)
