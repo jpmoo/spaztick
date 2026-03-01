@@ -1348,7 +1348,7 @@ def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, t
             in_projects = ", ".join(short_ids) if short_ids else "inbox"
         else:
             in_projects = "inbox"
-        # Monospace for dates (PDF: `a:2/18 d:yesterday`). d: colored if overdue/due today.
+        # Dates as plain text (a: / d:). d: colored if overdue/due today.
         date_parts = []
         if t.get("available_date"):
             date_parts.append("a:" + html.escape(_friendly_date(t["available_date"], tz_name)))
@@ -1362,7 +1362,7 @@ def _format_task_list_for_api(tasks: list[dict[str, Any]], max_show: int = 50, t
             else:
                 date_parts.append("d:" + due_friendly)
         date_part = " " + " ".join(date_parts) if date_parts else ""
-        date_block = f' <code>{date_part}</code>' if date_parts else ""
+        date_block = date_part if date_parts else ""
         line_content = f"{prio_emoji}{' ' if prio_emoji else ''}{flag_str}{' ' if flag_str else ''}{status_icon} {title} {num_str} in {in_projects}{date_block}"
         lines.append(f"<p>{line_content}</p>")
     if total > max_show:
