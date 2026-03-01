@@ -241,7 +241,8 @@ def main() -> None:
     mcp.tool(name="tag_rename")(_tool_tag_rename)
     mcp.tool(name="tag_delete")(_tool_tag_delete)
 
-    # Port from config or default 8082. Official mcp SDK FastMCP.run() only accepts port (no host kwarg).
+    # Port/host from config. Official mcp SDK FastMCP.run() only accepts (transport, mount_path);
+    # get the ASGI app and run with uvicorn so we can set host and port.
     try:
         from config import load as load_config
         cfg = load_config()
@@ -250,11 +251,10 @@ def main() -> None:
     except Exception:
         port = 8082
         host = "0.0.0.0"
-    # So the server binds to all interfaces, set env before run (uvicorn uses HOST/PORT)
-    import os
-    os.environ["UVICORN_HOST"] = host
 
-    mcp.run(transport="streamable-http", port=port)
+    app = mcp.streamable_http_app()
+    import uvicorn
+    uvicorn.run(app, host=host, port=port)
 
 
 if __name__ == "__main__":
