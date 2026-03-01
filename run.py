@@ -68,16 +68,24 @@ def stop_telegram_bot() -> None:
 
 def start_mcp_server() -> subprocess.Popen | None:
     """Start the MCP SSE server subprocess if mcp_port is set in config."""
+    import logging
+    log = logging.getLogger(__name__)
     config = load_config()
     port = getattr(config, "mcp_port", None)
     if port is None:
+        log.info("MCP server not started: mcp_port not set in config")
         return None
+    log.info("Starting MCP server on port %s (host=%s)", port, getattr(config, "mcp_host", "0.0.0.0"))
     proc = subprocess.Popen(
         [sys.executable, str(ROOT / "mcp_server.py")],
         cwd=str(ROOT),
         stdout=None,
         stderr=None,
     )
+    time.sleep(0.5)
+    if proc.poll() is not None:
+        log.error("MCP server exited immediately (code=%s). Run 'python mcp_server.py' in the project dir to see the error.", proc.returncode)
+        return None
     return proc
 
 
