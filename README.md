@@ -69,16 +69,22 @@ Spaztick can expose its tools over MCP so **Claude Desktop** or **Claude Code** 
    {
      "mcpServers": {
        "spaztick": {
-         "url": "http://localhost:8082/sse"
+         "url": "http://localhost:8082/mcp"
        }
      }
    }
    ```
 
-   If the server runs on another host (e.g. a home server), use that hostname: `http://homeserver.local:8082/sse`.
+   If the server runs on another host, use that host (e.g. `http://homeserver.local:8082/mcp`). For **HTTPS** (e.g. Tailscale Funnel), use `https://your-host/mcp`; Claude Desktop requires HTTPS for remote URLs.
 
 3. **Use it**  
-   In Claude Desktop, start a new conversation; Claude can use the Spaztick tools (task_create, task_find, task_info, task_update, delete_task, project_*, list_lists, tag_list, tag_rename, tag_delete) to manage your tasks. Destructive actions (delete task, delete project, archive, tag delete/rename) return a confirmation message first; call the same tool again with `confirm: true` after the user confirms.
+   In Claude Desktop, start a new conversation; Claude can use the Spaztick tools (task_create, task_find, task_info, task_update, delete_task, project_*, list_lists, tag_list, tag_rename, tag_delete) to manage your tasks.    Destructive actions (delete task, delete project, archive, tag delete/rename) return a confirmation message first; call the same tool again with `confirm: true` after the user confirms.
+
+4. **Troubleshooting "error connecting... auth correctly"** (e.g. behind Tailscale Funnel / HTTPS):
+   - Confirm the MCP server is reachable: `curl -i https://your-host/mcp` (a non-5xx response is good; 405 Method Not Allowed for GET is normal).
+   - Use the exact path `/mcp` in the URL (e.g. `https://home-server.xxx.ts.net/mcp`).
+   - Check Claude Desktop MCP logs (e.g. `~/Library/Logs/Claude/mcp*.log` on macOS) for the real error.
+   - Ensure your funnel/proxy forwards the full path and does not strip or rewrite `/mcp`.
 
 ## Configuration (Web UI)
 

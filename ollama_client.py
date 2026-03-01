@@ -24,7 +24,7 @@ class OllamaClient:
             r.raise_for_status()
             data = r.json()
             models = data.get("models") or []
-            return [OllamaModel(name=m.get("name", "").split(":")[0], modified_at=m.get("modified_at", "")) for m in models]
+            return [OllamaModel(name=(m.get("name") or "").strip(), modified_at=m.get("modified_at", "")) for m in models]
         except (httpx.HTTPError, KeyError) as e:
             raise RuntimeError(f"Failed to list Ollama models: {e}") from e
 
