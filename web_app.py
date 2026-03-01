@@ -1180,17 +1180,25 @@ HTML_PAGE = """<!DOCTYPE html>
       $('api_key').value = c.api_key || '';
       $('archive_cron').value = c.archive_cron || '';
       $('webhook_url_row').style.display = usePolling() ? 'none' : 'block';
+      return c;
     }
 
-    async function loadModels() {
+    async function loadModels(desiredModel) {
       $('models_status').textContent = 'Loading…';
       try {
         const r = await fetch('/api/models');
         const list = await r.json();
         const sel = $('model');
-        const cur = sel.value;
+        const cur = desiredModel !== undefined ? desiredModel : sel.value;
         sel.innerHTML = list.length ? list.map(m => `<option value="${m.name}">${m.name}</option>`).join('') : '<option value="">No models</option>';
-        if (cur) sel.value = cur;
+        if (cur && list.length) {
+          const exact = list.some(m => m.name === cur);
+          if (exact) sel.value = cur;
+          else {
+            const match = list.find(m => m.name === cur || m.name.startsWith(cur + ':'));
+            if (match) sel.value = match.name;
+          }
+        }
         $('models_status').textContent = list.length ? 'Models loaded.' : 'No models found. Is Ollama running?';
       } catch (e) {
         $('models_status').textContent = 'Error: ' + e.message;
@@ -1251,7 +1259,7 @@ HTML_PAGE = """<!DOCTYPE html>
       }
     };
 
-    loadConfig().then(loadModels);
+    loadConfig().then(c => loadModels(c && c.model));
     refreshStatus();
     setInterval(refreshStatus, 5000);
   </script>
