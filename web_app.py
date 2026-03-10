@@ -79,6 +79,18 @@ class ConfigUpdate(BaseModel):
 # --- API routes ---
 
 
+@app.on_event("startup")
+def _startup_migrate_compound_tags() -> None:
+    """One-time migration: split any task_tags stored as comma-separated into one row per tag."""
+    try:
+        from task_service import migrate_compound_task_tags_to_individual
+        n = migrate_compound_task_tags_to_individual()
+        if n:
+            __import__("logging").getLogger("web_app").info("Migrated %d compound task_tags row(s) to individual tags.", n)
+    except Exception as e:
+        __import__("logging").getLogger("web_app").warning("Compound tags migration skipped: %s", e)
+
+
 @app.get("/api/config", response_model=ConfigUpdate)
 def get_config() -> ConfigUpdate:
     c = load_config()
@@ -620,10 +632,8 @@ async def external_update_task(task_id: str, request: Request):
     if "tags" in body:
         tags_val = body.get("tags")
         if tags_val is not None:
-            if isinstance(tags_val, str):
-                tags_list = [tags_val.strip()] if tags_val.strip() else []
-            else:
-                tags_list = [str(x).strip() for x in (tags_val if isinstance(tags_val, list) else []) if str(x).strip()]
+            from task_service import normalize_tags_to_list
+            tags_list = normalize_tags_to_list(tags_val)
             for tag in (t.get("tags") or []):
                 remove_task_tag(tid, tag)
             for tag in tags_list:

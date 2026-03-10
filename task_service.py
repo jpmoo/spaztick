@@ -48,6 +48,50 @@ def _validate_available_due(available_date: str | None, due_date: str | None) ->
         raise ValueError("Available date cannot be after due date. Due date cannot be before available date.")
 
 
+def normalize_tags_to_list(tags: Any) -> list[str]:
+    """Convert tags (string, list, or list of comma-separated strings) to a flat list of individual tag strings.
+    Ensures a task with multiple tags gets one row per tag in task_tags so it appears in searches for each tag."""
+    if tags is None:
+        return []
+    if isinstance(tags, str):
+        parts = [p.strip() for p in tags.split(",") if p.strip()]
+    elif isinstance(tags, list):
+        parts = []
+        for t in tags:
+            if isinstance(t, str):
+                parts.extend(p.strip() for p in t.split(",") if p.strip())
+            elif t is not None and str(t).strip():
+                parts.extend(p.strip() for p in str(t).strip().split(",") if p.strip())
+    else:
+        s = str(tags).strip()
+        return [s] if s else []
+    return [p.strip().lstrip("#").strip().lower() for p in parts if p.strip().lstrip("#").strip()]
+
+
+def migrate_compound_task_tags_to_individual() -> int:
+    """One-time fix: replace any task_tags row whose tag contains a comma with one row per tag.
+    Returns number of compound rows fixed. Call on startup to repair existing data."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            "SELECT task_id, tag FROM task_tags WHERE tag LIKE '%,%'"
+        ).fetchall()
+        n = 0
+        for (task_id, compound) in rows:
+            parts = normalize_tags_to_list(compound)
+            if len(parts) <= 1:
+                continue
+            conn.execute("DELETE FROM task_tags WHERE task_id = ? AND tag = ?", (task_id, compound))
+            for tag in parts:
+                conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (task_id, tag))
+            n += 1
+        if n:
+            conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -143,13 +187,11 @@ def create_task(
                     "INSERT OR IGNORE INTO task_projects (task_id, project_id) VALUES (?, ?)",
                     (tid, project_id),
                 )
-        for tag in tags or []:
-            tag = (tag or "").strip().lstrip("#").strip().lower()
-            if tag:
-                conn.execute(
-                    "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)",
-                    (tid, tag),
-                )
+        for tag in normalize_tags_to_list(tags):
+            conn.execute(
+                "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)",
+                (tid, tag),
+            )
         _record_history(conn, tid, "created", {"title": title, "status": status})
         conn.commit()
         return get_task(tid)
