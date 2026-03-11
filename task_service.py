@@ -92,6 +92,25 @@ def migrate_compound_task_tags_to_individual() -> int:
         conn.close()
 
 
+def migrate_sync_all_task_tags_from_text() -> int:
+    """One-time: for every task, ensure task_tags has a row for each #tag in title/description/notes.
+    Returns number of tasks processed. Call on startup so existing tasks like '#Chuck, #Sylvia, and #Tamar' are findable by each tag."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT id, title, description, notes FROM tasks").fetchall()
+        n = 0
+        for (task_id, title, description, notes) in rows:
+            for tag in _extract_hashtag_names_from_text(title or "", description or "", notes or ""):
+                if tag:
+                    conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (task_id, tag))
+            n += 1
+        if n:
+            conn.commit()
+        return n
+    finally:
+        conn.close()
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -192,6 +211,9 @@ def create_task(
                 "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)",
                 (tid, tag),
             )
+        for tag in _extract_hashtag_names_from_text(title or "", description or "", notes or ""):
+            if tag:
+                conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (tid, tag))
         _record_history(conn, tid, "created", {"title": title, "status": status})
         conn.commit()
         return get_task(tid)
@@ -663,6 +685,38 @@ def _hashtag_regex(tag: str, case_insensitive: bool = False) -> re.Pattern:
 _HASHTAG_NOT_IN_URL_RE = re.compile(r"(?:^|[^.:/A-Za-z0-9-])(#([a-zA-Z0-9_-]+))")
 
 
+def _extract_hashtag_names_from_text(*texts: str) -> list[str]:
+    """Extract #tagname (lowercase) from title/description/notes. Same logic as _tags_for_task."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for text in texts:
+        if not text:
+            continue
+        for m in _HASHTAG_NOT_IN_URL_RE.finditer(text):
+            name = m.group(2).lower()
+            if name not in seen:
+                seen.add(name)
+                out.append(name)
+    return out
+
+
+def sync_task_tags_from_text(task_id: str) -> None:
+    """Ensure task_tags has a row for every #tag in the task's title, description, and notes.
+    Call after create or update so search-by-tag finds tasks by any tag in the text (e.g. '#Chuck, #Sylvia, and #Tamar')."""
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT title, description, notes FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if not row:
+            return
+        title, description, notes = row[0] or "", row[1] or "", row[2] or ""
+        for tag in _extract_hashtag_names_from_text(title, description, notes):
+            if tag:
+                conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (task_id, tag))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _hashtag_not_in_url_regex(tag: str, case_insensitive: bool = False) -> re.Pattern:
     """Match #tag as whole word only when not inside a URL. For use in sub (rename/remove)."""
     flags = re.IGNORECASE if case_insensitive else 0
@@ -680,15 +734,24 @@ def _like_escape(tag: str) -> str:
 def _sql_hashtag_in_text_condition(tag: str) -> tuple[str, list[Any]]:
     """
     Return (sql_fragment, params) for "this task has #tag in title or description or notes" (whole-word).
-    Case-insensitive: #Meghan and #meghan in text both match. Uses LOWER(column) LIKE lowercase pattern.
+    Case-insensitive. Allows #tag followed by comma, period, space, or end (e.g. "#Chuck, #Sylvia, and #Tamar").
     """
     t = (tag or "").strip()
     if not t:
         return ("0", [])
     t_lower = t.lower()
     needle = "#" + _like_escape(t_lower)
-    # Whole-word #tag: at start or after space (exclude "%" + needle so we don't match #tag inside URLs like x.com#tag)
-    pats = [needle, needle + " %", "% " + needle, "% " + needle + " %"]
+    # Whole-word #tag: after space or at start; followed by space, comma, period, or end (avoid matching #tag inside URLs)
+    pats = [
+        needle + " %",
+        needle + ",%",
+        needle + ".%",
+        "% " + needle,
+        "% " + needle + " %",
+        "% " + needle + ",%",
+        "% " + needle + ".%",
+        "%" + needle,  # ends with #tag (e.g. "and #Tamar")
+    ]
     frags: list[str] = []
     params: list[Any] = []
     for col in ("title", "description", "notes"):

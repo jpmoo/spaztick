@@ -80,15 +80,19 @@ class ConfigUpdate(BaseModel):
 
 
 @app.on_event("startup")
-def _startup_migrate_compound_tags() -> None:
-    """One-time migration: split any task_tags stored as comma-separated into one row per tag."""
+def _startup_migrate_task_tags() -> None:
+    """One-time migrations: compound tags -> individual; sync #tags from title/description/notes into task_tags."""
+    log = __import__("logging").getLogger("web_app")
     try:
-        from task_service import migrate_compound_task_tags_to_individual
+        from task_service import migrate_compound_task_tags_to_individual, migrate_sync_all_task_tags_from_text
         n = migrate_compound_task_tags_to_individual()
         if n:
-            __import__("logging").getLogger("web_app").info("Migrated %d compound task_tags row(s) to individual tags.", n)
+            log.info("Migrated %d compound task_tags row(s) to individual tags.", n)
+        m = migrate_sync_all_task_tags_from_text()
+        if m:
+            log.info("Synced #tags from text into task_tags for %d task(s).", m)
     except Exception as e:
-        __import__("logging").getLogger("web_app").warning("Compound tags migration skipped: %s", e)
+        __import__("logging").getLogger("web_app").warning("Task tags migration skipped: %s", e)
 
 
 @app.get("/api/config", response_model=ConfigUpdate)
@@ -638,7 +642,8 @@ async def external_update_task(task_id: str, request: Request):
                 remove_task_tag(tid, tag)
             for tag in tags_list:
                 add_task_tag(tid, tag)
-    from task_service import get_task as _get
+    from task_service import get_task as _get, sync_task_tags_from_text
+    sync_task_tags_from_text(tid)
     out = _get(tid)
     if getattr(load_config(), "debug", False):
         logger.warning("[API] PUT /api/external/tasks/%s response task recurrence: %s", task_id, out.get("recurrence") if out else None)

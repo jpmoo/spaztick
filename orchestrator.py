@@ -2100,7 +2100,7 @@ def run_orchestrator(
             validated = resolve_task_dates(validated, tz_name)
             num = validated.pop("number")
             try:
-                from task_service import get_task_by_number, update_task, complete_recurring_task, remove_task_project, add_task_project, remove_task_tag, add_task_tag
+                from task_service import get_task_by_number, update_task, complete_recurring_task, remove_task_project, add_task_project, remove_task_tag, add_task_tag, sync_task_tags_from_text
                 task = get_task_by_number(num)
             except Exception as e:
                 return (f"Error looking up task: {e}", False, None, used_fb)
@@ -2168,6 +2168,10 @@ def run_orchestrator(
                             add_task_tag(task_id, tag)
                 except Exception as e:
                     return (f"Error updating task tags: {e}", False, None, used_fb)
+            try:
+                sync_task_tags_from_text(task_id)
+            except Exception:
+                pass
             parts = []
             if "status" in kwargs:
                 parts.append("complete" if kwargs["status"] == "complete" else "reopened")
