@@ -6361,7 +6361,6 @@
   function attachBoardRegionLineDrag(lineEl, boardId, regionIndex, lineIndex) {
     lineEl.addEventListener('mousedown', (e) => {
       if (e.target.closest('.board-region-line-priority') || e.target.closest('.board-region-line-flagged') || e.target.closest('.board-region-line-status')) return;
-      e.preventDefault();
       e.stopPropagation();
       const regions = getBoardRegions(boardId);
       const region = regions[regionIndex];
@@ -6369,9 +6368,21 @@
       if (!line) return;
       const taskId = line.taskId;
       const rect = lineEl.getBoundingClientRect();
-      const startY = e.clientY;
+      const startMouseX = e.clientX;
+      const startMouseY = e.clientY;
       let dragGhost = null;
+      let dragStarted = false;
+      let prevUserSelect = '';
       function onMove(ev) {
+        if (!dragStarted) {
+          const ddx = ev.clientX - startMouseX;
+          const ddy = ev.clientY - startMouseY;
+          if (ddx * ddx + ddy * ddy < BOARD_CARD_DRAG_THRESHOLD_SQ) return;
+          dragStarted = true;
+          ev.preventDefault();
+          prevUserSelect = document.body.style.userSelect;
+          document.body.style.userSelect = 'none';
+        }
         if (!dragGhost) {
           dragGhost = document.createElement('div');
           dragGhost.className = 'board-region-line board-region-line-dragging';
@@ -6392,6 +6403,8 @@
       async function onUp(ev) {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
+        if (dragStarted) document.body.style.userSelect = prevUserSelect;
+        if (!dragStarted) return;
         if (dragGhost && dragGhost.parentNode) dragGhost.parentNode.removeChild(dragGhost);
         lineEl.style.opacity = '';
         const canvasRect = boardViewCanvasEl.getBoundingClientRect();
