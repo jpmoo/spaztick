@@ -1903,6 +1903,88 @@
   function refreshLeftAndCenter() {
     refreshLeftPanel();
     refreshCenterView();
+    const inspectorEl = document.getElementById('inspector-content');
+    const openTaskId = inspectorEl && inspectorEl.dataset && inspectorEl.dataset.taskId;
+    if (openTaskId) loadTaskDetails(openTaskId);
+  }
+
+  /** Task listing layout (three columns): not on board canvas. */
+  function isTaskListingViewActive() {
+    return currentBoardId == null;
+  }
+
+  const LISTING_CROSS_SYNC_DEBOUNCE_MS = 400;
+  const LISTING_CROSS_SYNC_RESUME_MS = 1200;
+  let listingCrossSyncTimer = null;
+  let listingCrossSyncResumeTimer = null;
+  let listingCrossSyncMutObs = null;
+
+  function stopTaskListingCrossSyncObserver() {
+    if (listingCrossSyncTimer) {
+      clearTimeout(listingCrossSyncTimer);
+      listingCrossSyncTimer = null;
+    }
+    if (listingCrossSyncResumeTimer) {
+      clearTimeout(listingCrossSyncResumeTimer);
+      listingCrossSyncResumeTimer = null;
+    }
+    if (listingCrossSyncMutObs) {
+      listingCrossSyncMutObs.disconnect();
+      listingCrossSyncMutObs = null;
+    }
+  }
+
+  function startTaskListingCrossSyncObserver() {
+    stopTaskListingCrossSyncObserver();
+    if (!isTaskListingViewActive()) return;
+    const roots = [
+      document.getElementById('left-panel'),
+      document.getElementById('center-panel'),
+      document.getElementById('inspector-content'),
+    ].filter(Boolean);
+    if (!roots.length) return;
+    listingCrossSyncMutObs = new MutationObserver(() => scheduleTaskListingCrossSync());
+    roots.forEach((r) => listingCrossSyncMutObs.observe(r, { childList: true, subtree: true }));
+  }
+
+  function scheduleTaskListingCrossSync() {
+    if (!isTaskListingViewActive()) return;
+    if (listingCrossSyncTimer) clearTimeout(listingCrossSyncTimer);
+    listingCrossSyncTimer = setTimeout(() => {
+      listingCrossSyncTimer = null;
+      runTaskListingCrossSync();
+    }, LISTING_CROSS_SYNC_DEBOUNCE_MS);
+  }
+
+  function runTaskListingCrossSync() {
+    if (!isTaskListingViewActive()) return;
+    stopTaskListingCrossSyncObserver();
+    refreshLeftAndCenter();
+    listingCrossSyncResumeTimer = setTimeout(() => {
+      listingCrossSyncResumeTimer = null;
+      startTaskListingCrossSyncObserver();
+    }, LISTING_CROSS_SYNC_RESUME_MS);
+  }
+
+  function taskListingCrossSyncEventTargetOk(target) {
+    if (!target || !target.closest) return false;
+    if (!target.closest('#left-panel') && !target.closest('#center-panel') && !target.closest('#right-panel')) return false;
+    if (target.closest('#chat-region')) return false;
+    return true;
+  }
+
+  function setupTaskListingCrossPanelSync() {
+    document.addEventListener('change', (e) => {
+      if (!taskListingCrossSyncEventTargetOk(e.target)) return;
+      scheduleTaskListingCrossSync();
+    }, true);
+    document.addEventListener('blur', (e) => {
+      if (!taskListingCrossSyncEventTargetOk(e.target)) return;
+      const t = e.target;
+      if (!t || !t.matches || !t.matches('input, textarea, select')) return;
+      scheduleTaskListingCrossSync();
+    }, true);
+    startTaskListingCrossSyncObserver();
   }
 
   async function loadListTasks(listId) {
@@ -3431,6 +3513,7 @@
       }
       startTitleEdit(titleCell);
     });
+    setupTaskListingCrossPanelSync();
   })();
 
   // --- Inbox (tasks with no project) ---
@@ -4764,6 +4847,7 @@
   function openBoardView(boardId) {
     const board = getBoards().find((b) => String(b.id) === String(boardId));
     if (!board) return;
+    stopTaskListingCrossSyncObserver();
     currentBoardId = boardId;
     Object.keys(agendaCalendarFeedCache).forEach((k) => delete agendaCalendarFeedCache[k]);
     if (inboxItem) inboxItem.classList.remove('selected');
@@ -4904,6 +4988,7 @@
       boardViewEl.classList.add('hidden');
       boardViewEl.setAttribute('aria-hidden', 'true');
     }
+    startTaskListingCrossSyncObserver();
   }
   if (boardViewCloseBtn) boardViewCloseBtn.addEventListener('click', closeBoardView);
 
