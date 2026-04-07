@@ -7,7 +7,7 @@ const child = spawn(
   "npx",
   ["electron-builder", "--dir"],
   {
-    env: { ...process.env, CSC_IDENTITY_AUTO_DISCOVERY: "false" },
+    env: { ...process.env, NO_UPDATE_NOTIFIER: "1", CSC_IDENTITY_AUTO_DISCOVERY: "false" },
     stdio: "inherit",
     cwd: __dirname,
   }

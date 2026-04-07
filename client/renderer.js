@@ -3992,6 +3992,8 @@
   const BOARD_DEFAULT_CARD_HEIGHT = 160;
   const BOARD_MIN_CARD_WIDTH = 187;
   const BOARD_MIN_CARD_HEIGHT = 108;
+  /** Squared movement (screen px) before card drag starts; avoids mousedown preventDefault so dblclick still fires. */
+  const BOARD_CARD_DRAG_THRESHOLD_SQ = 16;
   const BOARD_ZOOM_MIN = 25;
   const BOARD_ZOOM_MAX = 300;
   const BOARD_ZOOM_STEP = 25;
@@ -7408,7 +7410,6 @@
     if (header) {
       header.addEventListener('mousedown', (e) => {
         if (e.target.closest('.board-card-resize-handle') || e.target.closest('.board-connection-handle') || e.target.closest('.board-card-archive') || e.target.closest('.board-card-priority') || e.target.closest('.board-card-flagged') || e.target.closest('.board-card-status')) return;
-        e.preventDefault();
         const cards = getBoardCards(boardId);
         const card = cards[cardIndex];
         const startCardX = card.x || 0;
@@ -7416,7 +7417,18 @@
         const startMouseX = e.clientX;
         const startMouseY = e.clientY;
         const scale = boardPanZoom.scale;
+        let dragStarted = false;
+        let prevUserSelect = '';
         function onMove(ev) {
+          if (!dragStarted) {
+            const ddx = ev.clientX - startMouseX;
+            const ddy = ev.clientY - startMouseY;
+            if (ddx * ddx + ddy * ddy < BOARD_CARD_DRAG_THRESHOLD_SQ) return;
+            dragStarted = true;
+            ev.preventDefault();
+            prevUserSelect = document.body.style.userSelect;
+            document.body.style.userSelect = 'none';
+          }
           const dx = (ev.clientX - startMouseX) / scale;
           const dy = (ev.clientY - startMouseY) / scale;
           card.x = Math.round(startCardX + dx);
@@ -7429,6 +7441,8 @@
         function onUp() {
           document.removeEventListener('mousemove', onMove);
           document.removeEventListener('mouseup', onUp);
+          if (dragStarted) document.body.style.userSelect = prevUserSelect;
+          if (!dragStarted) return;
           const cx = card.x + (el.offsetWidth / 2);
           const cy = card.y + (el.offsetHeight / 2);
           const regions = getBoardRegions(boardId);
