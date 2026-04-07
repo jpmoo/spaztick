@@ -6,6 +6,7 @@ Telegram ↔ Ollama bridge: receive Telegram messages, send them as prompts to a
 
 - **Telegram bot**: Receives messages, forwards them to Ollama (localhost:11434 by default), replies with the model response.
 - **Web config UI**: Configure Ollama URL/port, model (with list from Ollama), system message, Telegram bot token, listener port, and restart the Telegram service.
+- **HTTP API** (tasks, projects, lists, chat): authenticated external routes under `/api/external/`. See **[API_ACCESS.md](API_ACCESS.md)** for base URL, `X-API-Key`, and endpoint list.
 
 ## Requirements
 
@@ -77,14 +78,27 @@ Spaztick can expose its tools over MCP so **Claude Desktop** or **Claude Code** 
 
    If the server runs on another host, use that host (e.g. `http://homeserver.local:8082/mcp`). For **HTTPS** (e.g. Tailscale Funnel), use `https://your-host/mcp`; Claude Desktop requires HTTPS for remote URLs.
 
+   **Path prefix on Caddy** (e.g. Funnel → Caddy, then Spaztick MCP on `127.0.0.1:8082` at `/mcp`): expose it as `https://your-host/spaztick/mcp` by stripping the prefix before proxying:
+
+   ```caddy
+   handle /spaztick* {
+     uri strip_prefix /spaztick
+     reverse_proxy 127.0.0.1:8082 {
+       header_up Host 127.0.0.1:8082
+     }
+   }
+   ```
+
+   Place that block **before** any catch-all `handle { ... }`. In Claude, set the server URL to `https://your-host/spaztick/mcp` (the backend still receives `/mcp`).
+
 3. **Use it**  
    In Claude Desktop, start a new conversation; Claude can use the Spaztick tools (task_create, task_find, task_info, task_update, delete_task, project_*, list_lists, tag_list, tag_rename, tag_delete) to manage your tasks.    Destructive actions (delete task, delete project, archive, tag delete/rename) return a confirmation message first; call the same tool again with `confirm: true` after the user confirms.
 
 4. **Troubleshooting "error connecting... auth correctly"** (e.g. behind Tailscale Funnel / HTTPS):
-   - Confirm the MCP server is reachable: `curl -i https://your-host/mcp` (a non-5xx response is good; 405 Method Not Allowed for GET is normal).
-   - Use the exact path `/mcp` in the URL (e.g. `https://home-server.xxx.ts.net/mcp`).
+   - Confirm the MCP server is reachable: `curl -i https://your-host/mcp` or, with a prefix, `curl -i https://your-host/spaztick/mcp` (a non-5xx response is good; 405 Method Not Allowed for GET is normal).
+   - Use the URL path Claude expects: either `https://…/mcp` (direct) or `https://…/spaztick/mcp` if Caddy uses `strip_prefix /spaztick` as above.
    - Check Claude Desktop MCP logs (e.g. `~/Library/Logs/Claude/mcp*.log` on macOS) for the real error.
-   - Ensure your funnel/proxy forwards the full path and does not strip or rewrite `/mcp`.
+   - Ensure your funnel/proxy forwards the full path; with a prefix, use `uri strip_prefix /spaztick` so the backend still sees `/mcp`, not `/spaztick/mcp`.
 
 ## Configuration (Web UI)
 

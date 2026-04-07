@@ -2053,6 +2053,95 @@
     closePriorityDropdown();
   }
 
+  /**
+   * Place a position:fixed panel below the anchor by default; flip above if there is not enough room.
+   * Clamps horizontally. Optionally caps height (scroll inside) to stay within the viewport.
+   * @param {HTMLElement} dropdownEl
+   * @param {DOMRect} anchorRect
+   * @param {{ gap?: number, margin?: number, minWidth?: number, maxHeight?: number, alignRight?: boolean }} [opts]
+   */
+  function positionFixedDropdownNearAnchor(dropdownEl, anchorRect, opts) {
+    const gap = opts && opts.gap != null ? opts.gap : 4;
+    const margin = opts && opts.margin != null ? opts.margin : 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const maxCap = opts && opts.maxHeight != null ? opts.maxHeight : null;
+    const alignRight = !!(opts && opts.alignRight);
+
+    dropdownEl.style.position = 'fixed';
+    if (opts && opts.minWidth != null) {
+      dropdownEl.style.minWidth = `${opts.minWidth}px`;
+    }
+    if (maxCap != null) {
+      dropdownEl.style.maxHeight = `${maxCap}px`;
+      dropdownEl.style.overflowY = 'auto';
+    } else {
+      dropdownEl.style.maxHeight = '';
+      dropdownEl.style.overflowY = '';
+    }
+
+    const apply = () => {
+      const cap = maxCap != null ? maxCap : 1e9;
+      let h = dropdownEl.offsetHeight;
+
+      const belowTop = anchorRect.bottom + gap;
+      const spaceBelow = vh - margin - belowTop;
+      const spaceAbove = anchorRect.top - gap - margin;
+
+      const placeAbove = h > spaceBelow && spaceAbove > spaceBelow;
+
+      let top;
+      if (placeAbove) {
+        top = anchorRect.top - gap - h;
+        if (top < margin) {
+          top = margin;
+          const mh = Math.min(cap, Math.max(60, anchorRect.top - gap - margin));
+          dropdownEl.style.maxHeight = `${mh}px`;
+          dropdownEl.style.overflowY = 'auto';
+          h = dropdownEl.offsetHeight;
+          top = Math.max(margin, anchorRect.top - gap - h);
+          if (top < margin) top = margin;
+        }
+      } else {
+        top = belowTop;
+        if (h > spaceBelow) {
+          const mh = Math.min(cap, Math.max(60, spaceBelow));
+          dropdownEl.style.maxHeight = `${mh}px`;
+          dropdownEl.style.overflowY = 'auto';
+          h = dropdownEl.offsetHeight;
+        }
+      }
+
+      if (top + h > vh - margin) {
+        top = Math.max(margin, vh - margin - h);
+      }
+
+      dropdownEl.style.top = `${Math.round(top)}px`;
+
+      if (alignRight) {
+        dropdownEl.style.left = 'auto';
+        const right = vw - anchorRect.right;
+        const effW = dropdownEl.offsetWidth;
+        if (effW + right > vw - margin) {
+          dropdownEl.style.right = `${Math.round(Math.max(margin, vw - effW - margin))}px`;
+        } else {
+          dropdownEl.style.right = `${Math.round(right)}px`;
+        }
+      } else {
+        dropdownEl.style.right = 'auto';
+        let left = anchorRect.left;
+        const effW = dropdownEl.offsetWidth;
+        if (left + effW > vw - margin) {
+          left = Math.max(margin, vw - effW - margin);
+        }
+        if (left < margin) left = margin;
+        dropdownEl.style.left = `${Math.round(left)}px`;
+      }
+    };
+
+    requestAnimationFrame(apply);
+  }
+
   function openPriorityDropdown(ev, cell, opts) {
     ev.stopPropagation();
     closePriorityDropdown();
@@ -2086,10 +2175,7 @@
     document.body.appendChild(dropdown);
     priorityDropdownEl = dropdown;
     const cellRect = cell.getBoundingClientRect();
-    dropdown.style.position = 'fixed';
-    dropdown.style.left = `${cellRect.left}px`;
-    dropdown.style.top = `${cellRect.bottom + 4}px`;
-    dropdown.style.minWidth = `${Math.max(cellRect.width, 180)}px`;
+    positionFixedDropdownNearAnchor(dropdown, cellRect, { minWidth: Math.max(cellRect.width, 180) });
     requestAnimationFrame(() => document.addEventListener('click', priorityDropdownOutside));
   }
 
@@ -2312,10 +2398,7 @@
     document.body.appendChild(getHashtagDropdownContainer());
 
     const cellRect = cell.getBoundingClientRect();
-    dropdown.style.position = 'fixed';
-    dropdown.style.left = `${cellRect.left}px`;
-    dropdown.style.top = `${cellRect.bottom + 4}px`;
-    dropdown.style.minWidth = `${Math.max(cellRect.width, 160)}px`;
+    positionFixedDropdownNearAnchor(dropdown, cellRect, { minWidth: Math.max(cellRect.width, 160) });
 
     requestAnimationFrame(() => document.addEventListener('click', dateDropdownOutside));
   }
@@ -2341,10 +2424,7 @@
     const trigger = wrapEl.querySelector('.inspector-date-dropdown-trigger');
     const anchor = trigger || wrapEl;
     const rect = anchor.getBoundingClientRect();
-    dropdown.style.position = 'fixed';
-    dropdown.style.left = `${rect.left}px`;
-    dropdown.style.top = `${rect.bottom + 4}px`;
-    dropdown.style.minWidth = '160px';
+    positionFixedDropdownNearAnchor(dropdown, rect, { minWidth: 160 });
 
     requestAnimationFrame(() => document.addEventListener('click', dateDropdownOutside));
   }
@@ -2522,18 +2602,8 @@
     taskTagsDropdownEl = dropdown;
     const rect = anchorEl.getBoundingClientRect();
     const minW = Math.max(rect.width, 240);
-    const fromInspector = anchorEl.closest('.inspector-content') || anchorEl.closest('.right-panel');
-    dropdown.style.position = 'fixed';
-    dropdown.style.top = `${rect.bottom + 4}px`;
-    dropdown.style.minWidth = `${minW}px`;
-    dropdown.style.maxHeight = '320px';
-    dropdown.style.overflowY = 'auto';
-    if (fromInspector) {
-      dropdown.style.right = `${window.innerWidth - rect.right}px`;
-      dropdown.style.left = 'auto';
-    } else {
-      dropdown.style.left = `${rect.left}px`;
-    }
+    const fromInspector = !!(anchorEl.closest('.inspector-content') || anchorEl.closest('.right-panel'));
+    positionFixedDropdownNearAnchor(dropdown, rect, { minWidth: minW, maxHeight: 320, alignRight: fromInspector });
     requestAnimationFrame(() => {
       document.addEventListener('click', taskTagsDropdownOutside);
       searchInput.focus();
@@ -2802,18 +2872,8 @@
 
     const rect = anchorEl.getBoundingClientRect();
     const minW = Math.max(rect.width, 240);
-    const anchorInRightPanel = anchorEl.closest('.inspector-content') || anchorEl.closest('.right-panel');
-    dropdown.style.position = 'fixed';
-    dropdown.style.top = `${rect.bottom + 4}px`;
-    dropdown.style.minWidth = `${minW}px`;
-    dropdown.style.maxHeight = '320px';
-    dropdown.style.overflowY = 'auto';
-    if (anchorInRightPanel) {
-      dropdown.style.right = `${window.innerWidth - rect.right}px`;
-      dropdown.style.left = 'auto';
-    } else {
-      dropdown.style.left = `${rect.left}px`;
-    }
+    const anchorInRightPanel = !!(anchorEl.closest('.inspector-content') || anchorEl.closest('.right-panel'));
+    positionFixedDropdownNearAnchor(dropdown, rect, { minWidth: minW, maxHeight: 320, alignRight: anchorInRightPanel });
 
     requestAnimationFrame(() => {
       document.addEventListener('click', projectsDropdownOutside);
@@ -3935,7 +3995,6 @@
   const BOARD_ZOOM_MIN = 25;
   const BOARD_ZOOM_MAX = 300;
   const BOARD_ZOOM_STEP = 25;
-  const BOARD_CARD_EXPAND_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M16 8L21 3M21 3H16M21 3V8M8 8L3 3M3 3L3 8M3 3L8 3M8 16L3 21M3 21H8M3 21L3 16M16 16L21 21M21 21V16M21 21H16"/></svg>';
 
   function getBoardCards(boardId) {
     const board = getBoards().find((b) => String(b.id) === String(boardId));
@@ -5784,10 +5843,13 @@
       ? (isOverdue(t.due_date) ? `<span class="due-overdue">Due: ${dueStr}</span>` : isToday(t.due_date) ? `<span class="due-today">Due: ${dueStr}</span>` : `Due: ${dueStr}`)
       : (dueStr ? `Due: ${dueStr}` : '');
     const datesStr = [avStr && `Avail: ${avStr}`, duePart].filter(Boolean).join(' · ') || '—';
-    const taskIdEsc = (taskId || '').replace(/"/g, '&quot;');
-    lineDiv.innerHTML = priorityHtml + flagHtml + `<span class="board-region-line-status">${statusSvg}</span><div class="board-region-line-text"><span class="board-region-line-title">${titleText}</span><span class="board-region-line-dates">${datesStr}</span></div><button type="button" class="board-region-line-expand" data-task-id="${taskIdEsc}" title="Expand" aria-label="Expand">${BOARD_CARD_EXPAND_SVG}</button>`;
-    const expandBtn = lineDiv.querySelector('.board-region-line-expand');
-    if (expandBtn) expandBtn.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); openBoardTaskInspectorModal(taskId, () => refreshBoardAfterTaskUpdate(bid)); });
+    lineDiv.innerHTML = priorityHtml + flagHtml + `<span class="board-region-line-status">${statusSvg}</span><div class="board-region-line-text"><span class="board-region-line-title">${titleText}</span><span class="board-region-line-dates">${datesStr}</span></div>`;
+    lineDiv.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.board-region-line-priority') || e.target.closest('.board-region-line-flagged') || e.target.closest('.board-region-line-status')) return;
+      e.stopPropagation();
+      e.preventDefault();
+      openBoardTaskInspectorModal(taskId, () => refreshBoardAfterTaskUpdate(bid));
+    });
     const prioritySpan = lineDiv.querySelector('.board-region-line-priority');
     const flagSpan = lineDiv.querySelector('.board-region-line-flagged');
     const statusSpan = lineDiv.querySelector('.board-region-line-status');
@@ -6296,7 +6358,7 @@
   }
   function attachBoardRegionLineDrag(lineEl, boardId, regionIndex, lineIndex) {
     lineEl.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.board-region-line-expand') || e.target.closest('.board-region-line-priority') || e.target.closest('.board-region-line-flagged') || e.target.closest('.board-region-line-status')) return;
+      if (e.target.closest('.board-region-line-priority') || e.target.closest('.board-region-line-flagged') || e.target.closest('.board-region-line-status')) return;
       e.preventDefault();
       e.stopPropagation();
       const regions = getBoardRegions(boardId);
@@ -7280,13 +7342,13 @@
         }).catch(() => { el.querySelector('.board-card-dates').textContent = 'Task not found'; });
         return;
       }
-      el.innerHTML = buildBoardCardHtml(task, card.taskId, BOARD_CARD_EXPAND_SVG);
+      el.innerHTML = buildBoardCardHtml(task, card.taskId);
       boardCardsLayerEl.appendChild(el);
       attachBoardCardBehavior(el, task, boardId, idx);
     });
     renderBoardConnections(boardId);
   }
-  function buildBoardCardHtml(t, taskId, expandSvg) {
+  function buildBoardCardHtml(t, taskId) {
     const title = formatTitleWithTagPills(t.title || '(no title)');
     const statusComplete = isTaskCompleted(t);
     const flagged = t.flagged === true || t.flagged === 1;
@@ -7316,7 +7378,6 @@
       <div class="board-card-dates">${datesStr}</div>
       <div class="board-card-footer">
         <button type="button" class="board-card-archive" data-task-id="${taskIdEsc}" title="Remove from board" aria-label="Remove from board">${INSPECTOR_ARCHIVE_SVG}</button>
-        <button type="button" class="board-card-expand" data-task-id="${taskIdEsc}" title="Expand" aria-label="Expand">${expandSvg}</button>
       </div>
       <div class="board-card-resize-handle"></div>
     `;
@@ -7324,15 +7385,12 @@
   function updateBoardCardContent(el, t, boardId) {
     const taskId = el.dataset.taskId;
     const idx = parseInt(el.dataset.cardIndex, 10);
-    el.innerHTML = buildBoardCardHtml(t, taskId, BOARD_CARD_EXPAND_SVG);
+    el.innerHTML = buildBoardCardHtml(t, taskId);
     attachBoardCardBehavior(el, t, boardId, idx);
   }
   function attachBoardCardBehavior(el, task, boardId, cardIndex) {
     const taskId = el.dataset.taskId;
     const header = el.querySelector('.board-card-header');
-    const titleEl = el.querySelector('.board-card-title');
-    const datesEl = el.querySelector('.board-card-dates');
-    const expandBtn = el.querySelector('.board-card-expand');
     const archiveBtn = el.querySelector('.board-card-archive');
     const resizeHandle = el.querySelector('.board-card-resize-handle');
     if (archiveBtn) {
@@ -7349,7 +7407,7 @@
     }
     if (header) {
       header.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.board-card-expand') || e.target.closest('.board-card-resize-handle') || e.target.closest('.board-connection-handle') || e.target.closest('.board-card-archive') || e.target.closest('.board-card-priority') || e.target.closest('.board-card-flagged') || e.target.closest('.board-card-status')) return;
+        if (e.target.closest('.board-card-resize-handle') || e.target.closest('.board-connection-handle') || e.target.closest('.board-card-archive') || e.target.closest('.board-card-priority') || e.target.closest('.board-card-flagged') || e.target.closest('.board-card-status')) return;
         e.preventDefault();
         const cards = getBoardCards(boardId);
         const card = cards[cardIndex];
@@ -7427,12 +7485,12 @@
         document.addEventListener('mouseup', onUp);
       });
     }
-    if (expandBtn) {
-      expandBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openBoardTaskInspectorModal(taskId, () => { renderBoardCards(boardId); renderBoardConnections(boardId); });
-      });
-    }
+    el.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.board-card-resize-handle') || e.target.closest('.board-connection-handle') || e.target.closest('.board-card-archive') || e.target.closest('.board-card-priority') || e.target.closest('.board-card-flagged') || e.target.closest('.board-card-status')) return;
+      e.preventDefault();
+      e.stopPropagation();
+      openBoardTaskInspectorModal(taskId, () => { renderBoardCards(boardId); renderBoardConnections(boardId); });
+    });
     el.querySelectorAll('.board-connection-handle').forEach((handle) => {
       handle.addEventListener('mousedown', (e) => {
         e.preventDefault();
@@ -7558,36 +7616,6 @@
         e.stopPropagation();
         e.preventDefault();
         updateTask(taskId, { flagged: !(task.flagged === true || task.flagged === 1) }).then(() => refreshBoardAfterTaskUpdate(boardId));
-      });
-    }
-    if (titleEl) {
-      titleEl.addEventListener('dblclick', (e) => {
-        e.stopPropagation();
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.value = (task.title || '').trim();
-        input.className = 'inspector-edit-input';
-        input.style.width = '100%';
-        titleEl.replaceWith(input);
-        attachHashtagAutocomplete(input);
-        input.focus();
-        input.select();
-        const save = () => {
-          const v = (input.value || '').trim();
-          updateTask(taskId, { title: v || '(no title)' }).then((t2) => {
-            if (boardTasksCache[boardId]) {
-              const i = boardTasksCache[boardId].findIndex((x) => String(x.id) === String(taskId));
-              if (i >= 0) boardTasksCache[boardId][i] = t2;
-            }
-            const span = document.createElement('span');
-            span.className = 'board-card-title';
-            span.textContent = (t2.title || '(no title)').replace(/</g, '&lt;');
-            input.replaceWith(span);
-            attachBoardCardBehavior(el, t2, boardId, cardIndex);
-          });
-        };
-        input.addEventListener('blur', save);
-        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); } });
       });
     }
   }
@@ -9198,9 +9226,6 @@
     displayDropdown.addEventListener('click', (e) => e.stopPropagation());
   }
 
-  const centerRefreshBtn = document.getElementById('center-refresh-btn');
-  if (centerRefreshBtn) centerRefreshBtn.addEventListener('click', refreshCenterView);
-
   // --- List filter & sort modal (when viewing a list) ---
   const LIST_FILTER_FIELDS = [
     { field: 'title', label: 'Title', valueType: 'text', operators: [
@@ -9648,12 +9673,8 @@
     });
   }
 
-  function refreshNavigator() {
-    refreshLeftPanel();
-    refreshCenterView();
-  }
-  const navigatorRefreshBtn = document.getElementById('navigator-refresh-btn');
-  if (navigatorRefreshBtn) navigatorRefreshBtn.addEventListener('click', refreshNavigator);
+  const appRefreshBtn = document.getElementById('app-refresh-btn');
+  if (appRefreshBtn) appRefreshBtn.addEventListener('click', () => refreshLeftAndCenter());
 
   const navigatorEditBtn = document.getElementById('navigator-edit-btn');
   function exitEditMode() {

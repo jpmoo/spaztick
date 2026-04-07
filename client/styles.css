@@ -596,7 +596,7 @@ body {
   padding: 18px 20px;
 }
 
-/* Center panel: header with display + refresh on left, title after */
+/* Center panel: title + display controls */
 .center-panel-header {
   gap: 8px;
   position: relative;
@@ -606,7 +606,7 @@ body {
 }
 .center-panel-header #center-title {
   flex: 1;
-  margin-left: 4px;
+  margin-left: 0;
 }
 .center-panel-header .icon-btn {
   width: 32px;
@@ -3198,24 +3198,6 @@ body[data-theme="cupertino"] .board-region-line:hover {
 .board-region-line .board-region-line-dates .due-overdue {
   color: var(--due-overdue, #dc2626);
 }
-.board-region-line .board-region-line-expand {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.board-region-line .board-region-line-expand:hover {
-  background: var(--border-subtle);
-  color: var(--text);
-}
 .board-region-resize-handle {
   position: absolute;
   right: 0;
@@ -3884,7 +3866,7 @@ body[data-theme="orange"] .board-region-agenda-outside {
 }
 .board-card .board-card-footer {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
   padding: 4px 6px;
   margin-top: auto;
@@ -3910,23 +3892,6 @@ body[data-theme="orange"] .board-region-agenda-outside {
 .board-card .board-card-archive svg {
   width: 18px;
   height: 18px;
-}
-.board-card .board-card-expand {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.board-card .board-card-expand:hover {
-  background: var(--border-subtle);
-  color: var(--text);
 }
 .board-card .board-card-resize-handle {
   position: absolute;
