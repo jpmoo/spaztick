@@ -3246,12 +3246,10 @@
     const isListSource = typeof src === 'string' && src.startsWith('list:');
     const { showCompleted, sortBy, manualSort, manualOrder } = getDisplayProperties(src);
     let toShow = showCompleted ? tasks : tasks.filter((t) => !isTaskCompleted(t));
-    if (!isListSource) {
-      if (manualSort && manualOrder && manualOrder.length) {
-        toShow = orderTasksByManual(toShow, manualOrder);
-      } else if (sortBy && sortBy.length) {
-        toShow = orderTasksBySort(toShow, sortBy);
-      }
+    if (manualSort && manualOrder && manualOrder.length) {
+      toShow = orderTasksByManual(toShow, manualOrder);
+    } else if (!isListSource && sortBy && sortBy.length) {
+      toShow = orderTasksBySort(toShow, sortBy);
     }
     displayedTasks = [...toShow];
     if (!toShow.length) {
@@ -3349,7 +3347,7 @@
       });
     })(headerRow, wrapper, src);
 
-    if (!isListSource && manualSort) setupTaskListDrag(center, ul, src);
+    if (manualSort) setupTaskListDrag(center, ul, src);
     const inspectorContent = document.getElementById('inspector-content');
     const shownId = inspectorContent && inspectorContent.dataset.taskId;
     if (shownId) {
@@ -9508,15 +9506,17 @@
       }
       filtersEl.querySelectorAll('.list-settings-filter-row').forEach(bindDatePickerInRow);
       const source = 'list:' + listId;
-      const { order, visible, showFlagged, showCompleted, showHighlightDue, showPriority } = getDisplayProperties(source);
+      const { order, visible, showFlagged, showCompleted, showHighlightDue, showPriority, manualSort } = getDisplayProperties(source);
       const flaggedCb = document.getElementById('list-settings-show-flagged');
       const completedCb = document.getElementById('list-settings-show-completed');
       const highlightDueCb = document.getElementById('list-settings-show-highlight-due');
       const priorityCb = document.getElementById('list-settings-show-priority');
+      const manualSortCb = document.getElementById('list-settings-manual-sort');
       if (flaggedCb) flaggedCb.checked = showFlagged;
       if (completedCb) completedCb.checked = showCompleted;
       if (highlightDueCb) highlightDueCb.checked = showHighlightDue;
       if (priorityCb) priorityCb.checked = showPriority;
+      if (manualSortCb) manualSortCb.checked = manualSort;
       const allOrdered = [...order];
       TASK_PROPERTY_KEYS.forEach((k) => { if (!allOrdered.includes(k)) allOrdered.push(k); });
       const dragHandleSvg = '<svg viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg"><path d="M22 6C22.5523 6 23 6.44772 23 7C23 7.55229 22.5523 8 22 8H2C1.44772 8 1 7.55228 1 7C1 6.44772 1.44772 6 2 6L22 6Z"/><path d="M22 11C22.5523 11 23 11.4477 23 12C23 12.5523 22.5523 13 22 13H2C1.44772 13 1 12.5523 1 12C1 11.4477 1.44772 11 2 11H22Z"/><path d="M23 17C23 16.4477 22.5523 16 22 16H2C1.44772 16 1 16.4477 1 17C1 17.5523 1.44772 18 2 18H22C22.5523 18 23 17.5523 23 17Z"/></svg>';
@@ -9666,8 +9666,16 @@
       const priorityCb = document.getElementById('list-settings-show-priority');
       if (priorityCb) {
         priorityCb.onchange = () => {
-          const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh } = getDisplayProperties(listSource);
-          saveDisplayProperties(listSource, o, v, sf, sc, sh, priorityCb.checked);
+          const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, manualSort: ms, manualOrder: mo } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, sf, sc, sh, priorityCb.checked, undefined, ms, mo);
+          if (lastTaskSource === listSource) refreshTaskList();
+        };
+      }
+      const manualSortCb = document.getElementById('list-settings-manual-sort');
+      if (manualSortCb) {
+        manualSortCb.onchange = () => {
+          const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb, manualOrder: mo } = getDisplayProperties(listSource);
+          saveDisplayProperties(listSource, o, v, sf, sc, sh, sp, sb, manualSortCb.checked, mo);
           if (lastTaskSource === listSource) refreshTaskList();
         };
       }
