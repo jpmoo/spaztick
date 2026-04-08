@@ -1911,6 +1911,12 @@
       /* Skip refreshCenterView to avoid panel blink: the list was already updated in updateTaskInLists. */
     }, REFRESH_AFTER_TASK_DELAY_MS);
   }
+  /** Drop stale task binding on the main inspector so project/list/tag UIs are not overwritten by refreshLeftAndCenter reloading a previous task. */
+  function clearMainInspectorTaskContext() {
+    const el = document.getElementById('inspector-content');
+    if (el && el.dataset) delete el.dataset.taskId;
+  }
+
   function refreshLeftAndCenter() {
     refreshLeftPanel();
     refreshCenterView();
@@ -3612,6 +3618,7 @@
     if (centerDescInbox) centerDescInbox.textContent = '';
     document.getElementById('center-content').innerHTML = '<p class="placeholder">Loading…</p>';
     document.getElementById('inspector-title').textContent = 'Inspector';
+    clearMainInspectorTaskContext();
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Select an item to inspect.</p>';
     lastSelectedTaskBlocking = null;
     applyBlockingHighlights();
@@ -3649,6 +3656,7 @@
     if (centerTitle) centerTitle.textContent = `Search for "${q}"`;
     if (centerDesc) centerDesc.textContent = '';
     center.innerHTML = '<p class="placeholder">Searching…</p>';
+    clearMainInspectorTaskContext();
     lastSelectedTaskBlocking = null;
     applyBlockingHighlights();
     if (inboxItem) inboxItem.classList.remove('selected');
@@ -3829,6 +3837,7 @@
     if (centerDescNav) centerDescNav.textContent = '';
     document.getElementById('center-content').innerHTML = '<p class="placeholder">Loading tasks…</p>';
     document.getElementById('inspector-title').textContent = 'Project';
+    clearMainInspectorTaskContext();
     document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
     if (type === 'project' && id) {
       loadProjectDetails(id);
@@ -8232,6 +8241,7 @@
     const div = document.getElementById('inspector-content');
     const titleEl = document.getElementById('inspector-title');
     if (!div || !titleEl) return;
+    clearMainInspectorTaskContext();
     currentInspectorTag = tagName;
     titleEl.textContent = 'Tag';
     const escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -8631,6 +8641,7 @@
   async function loadProjectDetails(projectIdOrShortId) {
     lastSelectedTaskBlocking = null;
     applyBlockingHighlights();
+    clearMainInspectorTaskContext();
     try {
       const p = await api(`/api/external/projects/${encodeURIComponent(projectIdOrShortId)}`);
       const div = document.getElementById('inspector-content');
@@ -8737,6 +8748,7 @@
       }
     } catch (e) {
       document.getElementById('inspector-title').textContent = 'Inspector';
+      clearMainInspectorTaskContext();
       document.getElementById('inspector-content').innerHTML = `<p class="placeholder">${e.message || 'Error loading project.'}</p>`;
     }
   }
@@ -8744,6 +8756,7 @@
   async function loadListDetails(listId) {
     lastSelectedTaskBlocking = null;
     applyBlockingHighlights();
+    clearMainInspectorTaskContext();
     try {
       const lst = await api(`/api/external/lists/${encodeURIComponent(listId)}`);
       const div = document.getElementById('inspector-content');
@@ -8847,6 +8860,7 @@
       });
     } catch (e) {
       document.getElementById('inspector-title').textContent = 'Inspector';
+      clearMainInspectorTaskContext();
       document.getElementById('inspector-content').innerHTML = `<p class="placeholder">${e.message || 'Error loading list.'}</p>`;
     }
   }
@@ -8874,6 +8888,10 @@
     currentInspectorTag = null;
     const div = (opts && opts.container) ? opts.container : document.getElementById('inspector-content');
     if (!div) return;
+    if (!opts || !opts.container) {
+      delete div.dataset.inspectorProjectId;
+      delete div.dataset.inspectorListId;
+    }
     try {
       const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
       updateTaskInLists(t, { scheduleRefresh: false });
