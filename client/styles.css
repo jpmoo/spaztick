@@ -4459,6 +4459,28 @@ body[data-theme="orange"] .board-card .board-card-resize-handle {
 .list-settings-sort {
   margin-bottom: 10px;
 }
+/* List settings: manual sort above API sort rows; hide pulldowns when manual (same idea as display dropdown) */
+.list-settings-section-sort .list-settings-sort-manual {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.list-settings-section-sort .list-settings-sort-manual input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+.list-settings-section-sort .list-settings-sort-manual label {
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--text);
+}
+.list-settings-section-sort:has(#list-settings-manual-sort:checked) .list-settings-sort-levels {
+  display: none;
+}
+.list-settings-sort-levels .list-settings-sort {
+  margin-bottom: 10px;
+}
 .list-settings-columns-options {
   margin-bottom: 10px;
 }
