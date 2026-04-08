@@ -1934,6 +1934,15 @@
     }
   }
 
+  function listingCrossSyncMutationsAreOnlyTaskListReorder(mutations) {
+    if (!mutations || !mutations.length) return false;
+    for (const m of mutations) {
+      const t = m.target;
+      if (!t || t.nodeType !== 1 || !t.matches || !t.matches('ul.task-list')) return false;
+    }
+    return true;
+  }
+
   function startTaskListingCrossSyncObserver() {
     stopTaskListingCrossSyncObserver();
     if (!isTaskListingViewActive()) return;
@@ -1943,7 +1952,10 @@
       document.getElementById('inspector-content'),
     ].filter(Boolean);
     if (!roots.length) return;
-    listingCrossSyncMutObs = new MutationObserver(() => scheduleTaskListingCrossSync());
+    listingCrossSyncMutObs = new MutationObserver((records) => {
+      if (listingCrossSyncMutationsAreOnlyTaskListReorder(records)) return;
+      scheduleTaskListingCrossSync();
+    });
     roots.forEach((r) => listingCrossSyncMutObs.observe(r, { childList: true, subtree: true }));
   }
 
@@ -3398,7 +3410,12 @@
         const newOrder = Array.from(listEl.querySelectorAll('.task-row')).map((r) => r.dataset.id).filter(Boolean);
         const { order: o, visible: v, showFlagged: sf, showCompleted: sc, showHighlightDue: sh, showPriority: sp, sortBy: sb } = getDisplayProperties(ctx);
         saveDisplayProperties(ctx, o, v, sf, sc, sh, sp, sb, true, newOrder);
-        refreshTaskList();
+        displayedTasks = orderTasksByManual(displayedTasks, newOrder);
+        const visIds = new Set(newOrder.map(String));
+        const visibleInLast = lastTasks.filter((t) => visIds.has(String(t.id)));
+        const hiddenInLast = lastTasks.filter((t) => !visIds.has(String(t.id)));
+        lastTasks.length = 0;
+        lastTasks.push(...orderTasksByManual(visibleInLast, newOrder), ...hiddenInLast);
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
