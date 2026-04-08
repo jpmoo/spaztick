@@ -46,6 +46,7 @@
   };
   const TASK_LIST_MIN_WIDTH = 48;
   const TASK_LIST_MOVE_WIDTH = 28;
+  const TASK_LIST_SECTION_BREAK_WIDTH = 20;
   const LEFT_PANEL_WIDTH_KEY = 'spaztick_left_panel_width';
   const MIN_LEFT_PANEL_WIDTH = 180;
   const MAX_LEFT_PANEL_WIDTH = 480;
@@ -1420,15 +1421,18 @@
           const sortBy = Array.isArray(o.sortBy) ? o.sortBy.filter((s) => s && SORT_FIELD_KEYS.includes(s.key)) : [];
           const manualSort = o.manualSort === true;
           const manualOrder = Array.isArray(o.manualOrder) ? o.manualOrder.filter((id) => id != null) : [];
-          return { order, visible, showFlagged, showCompleted, showHighlightDue, showPriority, sortBy, manualSort, manualOrder };
+          const manualSectionBreaks = Array.isArray(o.manualSectionBreaks)
+            ? o.manualSectionBreaks.map((id) => String(id)).filter(Boolean)
+            : [];
+          return { order, visible, showFlagged, showCompleted, showHighlightDue, showPriority, sortBy, manualSort, manualOrder, manualSectionBreaks };
         }
       }
     } catch (_) {}
     const order = ['due_date'];
-    return { order, visible: new Set(order), showFlagged: true, showCompleted: true, showHighlightDue: true, showPriority: false, sortBy: [], manualSort: false, manualOrder: [] };
+    return { order, visible: new Set(order), showFlagged: true, showCompleted: true, showHighlightDue: true, showPriority: false, sortBy: [], manualSort: false, manualOrder: [], manualSectionBreaks: [] };
   }
 
-  function saveDisplayProperties(source, order, visible, showFlagged, showCompleted, showHighlightDue, showPriority, sortBy, manualSort, manualOrder) {
+  function saveDisplayProperties(source, order, visible, showFlagged, showCompleted, showHighlightDue, showPriority, sortBy, manualSort, manualOrder, manualSectionBreaks) {
     const key = displayKey(source != null ? source : 'project');
     let all = {};
     try {
@@ -1447,6 +1451,7 @@
       sortBy: sortBy !== undefined ? sortBy : current.sortBy,
       manualSort: manualSort !== undefined ? manualSort : current.manualSort,
       manualOrder: manualOrder !== undefined ? manualOrder : current.manualOrder,
+      manualSectionBreaks: manualSectionBreaks !== undefined ? manualSectionBreaks : current.manualSectionBreaks,
       columnWidths: existing.columnWidths && typeof existing.columnWidths === 'object' ? existing.columnWidths : {},
     };
     localStorage.setItem(DISPLAY_PROPERTIES_KEY, JSON.stringify(all));
@@ -1808,7 +1813,10 @@
     if (!ul) return;
     const { order, visible, manualSort } = getDisplayProperties(src);
     const columnKeys = [];
-    if (manualSort) columnKeys.push('move');
+    if (manualSort) {
+      columnKeys.push('sectionBreak');
+      columnKeys.push('move');
+    }
     columnKeys.push('status');
     columnKeys.push('title');
     order.forEach((k) => { if (visible.has(k)) columnKeys.push(k); });
@@ -1842,7 +1850,10 @@
       const src = lastTaskSource != null ? lastTaskSource : 'project';
       const { order, visible, manualSort } = getDisplayProperties(src);
       const columnKeys = [];
-      if (manualSort) columnKeys.push('move');
+      if (manualSort) {
+        columnKeys.push('sectionBreak');
+        columnKeys.push('move');
+      }
       columnKeys.push('status');
       columnKeys.push('title');
       order.forEach((k) => { if (visible.has(k)) columnKeys.push(k); });
@@ -3041,6 +3052,56 @@
     }
 
     columnKeys.forEach((key) => {
+      if (key === 'sectionBreak') {
+        const { manualSectionBreaks } = getDisplayProperties(source);
+        const breakSet = new Set((manualSectionBreaks || []).map(String));
+        const tid = t.id != null ? String(t.id) : '';
+        if (tid && breakSet.has(tid)) row.classList.add('task-row-manual-section-break');
+        const wrap = document.createElement('div');
+        wrap.className = 'task-row-section-break';
+        if (!tid) {
+          row.appendChild(wrap);
+          return;
+        }
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'task-section-break-toggle';
+        btn.title = breakSet.has(tid) ? 'Remove section break below this task' : 'Add section break below this task';
+        btn.setAttribute('aria-label', btn.title);
+        btn.setAttribute('aria-pressed', breakSet.has(tid) ? 'true' : 'false');
+        btn.innerHTML = '<svg class="task-section-break-icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 8h12" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>';
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const cur = getDisplayProperties(source);
+          const id = String(t.id);
+          const set = new Set((cur.manualSectionBreaks || []).map(String));
+          if (set.has(id)) set.delete(id);
+          else set.add(id);
+          const next = Array.from(set);
+          saveDisplayProperties(
+            source,
+            cur.order,
+            cur.visible,
+            cur.showFlagged,
+            cur.showCompleted,
+            cur.showHighlightDue,
+            cur.showPriority,
+            cur.sortBy,
+            cur.manualSort,
+            cur.manualOrder,
+            next,
+          );
+          const on = set.has(id);
+          row.classList.toggle('task-row-manual-section-break', on);
+          btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+          btn.title = on ? 'Remove section break below this task' : 'Add section break below this task';
+        });
+        btn.addEventListener('mousedown', (e) => e.stopPropagation());
+        wrap.appendChild(btn);
+        row.appendChild(wrap);
+        return;
+      }
       if (key === 'move') {
         const moveWrap = document.createElement('div');
         moveWrap.className = 'task-row-move';
@@ -3270,13 +3331,17 @@
     }
     const { order, visible, manualSort: showMove } = getDisplayProperties(src);
     const columnKeys = [];
-    if (showMove) columnKeys.push('move');
+    if (showMove) {
+      columnKeys.push('sectionBreak');
+      columnKeys.push('move');
+    }
     columnKeys.push('status');
     columnKeys.push('title');
     order.forEach((k) => { if (visible.has(k)) columnKeys.push(k); });
 
     const widths = getTaskListColumnWidths(src);
     function colWidth(key) {
+      if (key === 'sectionBreak') return TASK_LIST_SECTION_BREAK_WIDTH + 'px';
       if (key === 'move') return TASK_LIST_MOVE_WIDTH + 'px';
       if (key === 'title') {
         const w = widths[key] != null ? widths[key] : (TASK_LIST_DEFAULT_WIDTHS[key] || 180);
@@ -3297,10 +3362,11 @@
       let cls = 'task-list-header-cell';
       if (colKey === 'title') cls += ' task-list-header-cell-title';
       if (colKey === 'blocking') cls += ' task-list-header-cell-blocking';
-      if (colKey !== 'move') cls += ' has-resize';
+      if (colKey === 'sectionBreak') cls += ' task-list-header-cell-section-break';
+      if (colKey !== 'move' && colKey !== 'sectionBreak') cls += ' has-resize';
       th.className = cls;
-      th.textContent = colKey === 'move' ? '' : (TASK_LIST_COLUMN_LABELS[colKey] || colKey);
-      if (colKey !== 'move') {
+      th.textContent = colKey === 'move' || colKey === 'sectionBreak' ? '' : (TASK_LIST_COLUMN_LABELS[colKey] || colKey);
+      if (colKey !== 'move' && colKey !== 'sectionBreak') {
         const handle = document.createElement('div');
         handle.className = 'task-list-resize-handle';
         handle.setAttribute('aria-label', `Resize ${TASK_LIST_COLUMN_LABELS[colKey] || colKey} column`);
@@ -3339,6 +3405,7 @@
             saveTaskListColumnWidth(colKey, newW, source);
             const newWidths = getTaskListColumnWidths(source);
             const newGridCols = columnKeys.map((k) => {
+              if (k === 'sectionBreak') return TASK_LIST_SECTION_BREAK_WIDTH + 'px';
               if (k === 'move') return TASK_LIST_MOVE_WIDTH + 'px';
               if (k === 'title') {
                 const w = newWidths[k] != null ? newWidths[k] : (TASK_LIST_DEFAULT_WIDTHS[k] || 180);
@@ -10494,7 +10561,7 @@
         if (created && created.id) {
           const sourceKey = 'list:' + (duplicateListSource.id || '');
           const props = getDisplayProperties(sourceKey);
-          saveDisplayProperties('list:' + created.id, props.order, props.visible, props.showFlagged, props.showCompleted, props.showHighlightDue, props.showPriority, props.sortBy, props.manualSort, props.manualOrder);
+          saveDisplayProperties('list:' + created.id, props.order, props.visible, props.showFlagged, props.showCompleted, props.showHighlightDue, props.showPriority, props.sortBy, props.manualSort, props.manualOrder, props.manualSectionBreaks);
         }
         closeDuplicateListModal();
         await loadListsFromApi();
