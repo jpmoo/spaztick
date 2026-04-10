@@ -1969,10 +1969,11 @@
     if (!isTaskListingViewActive()) return;
     // Do not observe inspector-content: loading task details replaces its DOM and would schedule
     // refreshLeftAndCenter (full list reload) on every selection — visible flash and input lag.
-    // Inspector edits are covered by change/blur listeners and explicit updateTaskInLists paths.
+    // Observe #center-content only (not the whole center panel) so header/display dropdown DOM
+    // changes do not schedule a full sync.
     const roots = [
       document.getElementById('left-panel'),
-      document.getElementById('center-panel'),
+      document.getElementById('center-content'),
     ].filter(Boolean);
     if (!roots.length) return;
     listingCrossSyncMutObs = new MutationObserver((records) => {
@@ -2005,6 +2006,9 @@
     if (!target || !target.closest) return false;
     if (!target.closest('#left-panel') && !target.closest('#center-panel') && !target.closest('#right-panel')) return false;
     if (target.closest('#chat-region')) return false;
+    // Inspector fields fire change/blur like other panels; those edits already persist via handlers.
+    // Scheduling refreshLeftAndCenter here caused intermittent lag (full list reload) after editing then clicking tasks.
+    if (target.closest('#inspector-content')) return false;
     return true;
   }
 
@@ -3507,6 +3511,8 @@
 
   let pendingTaskClickTimeoutId = null;
   let titleEditInProgress = false;
+  /** Main inspector only: incremented on each loadTaskDetails; stale async completions are ignored. */
+  let loadTaskDetailsMainGeneration = 0;
   function onTaskClick(ev, rowEl) {
     const row = rowEl != null ? rowEl : ev.currentTarget;
     if (!row.classList.contains('task-row')) return;
@@ -8895,12 +8901,16 @@
     currentInspectorTag = null;
     const div = (opts && opts.container) ? opts.container : document.getElementById('inspector-content');
     if (!div) return;
+    const isMainInspector = !opts || !opts.container;
+    let mainGen = 0;
+    if (isMainInspector) mainGen = ++loadTaskDetailsMainGeneration;
     if (!opts || !opts.container) {
       delete div.dataset.inspectorProjectId;
       delete div.dataset.inspectorListId;
     }
     try {
       const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+      if (isMainInspector && mainGen !== loadTaskDetailsMainGeneration) return;
       updateTaskInLists(t, { scheduleRefresh: false, skipListDomUpdate: true });
       if (opts && opts.onTitle != null && t.number != null) opts.onTitle(t.number);
       div.dataset.taskId = taskId;
@@ -9095,7 +9105,6 @@
           }
         });
       });
-      const isMainInspector = !opts || !opts.container;
       if (isMainInspector) {
         lastSelectedTaskBlocking = {
           depends_on: (t.depends_on || []).map(String),
@@ -9104,6 +9113,7 @@
         applyBlockingHighlights();
       }
     } catch (e) {
+      if (isMainInspector && mainGen !== loadTaskDetailsMainGeneration) return;
       const mainDiv = document.getElementById('inspector-content');
       if (mainDiv) mainDiv.innerHTML = `<div class="inspector-content-inner"><p class="placeholder">${e.message || 'Error'}</p></div>`;
       if (!opts || !opts.container) {
