@@ -1969,12 +1969,10 @@
     if (!isTaskListingViewActive()) return;
     // Do not observe inspector-content: loading task details replaces its DOM and would schedule
     // refreshLeftAndCenter (full list reload) on every selection — visible flash and input lag.
-    // Observe #center-content only (not the whole center panel) so header/display dropdown DOM
-    // changes do not schedule a full sync.
-    const roots = [
-      document.getElementById('left-panel'),
-      document.getElementById('center-content'),
-    ].filter(Boolean);
+    // Observe #center-content only — not the left panel (navigator updates would never match the
+    // ul.task-list reorder skip and spuriously scheduled a full sync) and not the whole center panel
+    // (header/display dropdown DOM changes).
+    const roots = [document.getElementById('center-content')].filter(Boolean);
     if (!roots.length) return;
     listingCrossSyncMutObs = new MutationObserver((records) => {
       if (listingCrossSyncMutationsAreOnlyTaskListReorder(records)) return;
@@ -3513,6 +3511,7 @@
   let titleEditInProgress = false;
   /** Main inspector only: incremented on each loadTaskDetails; stale async completions are ignored. */
   let loadTaskDetailsMainGeneration = 0;
+  let loadTaskDetailsMainAbort = null;
   function onTaskClick(ev, rowEl) {
     const row = rowEl != null ? rowEl : ev.currentTarget;
     if (!row.classList.contains('task-row')) return;
@@ -8903,13 +8902,17 @@
     if (!div) return;
     const isMainInspector = !opts || !opts.container;
     let mainGen = 0;
-    if (isMainInspector) mainGen = ++loadTaskDetailsMainGeneration;
+    if (isMainInspector) {
+      if (loadTaskDetailsMainAbort) loadTaskDetailsMainAbort.abort();
+      loadTaskDetailsMainAbort = new AbortController();
+      mainGen = ++loadTaskDetailsMainGeneration;
+    }
     if (!opts || !opts.container) {
       delete div.dataset.inspectorProjectId;
       delete div.dataset.inspectorListId;
     }
     try {
-      const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
+      const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`, isMainInspector ? { signal: loadTaskDetailsMainAbort.signal } : {});
       if (isMainInspector && mainGen !== loadTaskDetailsMainGeneration) return;
       updateTaskInLists(t, { scheduleRefresh: false, skipListDomUpdate: true });
       if (opts && opts.onTitle != null && t.number != null) opts.onTitle(t.number);
@@ -9110,9 +9113,14 @@
           depends_on: (t.depends_on || []).map(String),
           blocks: (t.blocks || []).map(String),
         };
-        applyBlockingHighlights();
+        const blockGen = mainGen;
+        requestAnimationFrame(() => {
+          if (blockGen !== loadTaskDetailsMainGeneration) return;
+          applyBlockingHighlights();
+        });
       }
     } catch (e) {
+      if (e && e.name === 'AbortError') return;
       if (isMainInspector && mainGen !== loadTaskDetailsMainGeneration) return;
       const mainDiv = document.getElementById('inspector-content');
       if (mainDiv) mainDiv.innerHTML = `<div class="inspector-content-inner"><p class="placeholder">${e.message || 'Error'}</p></div>`;
