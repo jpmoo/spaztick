@@ -1967,10 +1967,12 @@
   function startTaskListingCrossSyncObserver() {
     stopTaskListingCrossSyncObserver();
     if (!isTaskListingViewActive()) return;
+    // Do not observe inspector-content: loading task details replaces its DOM and would schedule
+    // refreshLeftAndCenter (full list reload) on every selection — visible flash and input lag.
+    // Inspector edits are covered by change/blur listeners and explicit updateTaskInLists paths.
     const roots = [
       document.getElementById('left-panel'),
       document.getElementById('center-panel'),
-      document.getElementById('inspector-content'),
     ].filter(Boolean);
     if (!roots.length) return;
     listingCrossSyncMutObs = new MutationObserver((records) => {
@@ -3515,7 +3517,8 @@
     function doSelectAndLoad() {
       if (titleEditInProgress) return;
       pendingTaskClickTimeoutId = null;
-      document.querySelectorAll('#center-content .task-row').forEach((x) => x.classList.remove('selected'));
+      const prevSel = document.querySelector('#center-content .task-row.selected');
+      if (prevSel && prevSel !== row) prevSel.classList.remove('selected');
       row.classList.add('selected');
       document.getElementById('inspector-title').textContent = `Task ${num || id || ''}`;
       document.getElementById('inspector-content').innerHTML = '<p class="placeholder">Loading…</p>';
