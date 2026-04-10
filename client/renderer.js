@@ -1843,6 +1843,10 @@
     if (idxLast >= 0) lastTasks[idxLast] = updatedTask;
     const idxDisp = (displayedTasks || []).findIndex((t) => String(t.id) === id);
     if (idxDisp >= 0) displayedTasks[idxDisp] = updatedTask;
+    if (opts && opts.skipListDomUpdate) {
+      if (!(opts && opts.scheduleRefresh === false)) scheduleRefreshAfterTaskChange();
+      return;
+    }
     const center = document.getElementById('center-content');
     const ul = center && center.querySelector('ul.task-list');
     const existingRow = ul && ul.querySelector('.task-row[data-id="' + id + '"]');
@@ -8894,7 +8898,7 @@
     }
     try {
       const t = await api(`/api/external/tasks/${encodeURIComponent(taskId)}`);
-      updateTaskInLists(t, { scheduleRefresh: false });
+      updateTaskInLists(t, { scheduleRefresh: false, skipListDomUpdate: true });
       if (opts && opts.onTitle != null && t.number != null) opts.onTitle(t.number);
       div.dataset.taskId = taskId;
       const createdVal = t.created_at ? formatDateTimeForInspector(t.created_at) : '—';
