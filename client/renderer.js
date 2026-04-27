@@ -1834,6 +1834,7 @@
       }
     }
     applyBlockingHighlights();
+    requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
   }
 
   function updateTaskInLists(updatedTask, opts) {
@@ -1866,6 +1867,7 @@
       if (wasSelected) newRow.classList.add('selected');
       existingRow.parentNode.replaceChild(newRow, existingRow);
       if (manualSort) addDragToRow(newRow, ul, src);
+      requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
     } else {
       redrawDisplayedTasks();
     }
@@ -3006,6 +3008,42 @@
     return escaped.replace(/(?<![.:/A-Za-z0-9-])(#[\w-]+)/g, '<span class="title-tag-pill">$1</span>');
   }
 
+  /** Title column: clip with ellipsis; overflow measured for hover/selected marquee. */
+  function wrapTaskTitleMarqueeInner(formattedInnerHtml) {
+    return `<span class="title-marquee-shell"><span class="cell-value">${formattedInnerHtml}</span></span>`;
+  }
+
+  function refreshTitleMarqueeOverflowFlags(rootEl) {
+    const scope = rootEl || document.getElementById('center-content');
+    if (!scope || !scope.querySelectorAll) return;
+    scope.querySelectorAll('.title-marquee-shell').forEach((shell) => {
+      const val = shell.querySelector('.cell-value');
+      if (!val) return;
+      const overflow = val.scrollWidth > shell.clientWidth + 1;
+      shell.classList.toggle('title-marquee-overflow', overflow);
+      const dist = overflow ? Math.max(0, val.scrollWidth - shell.clientWidth) : 0;
+      shell.style.setProperty('--marquee-dist', dist ? `${-dist}px` : '0px');
+      const sec = dist ? Math.min(26, Math.max(5.5, dist / 36)) : 8;
+      shell.style.setProperty('--marquee-duration', `${sec}s`);
+    });
+  }
+
+  (function setupTitleMarqueeObservers() {
+    let debounceId = null;
+    function scheduleRefresh() {
+      clearTimeout(debounceId);
+      debounceId = setTimeout(() => {
+        debounceId = null;
+        refreshTitleMarqueeOverflowFlags(document.getElementById('center-content'));
+      }, 80);
+    }
+    window.addEventListener('resize', scheduleRefresh);
+    if (typeof ResizeObserver !== 'undefined') {
+      const el = document.getElementById('center-content');
+      if (el) new ResizeObserver(scheduleRefresh).observe(el);
+    }
+  })();
+
   function buildTaskRow(t, columnKeys) {
     const source = lastTaskSource != null ? lastTaskSource : 'project';
     const { order, visible, showFlagged, showHighlightDue, showPriority, manualSort } = getDisplayProperties(source);
@@ -3163,7 +3201,7 @@
         return;
       }
       if (key === 'title') {
-        addCell('title', `<span class="cell-value">${formatTitleWithTagPills((t.title || '(no title)').trim())}</span>`, { titleTaskId: t.id });
+        addCell('title', wrapTaskTitleMarqueeInner(formatTitleWithTagPills((t.title || '(no title)').trim())), { titleTaskId: t.id });
         return;
       }
       if (!visible.has(key)) return;
@@ -3285,7 +3323,8 @@
       titleEditInProgress = false;
       const newTitle = (input.value || '').trim();
       const displayTitle = newTitle || '(no title)';
-      titleCell.innerHTML = `<span class="cell-value">${formatTitleWithTagPills(displayTitle)}</span>`;
+      titleCell.innerHTML = wrapTaskTitleMarqueeInner(formatTitleWithTagPills(displayTitle));
+      requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(titleCell.closest('#center-content')));
       if (newTitle !== currentTitle) {
         updateTask(taskId, { title: newTitle }).then((updated) => {
           if (updated) updateTaskInLists(updated);
@@ -3299,7 +3338,8 @@
 
     function cancel() {
       titleEditInProgress = false;
-      titleCell.innerHTML = `<span class="cell-value">${formatTitleWithTagPills(currentTitle || '(no title)')}</span>`;
+      titleCell.innerHTML = wrapTaskTitleMarqueeInner(formatTitleWithTagPills(currentTitle || '(no title)'));
+      requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(titleCell.closest('#center-content')));
     }
 
     let cancelled = false;
@@ -3429,10 +3469,12 @@
               return k === colKey ? newW + 'px' : `minmax(${TASK_LIST_MIN_WIDTH}px, ${w}px)`;
             }).join(' ');
             wrapperEl.style.setProperty('--task-grid-cols', newGridCols);
+            requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
           };
           const onUp = () => {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
+            requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
           };
           document.addEventListener('mousemove', onMove);
           document.addEventListener('mouseup', onUp);
@@ -3447,6 +3489,7 @@
       const row = Array.from(center.querySelectorAll('.task-row')).find((r) => String(r.dataset.id) === String(shownId));
       if (row) row.classList.add('selected');
     }
+    requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
   }
 
   function addDragToRow(row, listEl, source) {
@@ -9001,7 +9044,10 @@
             const row = document.querySelector(`.task-row[data-id="${taskId}"]`);
             if (row) {
               const titleCell = row.querySelector('.title-cell .cell-value');
-              if (titleCell) titleCell.textContent = newTitle || '(no title)';
+              if (titleCell) {
+                titleCell.innerHTML = formatTitleWithTagPills(newTitle || '(no title)');
+                requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(titleCell.closest('#center-content')));
+              }
             }
           }).catch((err) => console.error(err));
         };

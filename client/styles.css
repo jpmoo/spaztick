@@ -1067,6 +1067,40 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).task-blocked.sel
 .task-list .task-row .task-cell.title-cell {
   min-width: 0;
 }
+
+/* Long titles: ellipsis in place; marquee within column when row is hovered or selected */
+.task-list .task-row .task-cell.title-cell .title-marquee-shell {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+.task-list .task-row:hover .title-marquee-shell.title-marquee-overflow .cell-value,
+.task-list .task-row.selected .title-marquee-shell.title-marquee-overflow .cell-value {
+  display: inline-block;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  vertical-align: bottom;
+  animation: task-title-marquee var(--marquee-duration, 8s) ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+@keyframes task-title-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(var(--marquee-dist, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-list .task-row:hover .title-marquee-shell.title-marquee-overflow .cell-value,
+  .task-list .task-row.selected .title-marquee-shell.title-marquee-overflow .cell-value {
+    animation: none;
+  }
+}
+
 .task-list .task-row .task-cell.title-cell .title-tag-pill {
   display: inline;
   padding: 1px 6px;
