@@ -1068,15 +1068,27 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).task-blocked.sel
   min-width: 0;
 }
 
-/* Long titles: ellipsis in place; marquee within column when row is hovered or selected */
+/* Long titles: ellipsis in place; marquee within column when row is hovered or selected.
+   Shell must be a flex-shrinkable block; inner .cell-value must have bounded width or
+   ellipsis + scrollWidth measurement never activate. */
 .task-list .task-row .task-cell.title-cell .title-marquee-shell {
-  flex: 1;
+  display: block;
+  flex: 1 1 0;
   min-width: 0;
+  max-width: 100%;
   overflow: hidden;
 }
-.task-list .task-row:hover .title-marquee-shell.title-marquee-overflow .cell-value,
-.task-list .task-row.selected .title-marquee-shell.title-marquee-overflow .cell-value {
+.task-list .task-row .task-cell.title-cell .title-marquee-shell > .cell-value {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.task-list .task-row:hover .title-marquee-shell.title-marquee-overflow > .cell-value,
+.task-list .task-row.selected .title-marquee-shell.title-marquee-overflow > .cell-value {
   display: inline-block;
+  width: auto;
   max-width: none;
   overflow: visible;
   text-overflow: clip;
@@ -1095,8 +1107,8 @@ body.task-list-sep-shading .task-list .task-row:nth-child(even).task-blocked.sel
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .task-list .task-row:hover .title-marquee-shell.title-marquee-overflow .cell-value,
-  .task-list .task-row.selected .title-marquee-shell.title-marquee-overflow .cell-value {
+  .task-list .task-row:hover .title-marquee-shell.title-marquee-overflow > .cell-value,
+  .task-list .task-row.selected .title-marquee-shell.title-marquee-overflow > .cell-value {
     animation: none;
   }
 }

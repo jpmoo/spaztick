@@ -1834,7 +1834,7 @@
       }
     }
     applyBlockingHighlights();
-    requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
+    scheduleTitleMarqueeRemeasure(center);
   }
 
   function updateTaskInLists(updatedTask, opts) {
@@ -1867,7 +1867,7 @@
       if (wasSelected) newRow.classList.add('selected');
       existingRow.parentNode.replaceChild(newRow, existingRow);
       if (manualSort) addDragToRow(newRow, ul, src);
-      requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
+      scheduleTitleMarqueeRemeasure(center);
     } else {
       redrawDisplayedTasks();
     }
@@ -3019,12 +3019,23 @@
     scope.querySelectorAll('.title-marquee-shell').forEach((shell) => {
       const val = shell.querySelector('.cell-value');
       if (!val) return;
-      const overflow = val.scrollWidth > shell.clientWidth + 1;
+      void shell.offsetWidth;
+      void val.offsetWidth;
+      const shellW = shell.getBoundingClientRect().width;
+      const sw = val.scrollWidth;
+      const overflow = sw > shellW + 1;
       shell.classList.toggle('title-marquee-overflow', overflow);
-      const dist = overflow ? Math.max(0, val.scrollWidth - shell.clientWidth) : 0;
+      const dist = overflow ? Math.max(0, sw - shellW) : 0;
       shell.style.setProperty('--marquee-dist', dist ? `${-dist}px` : '0px');
       const sec = dist ? Math.min(26, Math.max(5.5, dist / 36)) : 8;
       shell.style.setProperty('--marquee-duration', `${sec}s`);
+    });
+  }
+
+  /** Measure after grid/layout has settled (single rAF is sometimes too early). */
+  function scheduleTitleMarqueeRemeasure(rootEl) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(rootEl));
     });
   }
 
@@ -3324,7 +3335,7 @@
       const newTitle = (input.value || '').trim();
       const displayTitle = newTitle || '(no title)';
       titleCell.innerHTML = wrapTaskTitleMarqueeInner(formatTitleWithTagPills(displayTitle));
-      requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(titleCell.closest('#center-content')));
+      scheduleTitleMarqueeRemeasure(titleCell.closest('#center-content'));
       if (newTitle !== currentTitle) {
         updateTask(taskId, { title: newTitle }).then((updated) => {
           if (updated) updateTaskInLists(updated);
@@ -3339,7 +3350,7 @@
     function cancel() {
       titleEditInProgress = false;
       titleCell.innerHTML = wrapTaskTitleMarqueeInner(formatTitleWithTagPills(currentTitle || '(no title)'));
-      requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(titleCell.closest('#center-content')));
+      scheduleTitleMarqueeRemeasure(titleCell.closest('#center-content'));
     }
 
     let cancelled = false;
@@ -3469,12 +3480,12 @@
               return k === colKey ? newW + 'px' : `minmax(${TASK_LIST_MIN_WIDTH}px, ${w}px)`;
             }).join(' ');
             wrapperEl.style.setProperty('--task-grid-cols', newGridCols);
-            requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
+            scheduleTitleMarqueeRemeasure(center);
           };
           const onUp = () => {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
-            requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
+            scheduleTitleMarqueeRemeasure(center);
           };
           document.addEventListener('mousemove', onMove);
           document.addEventListener('mouseup', onUp);
@@ -3489,7 +3500,7 @@
       const row = Array.from(center.querySelectorAll('.task-row')).find((r) => String(r.dataset.id) === String(shownId));
       if (row) row.classList.add('selected');
     }
-    requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(center));
+    scheduleTitleMarqueeRemeasure(center);
   }
 
   function addDragToRow(row, listEl, source) {
@@ -9046,7 +9057,7 @@
               const titleCell = row.querySelector('.title-cell .cell-value');
               if (titleCell) {
                 titleCell.innerHTML = formatTitleWithTagPills(newTitle || '(no title)');
-                requestAnimationFrame(() => refreshTitleMarqueeOverflowFlags(titleCell.closest('#center-content')));
+                scheduleTitleMarqueeRemeasure(titleCell.closest('#center-content'));
               }
             }
           }).catch((err) => console.error(err));
