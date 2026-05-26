@@ -32,6 +32,51 @@ PRIORITY_MIN, PRIORITY_MAX = 0, 3
 _UNSET = object()
 
 
+def _strip_text(s: str | None) -> str:
+    return (s or "").strip()
+
+
+def resolve_task_notes(description: str | None = None, notes: str | None = None) -> str | None:
+    """Canonical task body text. Notes wins when both are non-empty; legacy description maps to notes."""
+    n = _strip_text(notes)
+    if n:
+        return n
+    d = _strip_text(description)
+    return d or None
+
+
+def migrate_description_to_notes() -> tuple[int, int]:
+    """One-time: copy description -> notes where notes empty; clear description (notes wins on conflict).
+    Returns (backfilled_count, conflict_cleared_count)."""
+    conn = get_connection()
+    try:
+        backfilled = conn.execute(
+            """UPDATE tasks SET notes = description
+               WHERE (notes IS NULL OR TRIM(notes) = '')
+                 AND description IS NOT NULL AND TRIM(description) != ''"""
+        ).rowcount
+        cleared = conn.execute(
+            """UPDATE tasks SET description = NULL
+               WHERE notes IS NOT NULL AND TRIM(notes) != ''
+                 AND description IS NOT NULL AND TRIM(description) != ''"""
+        ).rowcount
+        arch_backfilled = conn.execute(
+            """UPDATE archived SET notes = description
+               WHERE (notes IS NULL OR TRIM(notes) = '')
+                 AND description IS NOT NULL AND TRIM(description) != ''"""
+        ).rowcount
+        arch_cleared = conn.execute(
+            """UPDATE archived SET description = NULL
+               WHERE notes IS NOT NULL AND TRIM(notes) != ''
+                 AND description IS NOT NULL AND TRIM(description) != ''"""
+        ).rowcount
+        if backfilled or cleared or arch_backfilled or arch_cleared:
+            conn.commit()
+        return (backfilled + arch_backfilled, cleared + arch_cleared)
+    finally:
+        conn.close()
+
+
 def _date_only(s: str | None) -> str | None:
     """Normalize to YYYY-MM-DD for comparison, or None if empty/invalid."""
     if not s or not isinstance(s, str):
@@ -93,14 +138,14 @@ def migrate_compound_task_tags_to_individual() -> int:
 
 
 def migrate_sync_all_task_tags_from_text() -> int:
-    """One-time: for every task, ensure task_tags has a row for each #tag in title/description/notes.
+    """One-time: for every task, ensure task_tags has a row for each #tag in title/notes.
     Returns number of tasks processed. Call on startup so existing tasks like '#Chuck, #Sylvia, and #Tamar' are findable by each tag."""
     conn = get_connection()
     try:
-        rows = conn.execute("SELECT id, title, description, notes FROM tasks").fetchall()
+        rows = conn.execute("SELECT id, title, notes FROM tasks").fetchall()
         n = 0
-        for (task_id, title, description, notes) in rows:
-            for tag in _extract_hashtag_names_from_text(title or "", description or "", notes or ""):
+        for (task_id, title, notes) in rows:
+            for tag in _extract_hashtag_names_from_text(title or "", notes or ""):
                 if tag:
                     conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (task_id, tag))
             n += 1
@@ -133,12 +178,15 @@ def _task_row_to_dict(row: Any) -> dict[str, Any]:
     # All tasks expose at least priority 0; never return null to clients
     if d.get("priority") is None:
         d["priority"] = 0
+    # Body text is canonical in notes; description column is legacy (cleared on migration).
+    d["description"] = None
     return d
 
 
 def ensure_db() -> None:
-    """Bootstrap database on first run."""
+    """Bootstrap database on first run and run idempotent text migration."""
     init_database()
+    migrate_description_to_notes()
 
 
 def create_task(
@@ -157,7 +205,8 @@ def create_task(
     task_id: str | None = None,
     flagged: bool = False,
 ) -> dict[str, Any]:
-    """Create a single task. All mutations go through Task Service. Uses ULID for id. Priority defaults to 0."""
+    """Create a single task. All mutations go through Task Service. Uses ULID for id. Priority defaults to 0.
+    description is deprecated: merged into notes (notes wins when both are set)."""
     if status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     eff_priority = priority if priority is not None else 0
@@ -169,6 +218,7 @@ def create_task(
     tid = task_id or _new_task_id()
     now = _now_iso()
     rec_json = json.dumps(recurrence) if recurrence else None
+    eff_notes = resolve_task_notes(description, notes)
     conn = get_connection()
     try:
         use_number = has_number_column(conn)
@@ -182,7 +232,7 @@ def create_task(
                     created_at, updated_at, completed_at, flagged
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    tid, next_num, title, description or None, notes or None, status, eff_priority,
+                    tid, next_num, title, None, eff_notes, status, eff_priority,
                     available_date, due_date, rec_json, recurrence_parent_id,
                     now, now, None, flag_val,
                 ),
@@ -195,7 +245,7 @@ def create_task(
                     created_at, updated_at, completed_at, flagged
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    tid, title, description or None, notes or None, status, eff_priority,
+                    tid, title, None, eff_notes, status, eff_priority,
                     available_date, due_date, rec_json, recurrence_parent_id,
                     now, now, None, flag_val,
                 ),
@@ -211,7 +261,7 @@ def create_task(
                 "INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)",
                 (tid, tag),
             )
-        for tag in _extract_hashtag_names_from_text(title or "", description or "", notes or ""):
+        for tag in _extract_hashtag_names_from_text(title or "", eff_notes or ""):
             if tag:
                 conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (tid, tag))
         _record_history(conn, tid, "created", {"title": title, "status": status})
@@ -239,10 +289,9 @@ def _tags_for_task(
     conn: sqlite3.Connection,
     task_id: str,
     title: str | None = None,
-    description: str | None = None,
     notes: str | None = None,
 ) -> list[str]:
-    """Return tags for a task: from task_tags plus #word in title/description/notes (skip # inside URLs). Case-insensitive dedupe."""
+    """Return tags for a task: from task_tags plus #word in title/notes (skip # inside URLs). Case-insensitive dedupe."""
     from_tags = [r[0] for r in conn.execute("SELECT tag FROM task_tags WHERE task_id = ?", (task_id,))]
     seen: set[str] = set()
     out: list[str] = []
@@ -251,7 +300,7 @@ def _tags_for_task(
         if k not in seen:
             seen.add(k)
             out.append(k)
-    for text in (title or "", description or "", notes or ""):
+    for text in (title or "", notes or ""):
         if not text:
             continue
         for m in _HASHTAG_NOT_IN_URL_RE.finditer(text):
@@ -276,7 +325,7 @@ def _add_task_relations(conn: sqlite3.Connection, out: dict[str, Any]) -> None:
     ]
     out["tags"] = _tags_for_task(
         conn, tid,
-        out.get("title"), out.get("description"), out.get("notes"),
+        out.get("title"), out.get("notes"),
     )
     out["depends_on"] = [r[0] for r in conn.execute("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?", (tid,))]
     out["blocks"] = [r[0] for r in conn.execute("SELECT task_id FROM task_dependencies WHERE depends_on_task_id = ?", (tid,))]
@@ -348,8 +397,8 @@ def list_tasks(
     due_before: tasks with due_date strictly before this date (exclusive). due_on: tasks with due_date on this exact date only.
     available_by_required: if True with available_by, only tasks that have available_date set and <= date (excludes NULL; "available today" = on my plate today).
     title_contains: substring match on title (case-insensitive).
-    search: substring match on title OR description (case-insensitive).
-    q: match tag exactly OR title OR description OR notes (substring). Use for combined/tag search.
+    search: substring match on title OR notes (case-insensitive).
+    q: match tag exactly OR title OR notes (substring). Use for combined/tag search.
     sort_by: due_date, available_date, created_at, completed_at, title (default created_at DESC).
     priority: 0-3 to filter by exact priority (3 = highest).
     blocked_by_task_id: only tasks that have this task as a dependency (tasks "blocked by" this task / that this task blocks).
@@ -384,7 +433,7 @@ def list_tasks(
         if use_tag_list:
             tags = [((t or "").strip().lstrip("#").strip() or (t or "").strip()) for t in tags if (t or "").strip()]
             if (tag_mode or "any").strip().lower() == "all":
-                # Task must have each tag (in task_tags or #tag in title/description/notes); tag match case-insensitive
+                # Task must have each tag (in task_tags or #tag in title/notes); tag match case-insensitive
                 for tname in tags:
                     frag, p = _sql_hashtag_in_text_condition(tname)
                     sql += f" AND (id IN (SELECT task_id FROM task_tags WHERE LOWER(tag) = LOWER(?)) OR {frag})"
@@ -439,14 +488,13 @@ def list_tasks(
             params.append(f"%{title_contains.strip()}%")
         if search and search.strip():
             s = search.strip()
-            sql += " AND (title LIKE ? OR description LIKE ?)"
+            sql += " AND (title LIKE ? OR notes LIKE ?)"
             params.append(f"%{s}%")
             params.append(f"%{s}%")
         if q and q.strip():
             qv = q.strip()
-            sql += " AND (id IN (SELECT task_id FROM task_tags WHERE LOWER(tag) = LOWER(?)) OR title LIKE ? OR description LIKE ? OR notes LIKE ?)"
+            sql += " AND (id IN (SELECT task_id FROM task_tags WHERE LOWER(tag) = LOWER(?)) OR title LIKE ? OR notes LIKE ?)"
             params.append(qv)
-            params.append(f"%{qv}%")
             params.append(f"%{qv}%")
             params.append(f"%{qv}%")
         if flagged is not None:
@@ -516,7 +564,7 @@ def list_tasks(
                 t["projects"] = [p[0] for p in projs]
                 t["tags"] = _tags_for_task(
                     conn, tid,
-                    t.get("title"), t.get("description"), t.get("notes"),
+                    t.get("title"), t.get("notes"),
                 )
                 t["depends_on"] = depends_on_by.get(tid, [])
                 t["blocks"] = blocks_by.get(tid, [])
@@ -545,7 +593,8 @@ def update_task(
     flagged: bool | None = None,
     recurrence: dict | None = _UNSET,
 ) -> dict[str, Any] | None:
-    """Update task fields. Only provided fields are changed. Pass _UNSET to leave priority/recurrence unchanged; None is stored as 0 for priority or clears recurrence."""
+    """Update task fields. Only provided fields are changed. Pass _UNSET to leave priority/recurrence unchanged; None is stored as 0 for priority or clears recurrence.
+    description is deprecated: merged into notes (notes wins when both are set)."""
     if status is not None and status not in STATUSES:
         raise ValueError(f"status must be one of {sorted(STATUSES)}")
     if priority is not _UNSET and priority is not None and (priority < PRIORITY_MIN or priority > PRIORITY_MAX):
@@ -567,10 +616,10 @@ def update_task(
         params: list[Any] = [now]
         if title is not None:
             updates.append("title = ?"); params.append(title)
-        if description is not None:
-            updates.append("description = ?"); params.append(description)
-        if notes is not None:
-            updates.append("notes = ?"); params.append(notes)
+        if notes is not None or description is not None:
+            eff_notes = resolve_task_notes(description, notes)
+            updates.append("notes = ?"); params.append(eff_notes)
+            updates.append("description = ?"); params.append(None)
         if status is not None:
             updates.append("status = ?"); params.append(status)
             if status == "complete":
@@ -686,7 +735,7 @@ _HASHTAG_NOT_IN_URL_RE = re.compile(r"(?:^|[^.:/A-Za-z0-9-])(#([a-zA-Z0-9_-]+))"
 
 
 def _extract_hashtag_names_from_text(*texts: str) -> list[str]:
-    """Extract #tagname (lowercase) from title/description/notes. Same logic as _tags_for_task."""
+    """Extract #tagname (lowercase) from title/notes. Same logic as _tags_for_task."""
     seen: set[str] = set()
     out: list[str] = []
     for text in texts:
@@ -701,15 +750,15 @@ def _extract_hashtag_names_from_text(*texts: str) -> list[str]:
 
 
 def sync_task_tags_from_text(task_id: str) -> None:
-    """Ensure task_tags has a row for every #tag in the task's title, description, and notes.
+    """Ensure task_tags has a row for every #tag in the task's title and notes.
     Call after create or update so search-by-tag finds tasks by any tag in the text (e.g. '#Chuck, #Sylvia, and #Tamar')."""
     conn = get_connection()
     try:
-        row = conn.execute("SELECT title, description, notes FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        row = conn.execute("SELECT title, notes FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if not row:
             return
-        title, description, notes = row[0] or "", row[1] or "", row[2] or ""
-        for tag in _extract_hashtag_names_from_text(title, description, notes):
+        title, notes = row[0] or "", row[1] or ""
+        for tag in _extract_hashtag_names_from_text(title, notes):
             if tag:
                 conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (task_id, tag))
         conn.commit()
@@ -733,7 +782,7 @@ def _like_escape(tag: str) -> str:
 
 def _sql_hashtag_in_text_condition(tag: str) -> tuple[str, list[Any]]:
     """
-    Return (sql_fragment, params) for "this task has #tag in title or description or notes" (whole-word).
+    Return (sql_fragment, params) for "this task has #tag in title or notes" (whole-word).
     Case-insensitive. Allows #tag followed by comma, period, space, or end (e.g. "#Chuck, #Sylvia, and #Tamar").
     """
     t = (tag or "").strip()
@@ -754,7 +803,7 @@ def _sql_hashtag_in_text_condition(tag: str) -> tuple[str, list[Any]]:
     ]
     frags: list[str] = []
     params: list[Any] = []
-    for col in ("title", "description", "notes"):
+    for col in ("title", "notes"):
         for p in pats:
             frags.append(f"LOWER({col}) LIKE ? ESCAPE '\\'")
             params.append(p)
@@ -764,7 +813,7 @@ def _sql_hashtag_in_text_condition(tag: str) -> tuple[str, list[Any]]:
 def tag_list() -> list[dict[str, Any]]:
     """
     Return all tags with the number of distinct tasks that have that tag.
-    A task has a tag if: the tag is in task_tags, or #tag appears in title, or #tag in description/notes.
+    A task has a tag if: the tag is in task_tags, or #tag appears in title or notes.
     Case-insensitive: meghan and Meghan are one tag (canonical lowercase). Each task counted once per tag.
     """
     conn = get_connection()
@@ -777,10 +826,10 @@ def tag_list() -> list[dict[str, Any]]:
             if key not in tag_to_task_ids:
                 tag_to_task_ids[key] = set()
             tag_to_task_ids[key].add(tid)
-        # From title, description, notes: extract #word (skip when inside a URL)
-        for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
-            tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
-            for text in (title, desc, notes):
+        # From title, notes: extract #word (skip when inside a URL)
+        for row in conn.execute("SELECT id, title, notes FROM tasks").fetchall():
+            tid, title, notes = row[0], row[1] or "", row[2] or ""
+            for text in (title, notes):
                 for m in _HASHTAG_NOT_IN_URL_RE.finditer(text):
                     tagname = m.group(2).lower()
                     if tagname not in tag_to_task_ids:
@@ -793,8 +842,8 @@ def tag_list() -> list[dict[str, Any]]:
 
 def tag_rename(old_tag: str, new_tag: str) -> int:
     """
-    Rename a tag everywhere: in task_tags and in any task title/description/notes (#old_tag -> #new_tag).
-    new_tag must be non-empty. Returns number of tasks whose title/description/notes were updated.
+    Rename a tag everywhere: in task_tags and in any task title/notes (#old_tag -> #new_tag).
+    new_tag must be non-empty. Returns number of tasks whose title/notes were updated.
     """
     old_tag = (old_tag or "").strip()
     new_tag = (new_tag or "").strip().lower()
@@ -811,20 +860,19 @@ def tag_rename(old_tag: str, new_tag: str) -> int:
         conn.execute("DELETE FROM task_tags WHERE LOWER(tag) = LOWER(?)", (old_tag,))
         for tid in task_ids_with_old:
             conn.execute("INSERT OR IGNORE INTO task_tags (task_id, tag) VALUES (?, ?)", (tid, new_tag))
-        # Replace #old_tag with #new_tag in title, description, notes (skip when inside URL)
+        # Replace #old_tag with #new_tag in title, notes (skip when inside URL)
         pat = _hashtag_not_in_url_regex(old_tag, case_insensitive=True)
         repl = "#" + new_tag
         updated = 0
         now = _now_iso()
-        for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
-            tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
+        for row in conn.execute("SELECT id, title, notes FROM tasks").fetchall():
+            tid, title, notes = row[0], row[1] or "", row[2] or ""
             new_title = pat.sub(repl, title) if title else title
-            new_desc = pat.sub(repl, desc) if desc else desc
             new_notes = pat.sub(repl, notes) if notes else notes
-            if new_title != title or new_desc != desc or new_notes != notes:
+            if new_title != title or new_notes != notes:
                 conn.execute(
-                    "UPDATE tasks SET title = ?, description = ?, notes = ?, updated_at = ? WHERE id = ?",
-                    (new_title, new_desc, new_notes, now, tid),
+                    "UPDATE tasks SET title = ?, notes = ?, description = ?, updated_at = ? WHERE id = ?",
+                    (new_title, new_notes, None, now, tid),
                 )
                 _record_history(conn, tid, "tag_renamed_in_text", {"old_tag": old_tag, "new_tag": new_tag})
                 updated += 1
@@ -836,9 +884,9 @@ def tag_rename(old_tag: str, new_tag: str) -> int:
 
 def tag_delete(tag: str) -> int:
     """
-    Remove a tag from all tasks: delete from task_tags and strip the # from #tag in title/description/notes
+    Remove a tag from all tasks: delete from task_tags and strip the # from #tag in title/notes
     (so "#meghan" becomes "meghan"; the word is left in place).
-    Returns number of tasks whose title/description/notes were updated (excluding tag-table-only removals).
+    Returns number of tasks whose title/notes were updated (excluding tag-table-only removals).
     """
     tag = (tag or "").strip()
     if not tag:
@@ -849,20 +897,19 @@ def tag_delete(tag: str) -> int:
         pat = _hashtag_not_in_url_regex(tag, case_insensitive=True)
         updated = 0
         now = _now_iso()
-        for row in conn.execute("SELECT id, title, description, notes FROM tasks").fetchall():
-            tid, title, desc, notes = row[0], row[1] or "", row[2] or "", row[3] or ""
+        for row in conn.execute("SELECT id, title, notes FROM tasks").fetchall():
+            tid, title, notes = row[0], row[1] or "", row[2] or ""
             # Replace #tag with tag (remove only the #) when not inside URL; collapse adjacent spaces
             def strip_tag_marker(text: str) -> str:
                 if not text:
                     return text
                 return re.sub(r"\s+", " ", pat.sub(lambda m: m.group(0)[1:], text)).strip()
             new_title = strip_tag_marker(title)
-            new_desc = strip_tag_marker(desc)
             new_notes = strip_tag_marker(notes)
-            if new_title != title or new_desc != desc or new_notes != notes:
+            if new_title != title or new_notes != notes:
                 conn.execute(
-                    "UPDATE tasks SET title = ?, description = ?, notes = ?, updated_at = ? WHERE id = ?",
-                    (new_title, new_desc, new_notes, now, tid),
+                    "UPDATE tasks SET title = ?, notes = ?, description = ?, updated_at = ? WHERE id = ?",
+                    (new_title, new_notes, None, now, tid),
                 )
                 _record_history(conn, tid, "tag_removed_from_text", {"tag": tag})
                 updated += 1
@@ -1118,13 +1165,12 @@ def complete_recurring_task(task_id: str, advance_recurrence: bool = True) -> di
                             if r[0]
                         ]
                         copy_flagged = bool(row.get("flagged"))
-                        # Recurrence copy: same projects, tags, priority, description, notes, flagged;
+                        # Recurrence copy: same projects, tags, priority, notes, flagged;
                         # only dates are advanced. Commit before create_task() to avoid DB lock.
                         conn.commit()
                         create_task(
                             row["title"],
-                            description=row.get("description"),
-                            notes=row.get("notes"),
+                            notes=resolve_task_notes(row.get("description"), row.get("notes")),
                             status="incomplete",
                             priority=row["priority"] if row.get("priority") is not None else 0,
                             available_date=next_avail_str,

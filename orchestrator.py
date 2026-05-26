@@ -471,10 +471,16 @@ def _validate_task_create(params: dict[str, Any]) -> dict[str, Any]:
     if not title or not str(title).strip():
         raise ValueError("title is required")
     out: dict[str, Any] = {"title": str(title).strip()}
-    if "description" in params and params["description"] is not None:
-        out["description"] = str(params["description"])
-    if "notes" in params and params["notes"] is not None:
-        out["notes"] = str(params["notes"])
+    if "description" in params or "notes" in params:
+        from task_service import resolve_task_notes
+        d = params["description"] if "description" in params else None
+        n = params["notes"] if "notes" in params else None
+        resolved = resolve_task_notes(
+            str(d) if d is not None else None,
+            str(n) if n is not None else None,
+        )
+        if resolved is not None:
+            out["notes"] = resolved
     status = params.get("status")
     if status is not None:
         s = str(status).strip().lower()
@@ -668,7 +674,7 @@ def _validate_task_update(params: dict[str, Any], tz_name: str = "UTC") -> dict[
         else:
             out["flagged"] = False
     from date_utils import normalize_date_clear_value
-    for key in ("due_date", "available_date", "title", "description", "notes"):
+    for key in ("due_date", "available_date", "title"):
         if key in params:
             if key in ("due_date", "available_date"):
                 # nothing, nil, blank, 0, etc. -> None (clear the date)
@@ -676,6 +682,17 @@ def _validate_task_update(params: dict[str, Any], tz_name: str = "UTC") -> dict[
             elif params[key] is not None:
                 val = str(params[key]).strip() or None
                 out[key] = val
+    if "description" in params or "notes" in params:
+        from task_service import resolve_task_notes
+        d = params["description"] if "description" in params else None
+        n = params["notes"] if "notes" in params else None
+        if d is not None or n is not None:
+            out["notes"] = resolve_task_notes(
+                str(d).strip() if d is not None else None,
+                str(n).strip() if n is not None else None,
+            )
+        else:
+            out["notes"] = None
     if "priority" in params and params["priority"] is not None and str(params["priority"]).strip() != "":
         p = _parse_priority(params["priority"])
         if p is not None:
@@ -755,7 +772,7 @@ RESPONSE_FRIENDLY_REPLACEMENTS: list[tuple[str, str]] = [
     ("tag_rename requires old_tag.", "I need the current tag name to rename it."),
     ("tag_rename requires new_tag.", "I need the new tag name."),
     ("tag_delete requires tag.", "I need the tag name to remove it."),
-    ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", "Nothing to update. Say what to change (e.g. status, due date, title, or tags)."),
+    ("Nothing to update. Specify status, flagged, due_date, available_date, title, notes, priority, projects, remove_projects, or tags.", "Nothing to update. Say what to change (e.g. status, due date, title, or tags)."),
     # Generic tool/param names (for LLM slip-through)
     ("list_lists", "list your saved lists"),
     (" short_ids", " codes"),
@@ -1069,7 +1086,7 @@ def _canonical_task_response(task: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": task.get("id"),
         "title": task.get("title"),
-        "description": task.get("description"),
+        "description": None,
         "notes": task.get("notes"),
         "status": task.get("status"),
         "priority": task.get("priority"),
@@ -1443,8 +1460,6 @@ def _format_task_info_text(
     rec_str = _format_recurrence_short(task.get("recurrence"))
     if rec_str:
         lines.append(f"Recurrence: {rec_str}")
-    if task.get("description"):
-        lines.append(f"Description: {task['description'].strip()}")
     if task.get("notes"):
         lines.append(f"Notes: {task['notes'].strip()}")
     dates_line = _format_task_dates_short(task, tz_name).strip()
@@ -2107,13 +2122,13 @@ def run_orchestrator(
             if not task:
                 return (f"No task {num}. List tasks to see numbers.", False, None, used_fb)
             task_id = task["id"]
-            scalar_keys = ("status", "flagged", "due_date", "available_date", "title", "description", "notes", "priority")
+            scalar_keys = ("status", "flagged", "due_date", "available_date", "title", "notes", "priority")
             kwargs = {k: v for k, v in validated.items() if k in scalar_keys and (v is not None or k in ("due_date", "available_date"))}
             has_projects = "projects" in validated
             has_remove_projects = "remove_projects" in validated and validated["remove_projects"]
             has_tags = "tags" in validated
             if not kwargs and not has_projects and not has_remove_projects and not has_tags:
-                return ("Nothing to update. Specify status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, or tags.", False, None, used_fb)
+                return ("Nothing to update. Specify status, flagged, due_date, available_date, title, notes, priority, projects, remove_projects, or tags.", False, None, used_fb)
             # When marking a recurring task complete, create next instance and mark current complete
             if kwargs.get("status") == "complete" and task.get("recurrence"):
                 try:
@@ -2183,7 +2198,7 @@ def run_orchestrator(
                 parts.append("available date cleared" if kwargs["available_date"] is None else f"available {kwargs['available_date']}")
             if "title" in kwargs:
                 parts.append("title updated")
-            if "description" in kwargs or "notes" in kwargs or "priority" in kwargs:
+            if "notes" in kwargs or "priority" in kwargs:
                 parts.append("updated")
             if has_projects:
                 parts.append("projects updated")
@@ -2232,7 +2247,6 @@ def run_orchestrator(
             from task_service import create_task as svc_create_task
             task = svc_create_task(
                 title=validated["title"],
-                description=validated.get("description"),
                 notes=validated.get("notes"),
                 status=validated.get("status", "incomplete"),
                 priority=validated.get("priority"),

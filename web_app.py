@@ -81,10 +81,21 @@ class ConfigUpdate(BaseModel):
 
 @app.on_event("startup")
 def _startup_migrate_task_tags() -> None:
-    """One-time migrations: compound tags -> individual; sync #tags from title/description/notes into task_tags."""
+    """One-time migrations: description -> notes; compound tags -> individual; sync #tags from title/notes into task_tags."""
     log = __import__("logging").getLogger("web_app")
     try:
-        from task_service import migrate_compound_task_tags_to_individual, migrate_sync_all_task_tags_from_text
+        from task_service import (
+            migrate_compound_task_tags_to_individual,
+            migrate_description_to_notes,
+            migrate_sync_all_task_tags_from_text,
+        )
+        backfilled, cleared = migrate_description_to_notes()
+        if backfilled or cleared:
+            log.info(
+                "Migrated task description -> notes: %d backfilled, %d conflict rows cleared (notes kept).",
+                backfilled,
+                cleared,
+            )
         n = migrate_compound_task_tags_to_individual()
         if n:
             log.info("Migrated %d compound task_tags row(s) to individual tags.", n)
@@ -372,8 +383,7 @@ def api_update_task(task_id: str, body: dict):
             update_task(
                 task_id,
                 title=body.get("title"),
-                description=body.get("description"),
-                notes=body.get("notes"),
+                notes=body.get("notes") if "notes" in body else body.get("description"),
                 status=body.get("status"),
                 priority=body["priority"] if "priority" in body else _UNSET,
                 available_date=normalize_date_clear_value(body["available_date"]) if "available_date" in body else _UNSET,
@@ -566,8 +576,7 @@ def external_create_task(body: dict):
     try:
         return create_task(
             title,
-            description=body.get("description") or None,
-            notes=body.get("notes") or None,
+            notes=body.get("notes") if "notes" in body else body.get("description"),
             status=(body.get("status") or "incomplete").strip() or "incomplete",
             priority=body.get("priority") if body.get("priority") is not None else None,
             available_date=body.get("available_date") or None,
@@ -616,8 +625,7 @@ async def external_update_task(task_id: str, request: Request):
             update_task(
                 tid,
                 title=body.get("title"),
-                description=body.get("description"),
-                notes=body.get("notes"),
+                notes=body.get("notes") if "notes" in body else body.get("description"),
                 status=body.get("status"),
                 priority=body["priority"] if "priority" in body else _UNSET,
                 available_date=normalize_date_clear_value(body["available_date"]) if "available_date" in body else _UNSET,

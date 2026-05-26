@@ -39,7 +39,8 @@ def _tool_task_create(
     priority: str | int | None = None,
     flagged: bool | None = None,
 ) -> str:
-    """Create a task. Required: title. Optional: description, notes, available_date, due_date, project/short_id, projects, tags, priority, flagged."""
+    """Create a task. Required: title. Optional: notes, available_date, due_date, project/short_id, projects, tags, priority, flagged.
+    description is deprecated (maps to notes; notes wins if both are sent)."""
     params: dict = {"title": title}
     if description is not None:
         params["description"] = description
@@ -129,7 +130,8 @@ def _tool_task_update(
     remove_projects: list[str] | None = None,
     tags: list[str] | None = None,
 ) -> str:
-    """Update a task by number. Required: number. Optional: status, flagged, due_date, available_date, title, description, notes, priority, projects, remove_projects, tags."""
+    """Update a task by number. Required: number. Optional: status, flagged, due_date, available_date, title, notes, priority, projects, remove_projects, tags.
+    description is deprecated (maps to notes; notes wins if both are sent)."""
     params: dict = {"number": number}
     if status is not None:
         params["status"] = status
