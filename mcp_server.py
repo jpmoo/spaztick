@@ -112,7 +112,8 @@ def _tool_task_find(
 
 
 def _tool_task_info(number: int) -> str:
-    """Get details for one task by its friendly number (e.g. 1)."""
+    """Get details for one task by its friendly number (e.g. 1).
+    Task body text is shown as Notes; description is deprecated (legacy field, always empty)."""
     return _run_tool("task_info", {"number": number})
 
 
