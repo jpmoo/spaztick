@@ -1,9 +1,11 @@
 #!/bin/bash
-# Start spaztick in the background. If restarting, stops existing processes and frees port 8081 first.
+# Restart spaztick: pull latest, stop existing processes, start in background.
 set -e
 cd "$(dirname "$0")"
 LOG=spaztick.log
 touch "$LOG"
+
+git pull
 
 # Stop any existing run (SIGTERM first for graceful shutdown), then free port 8081
 pkill -f "telegram_bot\.py" 2>/dev/null || true
@@ -14,5 +16,5 @@ fuser -k 8081/tcp 2>/dev/null || true
 sleep 1
 
 nohup .venv/bin/python -m run </dev/null >> "$LOG" 2>&1 &
-echo "Started. Tail log: tail -f $LOG"
+echo "Restarted. Tail log: tail -f $LOG"
 exit 0

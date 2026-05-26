@@ -128,7 +128,7 @@ Use launchd so the web app (and Telegram bot subprocess) start after login:
    - Start again: `launchctl load ~/Library/LaunchAgents/com.spaztick.plist`
    - Logs: `tail -f /path/to/spaztick/spaztick-launchd.log`
 
-The job runs `python -m run` (same as the web + Telegram process) with **KeepAlive**, so launchd will restart it if it exits. You can still use `./start.sh` for manual runs (e.g. to force a clean restart and free the port).
+The job runs `python -m run` (same as the web + Telegram process) with **KeepAlive**, so launchd will restart it if it exits. You can still use `./restart.sh` for manual runs (pulls latest, then forces a clean restart and frees the port).
 
 ## Linux service (systemd) — start at boot (headless Ubuntu)
 
